@@ -827,6 +827,21 @@ export default function App() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {!incidentForm.photoUrl ? (
+                <button onClick={() => handlePhotoUpload(null, true)} className="w-full py-4 rounded-xl border-2 border-dashed border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40 flex flex-col items-center gap-2 transition-colors">
+                  <Camera className="w-6 h-6" />
+                  <span className="text-sm font-bold uppercase tracking-wider">Unggah Foto Temuan</span>
+                  <span className="text-[10px] text-yellow-200/60 uppercase tracking-widest">Opsional</span>
+                </button>
+              ) : (
+                <div className="w-full h-40 bg-[#070b19] rounded-xl border border-yellow-500/40 overflow-hidden relative">
+                  <img src={incidentForm.photoUrl} alt="Preview Temuan" className="w-full h-full object-cover" />
+                  <button onClick={() => setIncidentForm(prev => ({ ...prev, photoUrl: null }))} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setIncidentForm(prev => ({ ...prev, locType: 'default' }))}
@@ -899,21 +914,6 @@ export default function App() {
                   className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-emerald-500 outline-none resize-none"
                 />
               </div>
-
-              {!incidentForm.photoUrl ? (
-                <button onClick={() => handlePhotoUpload(null, true)} className="w-full py-4 rounded-xl border-2 border-dashed border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40 flex flex-col items-center gap-2 transition-colors">
-                  <Camera className="w-6 h-6" />
-                  <span className="text-sm font-bold uppercase tracking-wider">Unggah Foto Temuan</span>
-                  <span className="text-[10px] text-yellow-200/60 uppercase tracking-widest">Opsional</span>
-                </button>
-              ) : (
-                <div className="w-full h-40 bg-[#070b19] rounded-xl border border-yellow-500/40 overflow-hidden relative">
-                  <img src={incidentForm.photoUrl} alt="Preview Temuan" className="w-full h-full object-cover" />
-                  <button onClick={() => setIncidentForm(prev => ({ ...prev, photoUrl: null }))} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
             </div>
 
             <div className="p-4 bg-[#0b1229] border-t border-cyan-900/50 shrink-0 pb-safe flex gap-3">
@@ -1255,8 +1255,19 @@ export default function App() {
                </div>
             </div>
             <div className="p-5 overflow-y-auto flex-1 space-y-4">
-              {activePatrolState.type === 'temuan' && (
+              {activePatrolState.type === 'temuan' ? (
                 <>
+                  {!activePatrolState.photoUrl ? (
+                    <button onClick={() => handlePhotoUpload(activePatrolId)} className="w-full py-4 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40">
+                      <Camera className="w-6 h-6" />
+                      <span className="text-sm font-bold uppercase tracking-wider">Unggah Visual</span>
+                    </button>
+                  ) : (
+                    <div className="w-full h-32 bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
+                      <img src={activePatrolState.photoUrl} alt="Preview" className="w-full h-full object-cover" />
+                      <button onClick={() => handleFormChange(activePatrolId, 'photoUrl', null)} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors"><X className="w-4 h-4" /></button>
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Deskripsi Temuan</label>
                     <textarea placeholder="Jelaskan detail temuan..." rows={2} value={activePatrolState.kejadian} onChange={(e) => handleFormChange(activePatrolId, 'kejadian', e.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none" />
@@ -1270,17 +1281,17 @@ export default function App() {
                     <textarea placeholder="Tindakan perbaikan..." rows={2} value={activePatrolState.tindakLanjut} onChange={(e) => handleFormChange(activePatrolId, 'tindakLanjut', e.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-emerald-500 outline-none resize-none" />
                   </div>
                 </>
-              )}
-
-              {!activePatrolState.photoUrl ? (
-                <button onClick={() => handlePhotoUpload(activePatrolId)} className={`w-full py-4 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors ${activePatrolState.type === 'aman' ? 'border-emerald-500/40 bg-emerald-950/20 text-emerald-400 hover:bg-emerald-900/40' : 'border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40'}`}>
-                  <Camera className="w-6 h-6" /> <span className="text-sm font-bold uppercase tracking-wider">Unggah Visual</span>
-                </button>
               ) : (
-                <div className="w-full h-32 bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
-                  <img src={activePatrolState.photoUrl} alt="Preview" className="w-full h-full object-cover" />
-                  <button onClick={() => handleFormChange(activePatrolId, 'photoUrl', null)} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors"><X className="w-4 h-4" /></button>
-                </div>
+                !activePatrolState.photoUrl ? (
+                  <button onClick={() => handlePhotoUpload(activePatrolId)} className="w-full py-4 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-emerald-500/40 bg-emerald-950/20 text-emerald-400 hover:bg-emerald-900/40">
+                    <Camera className="w-6 h-6" /> <span className="text-sm font-bold uppercase tracking-wider">Unggah Visual</span>
+                  </button>
+                ) : (
+                  <div className="w-full h-32 bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
+                    <img src={activePatrolState.photoUrl} alt="Preview" className="w-full h-full object-cover" />
+                    <button onClick={() => handleFormChange(activePatrolId, 'photoUrl', null)} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors"><X className="w-4 h-4" /></button>
+                  </div>
+                )
               )}
             </div>
             
