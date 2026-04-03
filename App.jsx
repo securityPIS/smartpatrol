@@ -19,6 +19,18 @@ const defaultLocationOptions = [
   'Gudang Logistik', 'Gudang Spare Part', 'Alat Dapur', 'Fasilitas Pendukung'
 ];
 
+const defaultIncidentForm = {
+  locType: 'default',
+  location: defaultLocationOptions[0],
+  customLocation: '',
+  penyebab: '',
+  deskripsi: '',
+  tindakLanjut: '',
+  photoUrl: null,
+};
+
+const createIncidentFormState = () => ({ ...defaultIncidentForm });
+
 const initialCheckpoints = defaultLocationOptions.map((name, index) => ({
   id: index + 1, name, status: 'pending'
 }));
@@ -150,7 +162,7 @@ export default function App() {
 
   // States Halaman Temuan
   const [showIncidentModal, setShowIncidentModal] = useState(false);
-  const [incidentForm, setIncidentForm] = useState({ locType: 'default', location: 'Cuaca', customLocation: '', penyebab: '', deskripsi: '', tindakLanjut: '', photoUrl: null });
+  const [incidentForm, setIncidentForm] = useState(() => createIncidentFormState());
 
   // States Halaman Armada Detail
   const [activeShipId, setActiveShipId] = useState(null);
@@ -196,6 +208,10 @@ export default function App() {
     () => checkpoints.filter(cp => cp.name.toLowerCase().includes(deferredSearchQuery.toLowerCase())),
     [checkpoints, deferredSearchQuery]
   );
+  const incidentLocationOptions = useMemo(
+    () => Array.from(new Set(checkpoints.map(cp => cp.name))),
+    [checkpoints]
+  );
   const completedCount = useMemo(() => checkpoints.filter(c => c.status === 'completed').length, [checkpoints]);
   const totalCount = checkpoints.length;
   const progressPercentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
@@ -236,6 +252,26 @@ export default function App() {
     setSelectedReportDetail(null); 
   };
 
+  const handleOpenPatrolResult = (item) => {
+    if (item.resultType === 'temuan') {
+      setSelectedIncident({
+        id: `p-${item.id}`,
+        date: new Date().toLocaleDateString('id-ID'),
+        time: item.time,
+        location: item.name,
+        deskripsi: item.kejadian,
+        penyebab: item.penyebab,
+        tindakLanjut: item.tindakLanjut,
+        reportedBy: item.completedBy,
+        photoUrl: item.photoUrl,
+        isPatrol: true
+      });
+      return;
+    }
+
+    setSelectedReportDetail(item);
+  };
+
   const handleAddCustomPatrolNode = () => {
     const safeName = sanitizeText(newCustomNode, 80);
     if(safeName !== '') {
@@ -244,20 +280,32 @@ export default function App() {
     }
   };
 
+  const openIncidentModal = () => {
+    setIncidentForm(createIncidentFormState());
+    setShowIncidentModal(true);
+  };
+
+  const closeIncidentModal = () => {
+    setShowIncidentModal(false);
+    setIncidentForm(createIncidentFormState());
+  };
+
   const handleSubmitIncident = () => {
     const loc = incidentForm.locType === 'custom' ? sanitizeText(incidentForm.customLocation, 80) : sanitizeText(incidentForm.location, 80);
     if (!loc || !sanitizeMultilineText(incidentForm.deskripsi, 320)) return;
     const newIncident = {
+      ...incidentForm,
       id: Date.now(), time: new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}), date: new Date().toLocaleDateString('id-ID'),
-      reportedBy: currentUser, location: loc, ...incidentForm,
+      reportedBy: currentUser,
+      location: loc,
+      customLocation: incidentForm.locType === 'custom' ? loc : '',
       photoUrl: sanitizeUrl(incidentForm.photoUrl),
       penyebab: sanitizeMultilineText(incidentForm.penyebab, 240),
       deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320),
       tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240),
     };
     setIncidentsData(prev => [newIncident, ...prev]);
-    setShowIncidentModal(false);
-    setIncidentForm({ locType: 'default', location: 'Cuaca', customLocation: '', penyebab: '', deskripsi: '', tindakLanjut: '', photoUrl: null });
+    closeIncidentModal();
   };
 
   // --- KUMPULKAN SEMUA TEMUAN (Manual + Patroli) ---
@@ -612,7 +660,7 @@ export default function App() {
 
             {/* TAB CONTENT: CHECKPOINT */}
             {patrolTab === 'checkpoint' && (
-              <div className="relative animate-in fade-in flex-1 flex flex-col">
+              <div className="relative animate-in fade-in flex-1 flex flex-col pb-32">
                 <div className="sticky top-0 z-30 bg-[#070b19]/95 backdrop-blur-md py-3 -mx-4 px-4 border-b border-cyan-900/50 shadow-sm transition-all duration-300 mb-4">
                   <div className="relative">
                     <input 
@@ -634,7 +682,7 @@ export default function App() {
                     if (item.status === 'completed') {
                       const isTemuan = item.resultType === 'temuan';
                       return (
-                        <div key={item.id} onClick={() => setSelectedReportDetail(item)} className={`p-3 border rounded-xl flex items-center justify-between cursor-pointer hover:shadow-lg transition-all ${isTemuan ? 'bg-yellow-950/20 border-yellow-500/30' : 'bg-emerald-950/20 border-emerald-500/30'}`}>
+                        <div key={item.id} onClick={() => handleOpenPatrolResult(item)} className={`p-3 border rounded-xl flex items-center justify-between cursor-pointer hover:shadow-lg transition-all ${isTemuan ? 'bg-yellow-950/20 border-yellow-500/30' : 'bg-emerald-950/20 border-emerald-500/30'}`}>
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-0.5">
                                <p className={`font-bold ${isTemuan ? 'text-yellow-400' : 'text-emerald-400'}`}>{item.name}</p>
@@ -685,7 +733,7 @@ export default function App() {
                 </div>
 
                 {/* STICKY PROGRESS PATROLI */}
-                <div className="sticky bottom-[-16px] z-30 bg-[#070b19]/95 backdrop-blur-md -mx-4 px-4 py-4 border-t border-cyan-900/50 shadow-[0_-5px_15px_rgba(0,0,0,0.3)]">
+                <div className="fixed bottom-[65px] left-0 right-0 z-30 w-full sm:max-w-md sm:mx-auto bg-[#070b19]/95 backdrop-blur-md px-4 py-4 border-t border-cyan-900/50 shadow-[0_-5px_15px_rgba(0,0,0,0.3)]">
                   <div className="flex justify-between text-xs mb-2">
                     <span className="text-cyan-500 font-bold uppercase tracking-widest">Progres Shift</span>
                     <span className="text-cyan-300 font-black">{completedCount}/{totalCount} <span className="font-normal text-[9px]">SELESAI</span></span>
@@ -709,7 +757,7 @@ export default function App() {
                <h2 className="text-xl font-bold text-yellow-400 flex items-center gap-2 drop-shadow-[0_0_5px_rgba(250,204,21,0.5)]">
                  <AlertOctagon className="w-5 h-5" /> Pelaporan Temuan
                </h2>
-               <button onClick={() => setShowIncidentModal(true)} className="px-3 py-1.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 text-xs font-bold rounded-lg flex items-center gap-1 shadow-[0_0_10px_rgba(250,204,21,0.2)]">
+               <button onClick={openIncidentModal} className="px-3 py-1.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 text-xs font-bold rounded-lg flex items-center gap-1 shadow-[0_0_10px_rgba(250,204,21,0.2)]">
                  <PlusCircle className="w-3.5 h-3.5" /> Lapor Baru
                </button>
             </div>
@@ -731,8 +779,10 @@ export default function App() {
                        {/* Kolom Kiri: Teks & Pelapor */}
                        <div className="flex-1 ml-1 min-w-0 flex flex-col justify-between">
                           <div>
-                             <h3 className={`font-bold text-lg truncate mb-1 ${isClosed ? 'text-slate-400' : 'text-yellow-400'}`}>{inc.location}</h3>
-                             <span className="text-[10px] text-cyan-500 font-mono bg-[#070b19] px-2 py-1 rounded border border-cyan-900 inline-block mb-2 self-start">{inc.date} | {inc.time}</span>
+                             <div className="flex items-start justify-between gap-2 mb-2">
+                               <h3 className={`font-bold text-lg leading-tight flex-1 min-w-0 ${isClosed ? 'text-slate-400' : 'text-yellow-400'}`}>{inc.location}</h3>
+                               <span className="shrink-0 whitespace-nowrap text-[10px] text-cyan-500 font-mono bg-[#070b19] px-2 py-1 rounded border border-cyan-900 inline-block">{inc.date} | {inc.time}</span>
+                             </div>
                              <p className={`text-xs ${isClosed ? 'text-slate-500' : 'text-yellow-100/70'} line-clamp-2 leading-relaxed mb-3`}>"{inc.deskripsi}"</p>
                           </div>
                           <div className={`mt-auto flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-bold ${isClosed ? 'text-slate-600' : 'text-cyan-600'}`}>
@@ -760,6 +810,124 @@ export default function App() {
                  })}
                </div>
             )}
+          </div>
+        )}
+
+        {/* --- MODAL FORM TEMUAN BARU --- */}
+        {showIncidentModal && (
+          <div className="fixed inset-0 z-[100] bg-[#070b19] sm:max-w-md sm:mx-auto sm:border-x sm:border-yellow-500/20 flex flex-col animate-in slide-in-from-right-4">
+            <div className="p-4 border-b border-yellow-500/30 flex items-center gap-3 bg-[#0b1229] shrink-0 shadow-sm">
+              <button onClick={closeIncidentModal} className="p-2 bg-[#070b19] border border-cyan-800 text-cyan-300 rounded-full hover:bg-cyan-900/50 transition-colors">
+                <ChevronDown className="w-5 h-5 rotate-90"/>
+              </button>
+              <div>
+                <span className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold">Form Temuan</span>
+                <h3 className="font-bold text-xl text-yellow-400 line-clamp-1">Lapor Baru</h3>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setIncidentForm(prev => ({ ...prev, locType: 'default' }))}
+                  className={`py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition-colors ${incidentForm.locType === 'default' ? 'bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.12)]' : 'bg-[#0b1229] border-cyan-900/50 text-cyan-500 hover:border-cyan-700'}`}
+                >
+                  Lokasi Daftar
+                </button>
+                <button
+                  onClick={() => setIncidentForm(prev => ({ ...prev, locType: 'custom' }))}
+                  className={`py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition-colors ${incidentForm.locType === 'custom' ? 'bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.12)]' : 'bg-[#0b1229] border-cyan-900/50 text-cyan-500 hover:border-cyan-700'}`}
+                >
+                  Lokasi Manual
+                </button>
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold pl-1 flex items-center gap-1">
+                  <MapPin className="w-3 h-3" /> Lokasi Temuan
+                </label>
+                {incidentForm.locType === 'custom' ? (
+                  <input
+                    type="text"
+                    value={incidentForm.customLocation}
+                    onChange={e => setIncidentForm(prev => ({ ...prev, customLocation: e.target.value }))}
+                    placeholder="Masukkan nama lokasi..."
+                    className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-yellow-500 outline-none shadow-sm"
+                  />
+                ) : (
+                  <select
+                    value={incidentForm.location}
+                    onChange={e => setIncidentForm(prev => ({ ...prev, location: e.target.value }))}
+                    className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-yellow-500 outline-none appearance-none shadow-sm"
+                  >
+                    {incidentLocationOptions.map(location => (
+                      <option key={location} value={location}>{location}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Deskripsi Temuan</label>
+                <textarea
+                  rows={3}
+                  value={incidentForm.deskripsi}
+                  onChange={e => setIncidentForm(prev => ({ ...prev, deskripsi: e.target.value }))}
+                  placeholder="Jelaskan detail temuan..."
+                  className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Penyebab Kejadian</label>
+                <textarea
+                  rows={2}
+                  value={incidentForm.penyebab}
+                  onChange={e => setIncidentForm(prev => ({ ...prev, penyebab: e.target.value }))}
+                  placeholder="Apa indikasi penyebabnya..."
+                  className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Tindak Lanjut Awal</label>
+                <textarea
+                  rows={2}
+                  value={incidentForm.tindakLanjut}
+                  onChange={e => setIncidentForm(prev => ({ ...prev, tindakLanjut: e.target.value }))}
+                  placeholder="Tindakan awal yang sudah dilakukan..."
+                  className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-emerald-500 outline-none resize-none"
+                />
+              </div>
+
+              {!incidentForm.photoUrl ? (
+                <button onClick={() => handlePhotoUpload(null, true)} className="w-full py-4 rounded-xl border-2 border-dashed border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40 flex flex-col items-center gap-2 transition-colors">
+                  <Camera className="w-6 h-6" />
+                  <span className="text-sm font-bold uppercase tracking-wider">Unggah Foto Temuan</span>
+                  <span className="text-[10px] text-yellow-200/60 uppercase tracking-widest">Opsional</span>
+                </button>
+              ) : (
+                <div className="w-full h-40 bg-[#070b19] rounded-xl border border-yellow-500/40 overflow-hidden relative">
+                  <img src={incidentForm.photoUrl} alt="Preview Temuan" className="w-full h-full object-cover" />
+                  <button onClick={() => setIncidentForm(prev => ({ ...prev, photoUrl: null }))} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-[#0b1229] border-t border-cyan-900/50 shrink-0 pb-safe flex gap-3">
+              <button onClick={closeIncidentModal} className="flex-1 py-4 rounded-xl font-black tracking-widest uppercase text-xs border border-cyan-800 text-cyan-300 hover:bg-cyan-900/30 transition-colors">
+                Batal
+              </button>
+              <button
+                onClick={handleSubmitIncident}
+                disabled={!(incidentForm.locType === 'custom' ? incidentForm.customLocation.trim() : incidentForm.location.trim()) || !incidentForm.deskripsi.trim()}
+                className="flex-1 py-4 rounded-xl font-black tracking-widest uppercase text-xs bg-yellow-600 hover:bg-yellow-500 text-black disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(250,204,21,0.25)]"
+              >
+                <Save className="w-4 h-4" /> Simpan
+              </button>
+            </div>
           </div>
         )}
 
