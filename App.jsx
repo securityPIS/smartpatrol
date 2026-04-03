@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import { 
   Camera, CheckCircle2, AlertTriangle, Lock, 
   Wifi, ChevronDown, ChevronUp, User, 
@@ -8,6 +8,9 @@ import {
   Users, Anchor, PlusCircle, Settings, UserMinus, UserPlus, Map, Package, Weight, Plus, Save,
   AlertOctagon, Navigation, Image as ImageIcon, FilePlus, ExternalLink, CalendarClock, Search
 } from 'lucide-react';
+import { createPosterDataUrl } from './src/data/defaultData';
+import { readImageFileAsDataUrl } from './src/utils/images';
+import { sanitizeEmail, sanitizeMultilineText, sanitizePhone, sanitizeText, sanitizeUrl } from './src/utils/sanitize';
 
 // --- DATA MOCKUP ---
 const defaultLocationOptions = [
@@ -20,8 +23,8 @@ const initialCheckpoints = defaultLocationOptions.map((name, index) => ({
   id: index + 1, name, status: 'pending'
 }));
 // Simulasi data terisi
-initialCheckpoints[0] = { ...initialCheckpoints[0], status: 'completed', completedBy: 'Cipto Mangunkusumo', time: '12:15', photoUrl: 'https://picsum.photos/seed/cuaca/400/300', resultType: 'aman' };
-initialCheckpoints[1] = { ...initialCheckpoints[1], status: 'completed', completedBy: 'Sertu Agus', time: '12:20', photoUrl: 'https://picsum.photos/seed/haluan/400/300', resultType: 'temuan', penyebab: 'Gesekan berlebih karena cuaca buruk', kejadian: 'Karat parah pada rantai jangkar kiri.', tindakLanjut: 'Lapor Chief Officer.' };
+initialCheckpoints[0] = { ...initialCheckpoints[0], status: 'completed', completedBy: 'Cipto Mangunkusumo', time: '12:15', photoUrl: createPosterDataUrl('CUACA', 'Kondisi aman', 0, false), resultType: 'aman' };
+initialCheckpoints[1] = { ...initialCheckpoints[1], status: 'completed', completedBy: 'Sertu Agus', time: '12:20', photoUrl: createPosterDataUrl('HALUAN', 'Temuan jangkar', 4, false), resultType: 'temuan', penyebab: 'Gesekan berlebih karena cuaca buruk', kejadian: 'Karat parah pada rantai jangkar kiri.', tindakLanjut: 'Lapor Chief Officer.' };
 
 const historyData = [
   { id: 101, date: '2 April 2026', shift: 'Shift 1', time: '06:00 - 12:00', ship: 'MT MENGGALA', points: 16, issue: 0 },
@@ -29,17 +32,17 @@ const historyData = [
 ];
 
 const mockUsersList = [
-  { id: 'u1', name: 'Budi Santoso', role: 'Inspektur Jaga', type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', photoUrl: 'https://i.pravatar.cc/150?u=u1' },
-  { id: 'u2', name: 'Sertu Agus', role: 'Keamanan', type: 'TNI', status: 'active', shipAssigned: 'MT MENGGALA', photoUrl: 'https://i.pravatar.cc/150?u=u2' },
-  { id: 'u3', name: 'Cipto Mangunkusumo', role: 'Inspektur Jaga', type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', photoUrl: 'https://i.pravatar.cc/150?u=u3' },
-  { id: 'u4', name: 'Deni Setiawan', role: 'Inspektur Jaga', type: 'BUJP', status: 'off-duty', shipAssigned: null, photoUrl: 'https://i.pravatar.cc/150?u=u4' },
-  { id: 'u5', name: 'Kapten Eko', role: 'Pengawas', type: 'TNI', status: 'off-duty', shipAssigned: null, photoUrl: 'https://i.pravatar.cc/150?u=u5' },
+  { id: 'u1', name: 'Budi Santoso', role: 'Inspektur Jaga', type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', photoUrl: createPosterDataUrl('BS', 'Budi Santoso', 0, true) },
+  { id: 'u2', name: 'Sertu Agus', role: 'Keamanan', type: 'TNI', status: 'active', shipAssigned: 'MT MENGGALA', photoUrl: createPosterDataUrl('SA', 'Sertu Agus', 1, true) },
+  { id: 'u3', name: 'Cipto Mangunkusumo', role: 'Inspektur Jaga', type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', photoUrl: createPosterDataUrl('CM', 'Cipto', 2, true) },
+  { id: 'u4', name: 'Deni Setiawan', role: 'Inspektur Jaga', type: 'BUJP', status: 'off-duty', shipAssigned: null, photoUrl: createPosterDataUrl('DS', 'Deni', 3, true) },
+  { id: 'u5', name: 'Kapten Eko', role: 'Pengawas', type: 'TNI', status: 'off-duty', shipAssigned: null, photoUrl: createPosterDataUrl('KE', 'Kapten Eko', 4, true) },
 ];
 
 const initialShipsData = [
   { 
     id: 's1', name: 'MT MENGGALA', type: 'Oil Tanker', lat: '-6.1021', lng: '106.8833', status: 'UPP', 
-    photoUrl: 'https://picsum.photos/seed/menggala/800/400',
+    photoUrl: createPosterDataUrl('MT MENGGALA', 'Patroli aktif', 0, false),
     personnel: ['u1', 'u2', 'u3'], personnelNextMonth: ['u1', 'u4', 'u5'],
     route: 'Jakarta - Singapore', cargoType: 'Crude Oil', cargoAmount: '50,000 MT', 
     customCheckpoints: [{name: 'Cuaca', desc: 'Cek kondisi langit'}, {name: 'Ruang Mesin', desc: 'Cek suhu generator'}],
@@ -47,7 +50,7 @@ const initialShipsData = [
   },
   { 
     id: 's2', name: 'MT SRIWIJAYA', type: 'Chemical Tanker', lat: '-5.9123', lng: '105.8122', status: 'NON UPP', 
-    photoUrl: 'https://picsum.photos/seed/sriwijaya/800/400',
+    photoUrl: createPosterDataUrl('MT SRIWIJAYA', 'Armada siaga', 1, false),
     personnel: [], personnelNextMonth: [],
     route: 'Merak - Bakauheni', cargoType: 'Methanol', cargoAmount: '12,000 MT', 
     customCheckpoints: [{name: 'Pompa Kimia', desc: 'Pastikan tidak ada kebocoran'}],
@@ -55,15 +58,89 @@ const initialShipsData = [
   },
 ];
 
+const APP_STORAGE_KEY = 'smartpatrol.legacy.local.v1';
+const WEATHER_STORAGE_KEY = 'smartpatrol.legacy.weather.v1';
+const WEATHER_TTL_MS = 30 * 60 * 1000;
+
+function loadPersistedState() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(APP_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.version === 1 ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedState(data) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify({ version: 1, savedAt: new Date().toISOString(), data }));
+  } catch (error) {
+    console.error('Gagal menyimpan data lokal', error);
+  }
+}
+
+function loadWeatherCache() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(WEATHER_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.savedAt || !parsed?.data) return null;
+    if (Date.now() - new Date(parsed.savedAt).getTime() > WEATHER_TTL_MS) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function saveWeatherCache(data) {
+  if (typeof window === 'undefined' || !data) return;
+  try {
+    window.localStorage.setItem(WEATHER_STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data }));
+  } catch (error) {
+    console.error('Gagal menyimpan cache cuaca', error);
+  }
+}
+
+async function pickLocalImage() {
+  if (typeof document === 'undefined') return null;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  return new Promise((resolve) => {
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      try {
+        const dataUrl = await readImageFileAsDataUrl(file);
+        resolve(dataUrl);
+      } catch (error) {
+        console.error(error);
+        resolve(null);
+      }
+    };
+    input.click();
+  });
+}
+
+const persistedState = loadPersistedState();
+
 export default function App() {
   const [isAdmin, setIsAdmin] = useState(true);
   const [currentPage, setCurrentPage] = useState('home'); // home, history, incidents, users, ships
   
   // States
-  const [checkpoints, setCheckpoints] = useState(initialCheckpoints);
-  const [shipsData, setShipsData] = useState(initialShipsData);
-  const [usersData, setUsersData] = useState(mockUsersList);
-  const [incidentsData, setIncidentsData] = useState([]);
+  const [checkpoints, setCheckpoints] = useState(() => persistedState?.checkpoints || initialCheckpoints);
+  const [shipsData, setShipsData] = useState(() => persistedState?.shipsData || initialShipsData);
+  const [usersData, setUsersData] = useState(() => persistedState?.usersData || mockUsersList);
+  const [incidentsData, setIncidentsData] = useState(() => persistedState?.incidentsData || []);
   
   // UI States
   const [activeForms, setActiveForms] = useState({});
@@ -94,11 +171,11 @@ export default function App() {
   const [newShipDoc, setNewShipDoc] = useState({title: '', desc: ''});
 
   // State Cuaca
-  const [weatherInfo, setWeatherInfo] = useState(null);
-  const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherInfo, setWeatherInfo] = useState(() => loadWeatherCache());
+  const [weatherLoading, setWeatherLoading] = useState(() => !loadWeatherCache());
 
   const [selectedIncident, setSelectedIncident] = useState(null);
-  const [incidentMeta, setIncidentMeta] = useState({});
+  const [incidentMeta, setIncidentMeta] = useState(() => persistedState?.incidentMeta || {});
   const [newProgress, setNewProgress] = useState({ comment: '', photoUrl: null });
   
   const [showUserForm, setShowUserForm] = useState(false);
@@ -111,16 +188,21 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState(''); // State untuk pencarian
   const [patrolTab, setPatrolTab] = useState('checkpoint'); // State untuk tab Patroli
 
-  const currentUser = "Budi Santoso (Anda)";
+  const currentUser = 'Budi Santoso';
   
   // --- HELPERS & HANDLERS ---
-  const completedCount = checkpoints.filter(c => c.status === 'completed').length;
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const filteredCheckpoints = useMemo(
+    () => checkpoints.filter(cp => cp.name.toLowerCase().includes(deferredSearchQuery.toLowerCase())),
+    [checkpoints, deferredSearchQuery]
+  );
+  const completedCount = useMemo(() => checkpoints.filter(c => c.status === 'completed').length, [checkpoints]);
   const totalCount = checkpoints.length;
-  const progressPercentage = Math.round((completedCount / totalCount) * 100);
+  const progressPercentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-  const activePatrolId = Object.keys(activeForms)[0];
-  const activePatrolState = activePatrolId ? activeForms[activePatrolId] : null;
-  const activePatrolItem = activePatrolId ? checkpoints.find(c => c.id === Number(activePatrolId)) : null;
+  const activePatrolId = useMemo(() => Object.keys(activeForms)[0], [activeForms]);
+  const activePatrolState = useMemo(() => activePatrolId ? activeForms[activePatrolId] : null, [activeForms, activePatrolId]);
+  const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => c.id === Number(activePatrolId)) : null, [activePatrolId, checkpoints]);
 
   const handleActionClick = (id, type) => {
     setActiveForms({ [id]: { type, penyebab: '', kejadian: '', tindakLanjut: '', photoUrl: null } });
@@ -130,22 +212,21 @@ export default function App() {
     setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   };
 
-  const handlePhotoUpload = (id, isIncident = false) => {
-    setTimeout(() => {
-      const url = `https://picsum.photos/seed/${Math.random()}/400/400`;
-      if(isIncident) {
-        setIncidentForm(prev => ({...prev, photoUrl: url}));
-      } else {
-        handleFormChange(id, 'photoUrl', url);
-      }
-    }, 500);
+  const handlePhotoUpload = async (id, isIncident = false) => {
+    const url = await pickLocalImage();
+    if (!url) return;
+    if(isIncident) {
+      setIncidentForm(prev => ({...prev, photoUrl: url}));
+    } else {
+      handleFormChange(id, 'photoUrl', url);
+    }
   };
 
   const handleSubmitPatrol = (id) => {
     const timeString = new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'});
     const formState = activeForms[id];
     setCheckpoints(prev => prev.map(c => 
-      c.id === id ? { ...c, status: 'completed', completedBy: currentUser, time: timeString, photoUrl: formState.photoUrl, resultType: formState.type, penyebab: formState.penyebab, kejadian: formState.kejadian, tindakLanjut: formState.tindakLanjut } : c
+      c.id === id ? { ...c, status: 'completed', completedBy: currentUser, time: timeString, photoUrl: sanitizeUrl(formState.photoUrl), resultType: formState.type, penyebab: sanitizeMultilineText(formState.penyebab, 240), kejadian: sanitizeMultilineText(formState.kejadian, 280), tindakLanjut: sanitizeMultilineText(formState.tindakLanjut, 240) } : c
     ));
     const newForms = { ...activeForms }; delete newForms[id]; setActiveForms(newForms);
   };
@@ -156,25 +237,31 @@ export default function App() {
   };
 
   const handleAddCustomPatrolNode = () => {
-    if(newCustomNode.trim() !== '') {
-      setCheckpoints([...checkpoints, { id: Date.now(), name: newCustomNode.trim(), status: 'pending' }]);
+    const safeName = sanitizeText(newCustomNode, 80);
+    if(safeName !== '') {
+      setCheckpoints(prev => [...prev, { id: Date.now(), name: safeName, status: 'pending' }]);
       setNewCustomNode('');
     }
   };
 
   const handleSubmitIncident = () => {
-    const loc = incidentForm.locType === 'custom' ? incidentForm.customLocation : incidentForm.location;
+    const loc = incidentForm.locType === 'custom' ? sanitizeText(incidentForm.customLocation, 80) : sanitizeText(incidentForm.location, 80);
+    if (!loc || !sanitizeMultilineText(incidentForm.deskripsi, 320)) return;
     const newIncident = {
       id: Date.now(), time: new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}), date: new Date().toLocaleDateString('id-ID'),
-      reportedBy: currentUser, location: loc, ...incidentForm
+      reportedBy: currentUser, location: loc, ...incidentForm,
+      photoUrl: sanitizeUrl(incidentForm.photoUrl),
+      penyebab: sanitizeMultilineText(incidentForm.penyebab, 240),
+      deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320),
+      tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240),
     };
-    setIncidentsData([newIncident, ...incidentsData]);
+    setIncidentsData(prev => [newIncident, ...prev]);
     setShowIncidentModal(false);
     setIncidentForm({ locType: 'default', location: 'Cuaca', customLocation: '', penyebab: '', deskripsi: '', tindakLanjut: '', photoUrl: null });
   };
 
   // --- KUMPULKAN SEMUA TEMUAN (Manual + Patroli) ---
-  const patrolIncidents = checkpoints
+  const patrolIncidents = useMemo(() => checkpoints
     .filter(c => c.status === 'completed' && c.resultType === 'temuan')
     .map(c => ({
       id: `p-${c.id}`,
@@ -186,11 +273,11 @@ export default function App() {
       reportedBy: c.completedBy,
       photoUrl: c.photoUrl,
       isPatrol: true
-    }));
+    })), [checkpoints]);
   
-  const allIncidents = [...incidentsData, ...patrolIncidents];
+  const allIncidents = useMemo(() => [...incidentsData, ...patrolIncidents], [incidentsData, patrolIncidents]);
 
-  const activeShip = shipsData.find(s => s.id === activeShipId);
+  const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
   const updateActiveShip = (updates) => {
     setShipsData(prev => prev.map(s => s.id === activeShipId ? { ...s, ...updates } : s));
   };
@@ -209,27 +296,48 @@ export default function App() {
   };
 
   const handleAddShipCp = () => {
-    if(newShipCp.name) {
-      updateActiveShip({ customCheckpoints: [...activeShip.customCheckpoints, newShipCp] });
+    const safeName = sanitizeText(newShipCp.name, 80);
+    if(safeName) {
+      updateActiveShip({ customCheckpoints: [...activeShip.customCheckpoints, { name: safeName, desc: sanitizeMultilineText(newShipCp.desc, 140) }] });
       setNewShipCp({name: '', desc: ''});
     }
   };
   const handleAddShipDoc = () => {
-    if(newShipDoc.title) {
-      updateActiveShip({ documents: [...activeShip.documents, newShipDoc] });
+    const safeTitle = sanitizeText(newShipDoc.title, 80);
+    if(safeTitle) {
+      updateActiveShip({ documents: [...activeShip.documents, { title: safeTitle, desc: sanitizeMultilineText(newShipDoc.desc, 140) }] });
       setNewShipDoc({title: '', desc: ''});
     }
   };
 
-  const handleUserPhotoUpload = () => {
-    setTimeout(() => {
-      setUserFormData(prev => ({...prev, photoUrl: `https://i.pravatar.cc/150?u=${Math.random()}`}));
-    }, 500);
+  const handleUserPhotoUpload = async () => {
+    const url = await pickLocalImage();
+    if (url) setUserFormData(prev => ({...prev, photoUrl: url}));
   };
 
   const handleSaveUser = () => {
-    const newUser = { id: 'u' + Date.now(), ...userFormData, status: 'off-duty', shipAssigned: null };
-    setUsersData([...usersData, newUser]);
+    const safeName = sanitizeText(userFormData.name, 80);
+    if (!safeName) return;
+    const safeEmail = sanitizeEmail(userFormData.email);
+    if (safeEmail && usersData.some(u => (u.email || '').toLowerCase() === safeEmail)) return;
+    const newUser = {
+      id: 'u' + Date.now(),
+      ...userFormData,
+      name: safeName,
+      email: safeEmail,
+      password: '',
+      hasCredential: userFormData.password.trim().length > 0,
+      phone: sanitizePhone(userFormData.phone),
+      address: sanitizeMultilineText(userFormData.address, 180),
+      emergencyName: sanitizeText(userFormData.emergencyName, 80),
+      emergencyContact: sanitizePhone(userFormData.emergencyContact),
+      emergencyRelation: sanitizeText(userFormData.emergencyRelation, 40),
+      officeAddress: sanitizeMultilineText(userFormData.officeAddress, 180),
+      photoUrl: sanitizeUrl(userFormData.photoUrl),
+      status: 'off-duty',
+      shipAssigned: null
+    };
+    setUsersData(prev => [...prev, newUser]);
     setShowUserForm(false);
     setUserFormData({ 
       name: '', role: 'PETUGAS', type: 'BUJP', 
@@ -239,19 +347,39 @@ export default function App() {
   };
 
   const handleUpdateUser = () => {
-    setUsersData(prev => prev.map(u => u.id === selectedUser.id ? selectedUser : u));
+    if (!selectedUser?.id) return;
+    const safeEmail = sanitizeEmail(selectedUser.email || '');
+    if (safeEmail && usersData.some(u => u.id !== selectedUser.id && (u.email || '').toLowerCase() === safeEmail)) return;
+    setUsersData(prev => prev.map(u => u.id === selectedUser.id ? {
+      ...selectedUser,
+      name: sanitizeText(selectedUser.name, 80),
+      email: safeEmail,
+      password: '',
+      hasCredential: u.hasCredential || (selectedUser.password || '').trim().length > 0,
+      phone: sanitizePhone(selectedUser.phone || ''),
+      address: sanitizeMultilineText(selectedUser.address || '', 180),
+      emergencyName: sanitizeText(selectedUser.emergencyName || '', 80),
+      emergencyContact: sanitizePhone(selectedUser.emergencyContact || ''),
+      emergencyRelation: sanitizeText(selectedUser.emergencyRelation || '', 40),
+      officeAddress: sanitizeMultilineText(selectedUser.officeAddress || '', 180),
+      photoUrl: sanitizeUrl(selectedUser.photoUrl || '')
+    } : u));
     setSelectedUser(null);
   };
 
   const handleDeleteUser = (id) => {
     setUsersData(prev => prev.filter(u => u.id !== id));
+    setShipsData(prev => prev.map(ship => ({
+      ...ship,
+      personnel: ship.personnel.filter(userId => userId !== id),
+      personnelNextMonth: ship.personnelNextMonth.filter(userId => userId !== id)
+    })));
     setSelectedUser(null);
   };
 
-  const handleEditUserPhotoUpload = () => {
-    setTimeout(() => {
-      setSelectedUser(prev => ({...prev, photoUrl: `https://i.pravatar.cc/150?u=${Math.random()}`}));
-    }, 500);
+  const handleEditUserPhotoUpload = async () => {
+    const url = await pickLocalImage();
+    if (url) setSelectedUser(prev => ({...prev, photoUrl: url}));
   };
 
   const handleAddProgress = (incidentId) => {
@@ -262,7 +390,7 @@ export default function App() {
        [incidentId]: {
          ...prev[incidentId],
          status: prev[incidentId]?.status || 'open',
-         progress: [...(prev[incidentId]?.progress || []), { ...newProgress, time, date, author: currentUser }]
+         progress: [...(prev[incidentId]?.progress || []), { ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: sanitizeUrl(newProgress.photoUrl), time, date, author: currentUser }]
        }
      }));
      setNewProgress({ comment: '', photoUrl: null });
@@ -275,29 +403,37 @@ export default function App() {
      }));
   };
 
-  const handlePhotoProgress = () => {
-     setTimeout(() => { setNewProgress(prev => ({ ...prev, photoUrl: `https://picsum.photos/seed/${Math.random()}/400/400` })) }, 500);
+  const handlePhotoProgress = async () => {
+     const url = await pickLocalImage();
+     if (url) setNewProgress(prev => ({ ...prev, photoUrl: url }));
   };
 
   const handleSaveShip = () => {
+    const safeName = sanitizeText(shipFormData.name, 80);
+    if (!safeName) return;
     const newShip = {
       id: 's' + Date.now(),
       ...shipFormData,
+      name: safeName,
+      route: sanitizeText(shipFormData.route, 100),
+      cargoType: sanitizeText(shipFormData.cargoType, 80),
+      cargoAmount: sanitizeText(shipFormData.cargoAmount, 40),
       lat: '-6.0000',
       lng: '106.0000',
       personnel: [],
       personnelNextMonth: [],
       documents: [],
-      photoUrl: `https://picsum.photos/seed/${Math.random()}/800/400`
+      photoUrl: createPosterDataUrl(safeName, 'Armada Lokal', 2, false)
     };
-    setShipsData([...shipsData, newShip]);
+    setShipsData(prev => [...prev, newShip]);
     setShowShipForm(false);
     setShipFormData({ name: '', type: 'Oil Tanker', route: '', cargoType: '', cargoAmount: '', status: 'UPP', customCheckpoints: [] });
   };
 
   const handleAddCheckpointToForm = () => {
-    if(newCheckpoint.trim() !== '') {
-      setShipFormData(prev => ({...prev, customCheckpoints: [...prev.customCheckpoints, { name: newCheckpoint.trim(), desc: '' }]}));
+    const safeName = sanitizeText(newCheckpoint, 80);
+    if(safeName !== '') {
+      setShipFormData(prev => ({...prev, customCheckpoints: [...prev.customCheckpoints, { name: safeName, desc: '' }]}));
       setNewCheckpoint('');
     }
   };
@@ -310,14 +446,23 @@ export default function App() {
   };
 
   useEffect(() => {
+    savePersistedState({ checkpoints, shipsData, usersData, incidentsData, incidentMeta });
+  }, [checkpoints, shipsData, usersData, incidentsData, incidentMeta]);
+
+  useEffect(() => {
     const fetchWeather = async () => {
       try {
         const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=-6.1021&longitude=106.8833&current_weather=true');
         const data = await response.json();
         setWeatherInfo(data.current_weather);
+        saveWeatherCache(data.current_weather);
       } catch (error) { console.error(error); } finally { setWeatherLoading(false); }
     };
-    fetchWeather();
+    if (!weatherInfo) {
+      fetchWeather();
+    } else {
+      setWeatherLoading(false);
+    }
   }, []);
 
   const getWeatherDetail = (code) => {
@@ -482,10 +627,10 @@ export default function App() {
                 </div>
                 
                 <div className="space-y-3 flex-1">
-                  {checkpoints.filter(cp => cp.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                  {filteredCheckpoints.length === 0 && (
                     <p className="text-xs text-cyan-700 italic border border-dashed border-cyan-900/50 p-4 rounded-xl text-center">Titik patroli "{searchQuery}" tidak ditemukan.</p>
                   )}
-                  {checkpoints.filter(cp => cp.name.toLowerCase().includes(searchQuery.toLowerCase())).map((item, idx) => {
+                  {filteredCheckpoints.map((item, idx) => {
                     if (item.status === 'completed') {
                       const isTemuan = item.resultType === 'temuan';
                       return (
