@@ -1,0 +1,72 @@
+@import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+:root {
+  color: #e2f5ff;
+  background-color: #020617;
+  font-family: "Chakra Petch", "Segoe UI", sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at top, rgba(34, 211, 238, 0.2), transparent 32%),
+    linear-gradient(180deg, #020617 0%, #071224 48%, #020617 100%);
+  color: #e2f5ff;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.app-shell {
+  background:
+    linear-gradient(180deg, rgba(8, 15, 28, 0.96), rgba(3, 10, 18, 0.98)),
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.14), transparent 28%);
+}
+
+.glass-card {
+  background: rgba(5, 14, 24, 0.78);
+  backdrop-filter: blur(18px);
+}
+
+.soft-outline {
+  box-shadow:
+    0 20px 60px rgba(2, 6, 23, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.content-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 360px;
+}
+
+.scrollbar-slim {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 232, 249, 0.32) transparent;
+}
+
+.scrollbar-slim::-webkit-scrollbar {
+  width: 10px;
+}
+
+.scrollbar-slim::-webkit-scrollbar-thumb {
+  background: rgba(103, 232, 249, 0.28);
+  border-radius: 999px;
+}
+
+.scrollbar-slim::-webkit-scrollbar-track {
+  background: transparent;
+}

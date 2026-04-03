@@ -1,0 +1,38 @@
+export async function readImageFileAsDataUrl(file, maxEdge = 1280, quality = 0.82) {
+  if (!file || !file.type.startsWith("image/")) {
+    throw new Error("File yang dipilih bukan gambar.");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await loadImage(objectUrl);
+    const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height, 1);
+    const scale = Math.min(1, maxEdge / longestSide);
+    const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+    const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) {
+      throw new Error("Browser tidak mendukung kompresi gambar.");
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", quality);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function loadImage(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Gagal membaca gambar."));
+    image.src = source;
+  });
+}
