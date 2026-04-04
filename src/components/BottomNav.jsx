@@ -16,7 +16,7 @@ const BottomNav = React.memo(function BottomNav() {
   ];
 
   return (
-    <div className="fixed bottom-0 w-full sm:max-w-md bg-[#0b1229] border-t border-cyan-800/50 pb-safe z-40">
+    <div className="fixed bottom-0 w-full lg:hidden bg-[#0b1229] border-t border-cyan-800/50 pb-safe z-40">
       <div className="flex items-center justify-around p-1">
         {tabs.map(tab => (
            <button 

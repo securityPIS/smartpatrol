@@ -3,3 +3,5 @@ dist/
 .DS_Store
 npm-debug.log*
 *.local
+.firebase/
+firebase-debug.log*

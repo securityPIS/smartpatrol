@@ -19,23 +19,29 @@ import { ShipDocumentFormModal, ShipFormModal, UserFormModal } from './src/compo
 import { UserDetailModal, ReportDetailModal, PhotoPreviewModal } from './src/components/modals/DetailModals';
 import ConfirmModal from './src/components/modals/ConfirmModal';
 
+import SideNav from './src/components/SideNav';
+
 function AppShell() {
   const { sessionUserId, currentPage, isAdmin, theme, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, confirmDialog, setConfirmDialog } = useApp();
 
   if (!sessionUserId) return <LoginPage />;
 
-  const themeClass = theme === 'light' ? 'light-theme' : '';
+  const themeClass = theme === 'light' ? 'pertamina-light' : '';
 
   return (
-    <>
-      <div
-        style={{ fontFamily: '"Chakra Petch", sans-serif' }}
-        className={`w-full min-h-screen bg-[#070b19] text-cyan-50 sm:max-w-md sm:mx-auto sm:border-x sm:border-cyan-900/50 sm:shadow-[0_0_40px_rgba(6,182,212,0.1)] relative ${themeClass}`}
-        onClick={() => { if (showSettingsDropdown) setShowSettingsDropdown(false); if (showNotificationsDropdown) setShowNotificationsDropdown(false); }}
-      >
+    <div
+      style={{ fontFamily: '"Chakra Petch", sans-serif' }}
+      className={`w-full max-w-[1280px] mx-auto min-h-screen bg-[#070b19] text-cyan-50 lg:border-x lg:border-cyan-900/50 lg:shadow-[0_0_60px_rgba(6,182,212,0.15)] relative flex flex-col lg:flex-row lg:h-screen lg:overflow-hidden ${themeClass}`}
+      onClick={() => { if (showSettingsDropdown) setShowSettingsDropdown(false); if (showNotificationsDropdown) setShowNotificationsDropdown(false); }}
+    >
+      {/* SideNav for Desktop */}
+      <SideNav />
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         <Header />
 
-        <div className="flex-1 overflow-y-auto pb-24">
+        <main className="flex-1 overflow-y-auto pb-24 lg:pb-0 relative scrollbar-thin scrollbar-thumb-cyan-900/50">
           <Suspense fallback={<LoadingSkeleton />}>
             {currentPage === 'home' && <PatrolPage />}
             {currentPage === 'incidents' && <IncidentsPage />}
@@ -44,32 +50,32 @@ function AppShell() {
             {currentPage === 'users' && isAdmin && <UsersPage />}
             {currentPage === 'ships' && isAdmin && <ShipsPage />}
           </Suspense>
-        </div>
-
-        {/* Modals */}
-        <PatrolFormModal />
-        <IncidentFormModal />
-        <IncidentDetailModal />
-        <ShipFormModal />
-        <ShipDocumentFormModal />
-        <UserFormModal />
-        <UserDetailModal />
-        <ReportDetailModal />
-        <PhotoPreviewModal />
-        <ConfirmModal 
-          isOpen={!!confirmDialog} 
-          title={confirmDialog?.title} 
-          message={confirmDialog?.message} 
-          onConfirm={() => confirmDialog?.onConfirm?.()} 
-          onCancel={() => setConfirmDialog(null)} 
-          confirmText={confirmDialog?.confirmText}
-          cancelText={confirmDialog?.cancelText}
-          isAlert={confirmDialog?.isAlert}
-        />
+        </main>
 
         <BottomNav />
       </div>
-    </>
+
+      {/* Modals - Hidden on SM via component internal logic or visibility classes */}
+      <PatrolFormModal />
+      <IncidentFormModal />
+      <IncidentDetailModal />
+      <ShipFormModal />
+      <ShipDocumentFormModal />
+      <UserFormModal />
+      <UserDetailModal />
+      <ReportDetailModal />
+      <PhotoPreviewModal />
+      <ConfirmModal 
+        isOpen={!!confirmDialog} 
+        title={confirmDialog?.title} 
+        message={confirmDialog?.message} 
+        onConfirm={() => confirmDialog?.onConfirm?.()} 
+        onCancel={() => setConfirmDialog(null)} 
+        confirmText={confirmDialog?.confirmText}
+        cancelText={confirmDialog?.cancelText}
+        isAlert={confirmDialog?.isAlert}
+      />
+    </div>
   );
 }
 

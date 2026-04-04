@@ -14,7 +14,7 @@ const Header = React.memo(function Header() {
   return (
     <div className="sticky top-0 z-40 bg-[#0b1229]/90 backdrop-blur-md border-b border-cyan-800 px-4 py-3 flex justify-between items-center shadow-[0_4px_15px_rgba(6,182,212,0.1)]">
       <div className="flex items-center gap-3">
-        <div className="relative flex items-center justify-center w-10 h-10">
+        <div className="relative flex items-center justify-center w-10 h-10 lg:hidden">
           <Shield className="w-10 h-10 text-cyan-400 stroke-[1.5] opacity-20 absolute" />
           <Shield className="w-10 h-10 text-cyan-400 stroke-1 absolute" />
           <Ship className="w-5 h-5 text-cyan-400 relative z-10 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]" />

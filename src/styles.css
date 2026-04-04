@@ -53,22 +53,30 @@ textarea {
   contain-intrinsic-size: 360px;
 }
 
-.scrollbar-slim {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(103, 232, 249, 0.32) transparent;
+/* Modern Minimal Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-.scrollbar-slim::-webkit-scrollbar {
-  width: 10px;
-}
-
-.scrollbar-slim::-webkit-scrollbar-thumb {
-  background: rgba(103, 232, 249, 0.28);
-  border-radius: 999px;
-}
-
-.scrollbar-slim::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.1);
+  border-radius: 10px;
+  transition: background 0.3s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 211, 238, 0.3);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.1) transparent;
 }
 
 /* PERTAMINA LIGHT THEME OVERRIDES */
@@ -76,10 +84,12 @@ textarea {
   color-scheme: light;
 }
 
-/* Backgrounds */
+/* Base Overrides */
 .pertamina-light.bg-\[\#070b19\],
 .pertamina-light .bg-\[\#070b19\],
 .pertamina-light .bg-\[\#070b19\]\/50,
+.pertamina-light .bg-\[\#070b19\]\/60,
+.pertamina-light .bg-\[\#070b19\]\/90,
 .pertamina-light .bg-\[\#070b19\]\/95 {
   background-color: #f3f4f6 !important;
 }
@@ -89,86 +99,138 @@ textarea {
   background-color: #ffffff !important;
 }
 
-/* Text Colors */
+/* Background Gradients */
+.pertamina-light.bg-gradient-to-b,
+.pertamina-light .bg-gradient-to-b {
+  background-image: linear-gradient(to bottom, #e5e7eb, #f3f4f6, #ffffff) !important;
+}
+
+/* Text Colors - General */
 .pertamina-light .text-cyan-50,
-.pertamina-light .text-white {
-  color: #111827 !important;
+.pertamina-light .text-white,
+.pertamina-light .text-slate-100 {
+  color: #1a202c !important;
 }
 .pertamina-light .text-cyan-100, 
-.pertamina-light .text-cyan-200 {
-  color: #374151 !important;
+.pertamina-light .text-cyan-200,
+.pertamina-light .text-slate-200,
+.pertamina-light .text-yellow-100,
+.pertamina-light .text-yellow-100\/70,
+.pertamina-light .text-emerald-100,
+.pertamina-light .text-emerald-100\/70 {
+  color: #2d3748 !important;
+  opacity: 1 !important;
 }
+
+/* Cyan Text -> Pertamina Blues */
 .pertamina-light .text-cyan-300, 
 .pertamina-light .text-cyan-400 {
   color: #00AEEF !important; /* Pertamina Light Blue */
+  opacity: 1 !important;
 }
 .pertamina-light .text-cyan-500, 
 .pertamina-light .text-cyan-600 {
   color: #00529C !important; /* Pertamina Deep Blue */
+  opacity: 1 !important;
 }
-.pertamina-light .text-cyan-700 {
-  color: #6b7280 !important;
+.pertamina-light .text-cyan-700,
+.pertamina-light .text-cyan-800,
+.pertamina-light .text-cyan-900 {
+  color: #4a5568 !important;
+  opacity: 1 !important;
+}
+
+/* Yellow Text -> High Contrast */
+.pertamina-light .text-yellow-400,
+.pertamina-light .text-yellow-500,
+.pertamina-light .text-yellow-600 {
+  color: #854d0e !important; /* Darker Gold for readability */
+  opacity: 1 !important;
+}
+.pertamina-light .font-bold.text-yellow-400,
+.pertamina-light .font-black.text-yellow-400 {
+  color: #00529C !important; /* Headings use Pertamina Blue */
+}
+
+/* Subtext & Time - Force Readability */
+.pertamina-light .text-\[10px\].text-cyan-500,
+.pertamina-light .text-\[10px\].text-yellow-100\/70,
+.pertamina-light .text-xs.text-white\/90,
+.pertamina-light .text-cyan-400\/70 {
+  color: #4b5563 !important; /* Medium Dark Gray */
+  opacity: 1 !important;
 }
 
 /* Borders */
+.pertamina-light .border-cyan-700,
 .pertamina-light .border-cyan-800, 
 .pertamina-light .border-cyan-800\/50, 
-.pertamina-light .border-cyan-700,
 .pertamina-light .border-cyan-900,
 .pertamina-light .border-cyan-900\/50,
-.pertamina-light .border-cyan-500\/30 {
-  border-color: #e5e7eb !important;
+.pertamina-light .border-yellow-500\/20,
+.pertamina-light .border-yellow-500\/30,
+.pertamina-light .border-yellow-900\/50 {
+  border-color: #cbd5e1 !important;
 }
 
-/* Button Backgrounds & Accents */
-.pertamina-light .bg-cyan-950\/50, 
+/* Modals & Cards */
+.pertamina-light .glass-card {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Specialized Components */
+.pertamina-light .bg-yellow-500\/10,
+.pertamina-light .bg-yellow-950\/20,
+.pertamina-light .bg-yellow-950\/10 {
+  background-color: #fefce8 !important;
+  border-color: #fef08a !important;
+}
+
+.pertamina-light .bg-cyan-950\/20,
+.pertamina-light .bg-cyan-950\/50,
 .pertamina-light .bg-cyan-900\/20,
 .pertamina-light .bg-cyan-900\/40, 
 .pertamina-light .bg-cyan-900\/50,
 .pertamina-light .bg-cyan-800\/50, 
 .pertamina-light .bg-cyan-600\/20,
 .pertamina-light .bg-cyan-500\/10 {
-  background-color: #e0f2fe !important;
-  color: #00529C !important;
-  border-color: #bae6fd !important;
+  background-color: #f0f9ff !important;
 }
 
-/* Pertamina Identitas (Red & Green) */
-.pertamina-light .bg-emerald-500,
+/* Emerald (Green) Overrides */
+.pertamina-light .text-emerald-400, 
+.pertamina-light .text-emerald-500,
+.pertamina-light .text-emerald-600 {
+  color: #166534 !important; /* Darker Green */
+}
 .pertamina-light .bg-emerald-500\/10,
-.pertamina-light .bg-emerald-900\/30 {
-  background-color: #dcfce7 !important;
-  color: #39B54A !important;
+.pertamina-light .bg-emerald-950\/20 {
+  background-color: #f0fdf4 !important;
   border-color: #bbf7d0 !important;
 }
-.pertamina-light .text-emerald-400, 
-.pertamina-light .text-emerald-500 {
-  color: #39B54A !important;
-}
 
+/* Rose/Red Overrides */
+.pertamina-light .text-rose-400,
+.pertamina-light .text-rose-500,
 .pertamina-light .text-red-400, 
-.pertamina-light .text-red-500, 
-.pertamina-light .text-rose-500 {
-  color: #ED1C24 !important; 
+.pertamina-light .text-red-500 {
+  color: #ED1C24 !important; /* Pertamina Red */
 }
-.pertamina-light .bg-red-500, 
-.pertamina-light .bg-rose-500, 
-.pertamina-light .bg-red-900\/30,
-.pertamina-light .bg-rose-500\/10 {
-  background-color: #fee2e2 !important;
-  color: #ED1C24 !important;
+.pertamina-light .bg-rose-500\/10,
+.pertamina-light .bg-red-900\/30 {
+  background-color: #fef2f2 !important;
   border-color: #fecaca !important;
 }
 
 /* Shadows */
-.pertamina-light .shadow-\[0_0_40px_rgba\(6\,182\,212\,0\.1\)\] {
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.05) !important;
-}
-.pertamina-light .shadow-\[0_4px_15px_rgba\(6\,182\,212\,0\.1\)\] {
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05) !important;
+.pertamina-light .shadow-2xl,
+.pertamina-light .shadow-xl,
+.pertamina-light .shadow-lg {
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
 }
 
-/* Forms */
+/* Form Elements */
 .pertamina-light input, 
 .pertamina-light textarea, 
 .pertamina-light select {
@@ -176,10 +238,8 @@ textarea {
   color: #111827 !important;
   border-color: #d1d5db !important;
 }
-.pertamina-light input:focus, 
-.pertamina-light textarea:focus, 
-.pertamina-light select:focus {
-  border-color: #00AEEF !important;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0,174,239,0.2) !important;
+.pertamina-light input::placeholder,
+.pertamina-light textarea::placeholder {
+  color: #9ca3af !important;
 }
+

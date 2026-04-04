@@ -199,7 +199,7 @@ function summarizePatrolCheckpoints(checkpoints) {
 
 function buildCrewSnapshot(users, shipName) {
   return users
-    .filter(user => user.shipAssigned === shipName && user.status === 'active')
+    .filter(user => user.shipAssigned === shipName && user.status === 'active' && user.role === ACCESS_ROLES.PETUGAS)
     .map(user => ({
       id: user.id,
       name: user.name,
@@ -410,7 +410,7 @@ export { ACCESS_ROLES, defaultLocationOptions };
 export function AppProvider({ children }) {
   // Theme & connectivity
   const [currentPage, setCurrentPage] = useState('home');
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState(() => persistedState?.theme || 'dark');
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
@@ -424,6 +424,14 @@ export function AppProvider({ children }) {
     window.addEventListener('offline', handleOffline);
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, []);
+
+  useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('pertamina-light');
+    } else {
+      document.documentElement.classList.remove('pertamina-light');
+    }
+  }, [theme]);
 
   // Auth
   const [sessionUserId, setSessionUserId] = useState(() => loadAuthSession());
@@ -866,8 +874,10 @@ export function AppProvider({ children }) {
     }); 
   }, []);
   const handleOpenPatrolResult = useCallback((item) => {
+    setActiveForms({});
     const isReadOnly = Boolean(item?.readOnly || item?.historyId || selectedHistoryEntry);
     if (item.resultType === 'temuan') {
+      setSelectedReportDetail(null);
       setSelectedIncident({
         id: item.incidentId || `p-${item.id}`,
         date: item.date || selectedHistoryEntry?.date || new Date().toLocaleDateString('id-ID'),
@@ -884,13 +894,14 @@ export function AppProvider({ children }) {
       });
       return;
     }
+    setSelectedIncident(null);
     setSelectedReportDetail({
       ...item,
       shipName: item.shipName || selectedHistoryEntry?.ship || operationalShipName,
       date: item.date || selectedHistoryEntry?.date || new Date().toLocaleDateString('id-ID'),
       readOnly: isReadOnly,
     });
-  }, [operationalShipName, selectedHistoryEntry]);
+  }, [selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
   const handleAddCustomPatrolNode = useCallback(() => { setNewCustomNode(prev => { const safeName = sanitizeText(prev, 80); if(safeName !== '') { setCheckpoints(cp => [...cp, { id: Date.now(), name: safeName, status: 'pending' }]); return ''; } return prev; }); }, []);
 
   // Incident handlers
@@ -1107,7 +1118,7 @@ export function AppProvider({ children }) {
   const handleRegister = useCallback(async () => { const safeName = sanitizeText(authForm.name, 80); const safeEmail = sanitizeEmail(authForm.email); const passwordInput = sanitizeText(authForm.password, 120); const confirmPassword = sanitizeText(authForm.confirmPassword, 120); if (!safeName || !safeEmail || !passwordInput || !confirmPassword) { setAuthError('Nama, email, password, dan konfirmasi password wajib diisi.'); return; } if (passwordInput.length < 8) { setAuthError('Password minimal 8 karakter.'); return; } if (passwordInput !== confirmPassword) { setAuthError('Konfirmasi password belum sama.'); return; } if (usersData.some(user => (user.email || '').toLowerCase() === safeEmail)) { setAuthError('Email ini sudah terdaftar.'); return; } setAuthBusy(true); setAuthError(''); setAuthNotice(''); try { const credential = await createPasswordCredential(passwordInput); const nextUser = normalizeUserRecord({ id: `u${Date.now()}`, name: safeName, role: ACCESS_ROLES.PETUGAS, type: sanitizeText(authForm.type, 20) || 'BUJP', status: 'off-duty', shipAssigned: null, email: safeEmail, password: '', hasCredential: credential.hasCredential, passwordSalt: credential.passwordSalt, passwordHash: credential.passwordHash, phone: sanitizePhone(authForm.phone), emergencyRelation: 'Orang Tua', photoUrl: createUserAvatar(safeName, usersData.length) }, usersData.length); setUsersData(prev => [...prev, nextUser]); setAuthMode('login'); setAuthForm(createAuthFormState({ email: safeEmail })); setAuthNotice('Registrasi berhasil. Akun petugas baru bisa login setelah admin memberi penugasan kapal.'); } finally { setAuthBusy(false); } }, [authForm, usersData]);
 
   // Persistence effects
-  useEffect(() => { savePersistedState({ checkpoints, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications }); }, [checkpoints, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications]);
+  useEffect(() => { savePersistedState({ checkpoints, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications, theme }); }, [checkpoints, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications, theme]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => { if (!sessionUserId) return; const activeUser = usersData.find(user => user.id === sessionUserId); if (!activeUser) { handleLogout('Sesi login tidak lagi valid.'); return; } if (activeUser.role === ACCESS_ROLES.PETUGAS && (!activeUser.shipAssigned || activeUser.status !== 'active')) { handleLogout('Petugas off-duty atau tanpa penugasan kapal tidak bisa tetap login.'); } }, [sessionUserId, usersData]);
   useEffect(() => { if (!currentUserRecord) return; if (!isAdmin && (currentPage === 'users' || currentPage === 'ships')) { setCurrentPage('home'); setActiveShipId(null); setShowShipForm(false); setShowShipDocForm(false); setShowUserForm(false); setSelectedUser(null); } }, [currentPage, currentUserRecord, isAdmin]);
@@ -1176,7 +1187,7 @@ export function AppProvider({ children }) {
     // Weather
     weatherInfo, weatherLoading, getWeatherDetail,
     // History
-    historyEntries, selectedHistoryEntry, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
+    historyEntries, selectedHistoryEntry, setSelectedHistoryId, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     // Notifications
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
   }), [
