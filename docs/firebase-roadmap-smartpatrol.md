@@ -30,16 +30,23 @@ Hasil:
 
 ### Fase 1
 
-Migrasi autentikasi dari local state ke Firebase Auth.
+Migrasi autentikasi bertahap dari local state ke Firebase Auth.
 
 Perubahan utama:
-- Ganti login/register local di [AppContext.jsx](/C:/dev/SmartPatrol/src/context/AppContext.jsx) dengan Firebase Auth email/password
+- Registrasi user baru memakai Firebase Auth email/password
+- Login mencoba Firebase Auth dulu, lalu fallback ke kredensial legacy lokal untuk akun demo/staging yang belum dimigrasikan
 - Tambah `onAuthStateChanged`
-- Peta role `ADMIN`, `PIC`, `PETUGAS` tetap dipertahankan di dokumen profil Firestore
+- Profil user lokal menyimpan metadata `authProvider` dan `firebaseUid`
 
 Deliverable:
-- Login berbasis Firebase Auth
-- Session user tidak lagi bergantung pada `localStorage` custom
+- Login hybrid Firebase + legacy fallback
+- Registrasi berbasis Firebase Auth
+- Session user cloud tetap disinkronkan ke profil lokal yang dipakai aplikasi
+
+Catatan implementasi saat ini:
+- Data domain (`usersData`, `historyEntries`, `shipsData`, dan lain-lain) masih disimpan lokal
+- Panel admin belum mengubah email/password untuk akun Firebase secara langsung
+- ADMIN/PIC existing belum dimigrasikan penuh ke Firebase Auth; untuk sekarang akun seperti itu dikelola manual
 
 ### Fase 2
 
@@ -130,6 +137,7 @@ storage.rules
 
 ## Status deploy saat ini
 
-- Firebase Hosting: siap dikonfigurasi dan dideploy
+- Firebase Hosting: aktif di `smartpatrol-7ff9e`
+- Firebase Auth: integrasi hybrid sudah masuk ke aplikasi
 - Git remote: belum ada di repo ini, jadi belum bisa push ke server git mana pun
-- Firebase backend migration: belum dilakukan pada repo ini
+- Firestore/Storage/FCM migration: belum dilakukan pada repo ini

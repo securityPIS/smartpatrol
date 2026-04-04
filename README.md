@@ -1,6 +1,6 @@
 # SmartPatrol Local Staging
 
-Versi ini belum dihubungkan ke Firebase. Semua input data disimpan ke `localStorage` browser agar aman untuk pengujian lokal terlebih dulu.
+Versi ini sudah bisa dipublish ke Firebase Hosting dan mulai memakai Firebase Auth secara bertahap, tetapi data domain utama masih tetap local-first di browser.
 
 ## Jalankan Lokal
 
@@ -35,7 +35,9 @@ npm run firebase:emulate
 
 - Data patroli, temuan, user, armada, dan progress disimpan lokal di browser.
 - Upload gambar dikompresi di client agar lebih hemat penyimpanan lokal.
-- Password user tidak disimpan mentah; aplikasi hanya menyimpan status bahwa kredensial pernah diatur.
+- Registrasi dari halaman login sekarang membuat akun Email/Password di Firebase Auth.
+- Akun demo lama dan akun yang dibuat admin dengan password lokal masih didukung lewat fallback legacy agar staging tidak putus.
+- Akun yang sudah terhubung ke Firebase Auth belum bisa ganti email/password dari panel admin. Untuk fase ini, perubahan kredensial dilakukan dari Firebase Console.
 - File `App.jsx` lama di root tetap dibiarkan sebagai referensi prototype awal.
-- Deploy Firebase Hosting saat ini hanya mempublikasikan aplikasi local-first. Sinkronisasi cloud/Auth/Storage masih perlu fase migrasi backend berikutnya.
-- Kredensial web app Firebase yang Anda kirim sudah saya simpan sebagai template di [.env.example](/C:/dev/SmartPatrol/.env.example) untuk fase integrasi Auth/Firestore/Storage berikutnya.
+- Deploy Firebase Hosting saat ini mempublikasikan aplikasi hybrid: Hosting + Firebase Auth bertahap, sedangkan sinkronisasi data cloud/Storage masih fase berikutnya.
+- Kredensial web app Firebase tersedia sebagai template di [.env.example](/C:/dev/SmartPatrol/.env.example). Untuk deploy lokal saya memakai `.env.local` yang tidak ikut masuk git.
