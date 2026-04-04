@@ -1632,10 +1632,16 @@ export function AppProvider({ children }) {
       handleLogout('Sesi login tidak lagi valid.');
       return;
     }
-    if (isFirebaseManagedUser(activeUser) && isFirebaseAuthEnabled && firebaseAuthReady && !firebaseAuthUser) {
+    // Graceful session handling: Jangan tendang user jika mereka punya kredensial lokal (hybrid/legacy)
+    // atau jika mereka adalah Admin/PIC yang sedang mengelola sistem.
+    const isStrictFirebaseUser = isFirebaseManagedUser(activeUser) && !activeUser.hasCredential;
+    const isAuthMissing = isFirebaseAuthEnabled && firebaseAuthReady && !firebaseAuthUser;
+    
+    if (isStrictFirebaseUser && isAuthMissing && !isAdmin && !isPic) {
       resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
       return;
     }
+    
     if (!canUserAccessApplication(activeUser)) {
       handleLogout('Petugas off-duty atau tanpa penugasan kapal tidak bisa tetap login.');
     }

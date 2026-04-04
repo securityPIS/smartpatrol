@@ -1,7 +1,9 @@
 import {
   createUserWithEmailAndPassword,
   getAuth,
+  inMemoryPersistence,
   onAuthStateChanged,
+  setPersistence,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
@@ -62,6 +64,9 @@ async function provisionFirebaseEmailUser({ email, password, displayName = '' })
   const tempAuth = getAuth(tempApp);
 
   try {
+    // Memastikan sesi sementara tidak menimpa sesi Admin utama (isolated persistence)
+    await setPersistence(tempAuth, inMemoryPersistence);
+    
     const credential = await createUserWithEmailAndPassword(tempAuth, email, password);
     if (displayName) {
       await updateProfile(credential.user, { displayName });
