@@ -36,3 +36,16 @@ function loadImage(source) {
     image.src = source;
   });
 }
+
+export function readFileAsDataUrl(file) {
+  if (!file) {
+    return Promise.reject(new Error("File tidak ditemukan."));
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Gagal membaca file."));
+    reader.readAsDataURL(file);
+  });
+}
