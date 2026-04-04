@@ -12,6 +12,7 @@ import {
   isFirebaseAuthEnabled,
   loginWithFirebaseEmail,
   logoutFirebaseUser,
+  provisionFirebaseEmailUser,
   registerWithFirebaseEmail,
   subscribeToFirebaseAuthChanges,
 } from '../services/firebase/auth';
@@ -552,6 +553,8 @@ export function AppProvider({ children }) {
   const [newProgress, setNewProgress] = useState({ comment: '', photoUrl: null });
   const [showUserForm, setShowUserForm] = useState(false);
   const [userFormData, setUserFormData] = useState(() => createUserFormState());
+  const [userFormError, setUserFormError] = useState('');
+  const [userFormNotice, setUserFormNotice] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [patrolTab, setPatrolTab] = useState('checkpoint');
@@ -1080,9 +1083,195 @@ export function AppProvider({ children }) {
   }, [isAdmin, shipsData, activeShipId, closeShipDocForm]);
 
   // User handlers
+  const clearUserManagementFeedback = useCallback(() => {
+    setUserFormError('');
+    setUserFormNotice('');
+  }, []);
   const handleUserPhotoUpload = useCallback(async () => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setUserFormData(prev => ({...prev, photoUrl: url})); }, []);
-  const handleSaveUser = useCallback(async () => { if (!isAdmin) return; const safeName = sanitizeText(userFormData.name, 80); const safeEmail = sanitizeEmail(userFormData.email); const passwordInput = sanitizeText(userFormData.password, 120); if (!safeName || !safeEmail) return; if (safeEmail && usersData.some(u => (u.email || '').toLowerCase() === safeEmail)) return; const credential = passwordInput ? await createPasswordCredential(passwordInput) : { passwordSalt: '', passwordHash: '', hasCredential: false }; const role = ACCESS_ROLE_VALUES.includes(userFormData.role) ? userFormData.role : ACCESS_ROLES.PETUGAS; const newUser = { id: 'u' + Date.now(), ...userFormData, name: safeName, role, email: safeEmail, password: '', hasCredential: credential.hasCredential, passwordSalt: credential.passwordSalt, passwordHash: credential.passwordHash, authProvider: credential.hasCredential ? 'legacy' : 'none', firebaseUid: null, phone: sanitizePhone(userFormData.phone), address: sanitizeMultilineText(userFormData.address, 180), emergencyName: sanitizeText(userFormData.emergencyName, 80), emergencyContact: sanitizePhone(userFormData.emergencyContact), emergencyRelation: sanitizeText(userFormData.emergencyRelation, 40), officeAddress: sanitizeMultilineText(userFormData.officeAddress, 180), photoUrl: userFormData.photoUrl || createUserAvatar(safeName, usersData.length), status: role === ACCESS_ROLES.PETUGAS ? 'off-duty' : 'active', shipAssigned: null }; setUsersData(prev => [...prev, normalizeUserRecord(newUser, prev.length)]); setShowUserForm(false); setUserFormData(createUserFormState()); }, [isAdmin, userFormData, usersData]);
-  const handleUpdateUser = useCallback(async () => { if (!isAdmin) return; if (!selectedUser?.id) return; const currentRecord = usersData.find(u => u.id === selectedUser.id) || null; const isFirebaseUser = isFirebaseManagedUser(currentRecord || selectedUser); const nextEmail = isFirebaseUser ? sanitizeEmail(currentRecord?.email || selectedUser.email || '') : sanitizeEmail(selectedUser.email || ''); const safeName = sanitizeText(selectedUser.name, 80); if (!safeName || !nextEmail) return; if (nextEmail && usersData.some(u => u.id !== selectedUser.id && (u.email || '').toLowerCase() === nextEmail)) return; const passwordInput = sanitizeText(selectedUser.password || '', 120); const credential = !isFirebaseUser && passwordInput ? await createPasswordCredential(passwordInput) : null; setUsersData(prev => prev.map((u, index) => { if (u.id !== selectedUser.id) return u; const nextRole = ACCESS_ROLE_VALUES.includes(selectedUser.role) ? selectedUser.role : ACCESS_ROLES.PETUGAS; const nextShipAssigned = selectedUser.shipAssigned || null; const nextUser = { ...u, ...selectedUser, name: safeName, role: nextRole, email: nextEmail, password: '', hasCredential: isFirebaseUser ? false : (credential?.hasCredential || u.hasCredential || false), passwordSalt: isFirebaseUser ? '' : (credential?.passwordSalt || u.passwordSalt || ''), passwordHash: isFirebaseUser ? '' : (credential?.passwordHash || u.passwordHash || ''), authProvider: isFirebaseUser ? 'firebase' : (u.authProvider || (credential?.hasCredential ? 'legacy' : 'none')), firebaseUid: isFirebaseUser ? (u.firebaseUid || selectedUser.firebaseUid || null) : null, shipAssigned: nextShipAssigned, status: nextRole === ACCESS_ROLES.PETUGAS ? (nextShipAssigned ? (selectedUser.status || u.status || 'active') : 'off-duty') : (selectedUser.status || u.status || 'active'), phone: sanitizePhone(selectedUser.phone || ''), address: sanitizeMultilineText(selectedUser.address || '', 180), emergencyName: sanitizeText(selectedUser.emergencyName || '', 80), emergencyContact: sanitizePhone(selectedUser.emergencyContact || ''), emergencyRelation: sanitizeText(selectedUser.emergencyRelation || '', 40), officeAddress: sanitizeMultilineText(selectedUser.officeAddress || '', 180), photoUrl: selectedUser.photoUrl || u.photoUrl || createUserAvatar(safeName, index) }; return normalizeUserRecord(nextUser, index); })); setSelectedUser(null); }, [isAdmin, selectedUser, usersData]);
+  const handleSaveUser = useCallback(async () => {
+    if (!isAdmin) return;
+
+    clearUserManagementFeedback();
+    const safeName = sanitizeText(userFormData.name, 80);
+    const safeEmail = sanitizeEmail(userFormData.email);
+    const passwordInput = sanitizeText(userFormData.password, 120);
+
+    if (!safeName || !safeEmail) {
+      setUserFormError('Nama dan email user wajib diisi.');
+      return;
+    }
+    if (safeEmail && usersData.some(u => (u.email || '').toLowerCase() === safeEmail)) {
+      setUserFormError('Email user sudah dipakai oleh akun lain.');
+      return;
+    }
+    if (passwordInput && passwordInput.length < 8) {
+      setUserFormError('Password user minimal 8 karakter.');
+      return;
+    }
+
+    let authPayload = {
+      hasCredential: false,
+      passwordSalt: '',
+      passwordHash: '',
+      authProvider: 'none',
+      firebaseUid: null,
+    };
+
+    if (passwordInput) {
+      if (isFirebaseAuthEnabled) {
+        try {
+          const provisioned = await provisionFirebaseEmailUser({
+            email: safeEmail,
+            password: passwordInput,
+            displayName: safeName,
+          });
+          authPayload = {
+            hasCredential: false,
+            passwordSalt: '',
+            passwordHash: '',
+            authProvider: 'firebase',
+            firebaseUid: provisioned.user.uid,
+          };
+          setUserFormNotice('User baru berhasil dibuat dan langsung terhubung ke Firebase Auth.');
+        } catch (error) {
+          setUserFormError(getFirebaseAuthErrorMessage(error));
+          return;
+        }
+      } else {
+        const credential = await createPasswordCredential(passwordInput);
+        authPayload = {
+          hasCredential: credential.hasCredential,
+          passwordSalt: credential.passwordSalt,
+          passwordHash: credential.passwordHash,
+          authProvider: 'legacy',
+          firebaseUid: null,
+        };
+        setUserFormNotice('Firebase Auth belum aktif, jadi user disimpan dengan kredensial lokal.');
+      }
+    } else {
+      setUserFormNotice('User disimpan tanpa password. Kredensial bisa diaktifkan nanti dari panel admin atau register mandiri.');
+    }
+
+    const role = ACCESS_ROLE_VALUES.includes(userFormData.role) ? userFormData.role : ACCESS_ROLES.PETUGAS;
+    const newUser = {
+      id: `u${Date.now()}`,
+      ...userFormData,
+      name: safeName,
+      role,
+      email: safeEmail,
+      password: '',
+      ...authPayload,
+      phone: sanitizePhone(userFormData.phone),
+      address: sanitizeMultilineText(userFormData.address, 180),
+      emergencyName: sanitizeText(userFormData.emergencyName, 80),
+      emergencyContact: sanitizePhone(userFormData.emergencyContact),
+      emergencyRelation: sanitizeText(userFormData.emergencyRelation, 40),
+      officeAddress: sanitizeMultilineText(userFormData.officeAddress, 180),
+      photoUrl: userFormData.photoUrl || createUserAvatar(safeName, usersData.length),
+      status: role === ACCESS_ROLES.PETUGAS ? 'off-duty' : 'active',
+      shipAssigned: null,
+    };
+    const nextUserRecord = normalizeUserRecord(newUser, usersData.length);
+    setUsersData(prev => [...prev, nextUserRecord]);
+    setShowUserForm(false);
+    setUserFormData(createUserFormState());
+    setSelectedUser(nextUserRecord);
+  }, [clearUserManagementFeedback, isAdmin, userFormData, usersData]);
+  const handleUpdateUser = useCallback(async () => {
+    if (!isAdmin) return;
+    if (!selectedUser?.id) return;
+
+    clearUserManagementFeedback();
+    const currentRecord = usersData.find(u => u.id === selectedUser.id) || null;
+    const isFirebaseUser = isFirebaseManagedUser(currentRecord || selectedUser);
+    const nextEmail = isFirebaseUser ? sanitizeEmail(currentRecord?.email || selectedUser.email || '') : sanitizeEmail(selectedUser.email || '');
+    const safeName = sanitizeText(selectedUser.name, 80);
+
+    if (!safeName || !nextEmail) {
+      setUserFormError('Nama dan email user wajib diisi.');
+      return;
+    }
+    if (nextEmail && usersData.some(u => u.id !== selectedUser.id && (u.email || '').toLowerCase() === nextEmail)) {
+      setUserFormError('Email user sudah dipakai oleh akun lain.');
+      return;
+    }
+
+    const passwordInput = sanitizeText(selectedUser.password || '', 120);
+    if (passwordInput && passwordInput.length < 8) {
+      setUserFormError('Password user minimal 8 karakter.');
+      return;
+    }
+
+    let authPayload = null;
+    if (!isFirebaseUser && passwordInput) {
+      if (isFirebaseAuthEnabled) {
+        try {
+          const provisioned = await provisionFirebaseEmailUser({
+            email: nextEmail,
+            password: passwordInput,
+            displayName: safeName,
+          });
+          authPayload = {
+            hasCredential: false,
+            passwordSalt: '',
+            passwordHash: '',
+            authProvider: 'firebase',
+            firebaseUid: provisioned.user.uid,
+          };
+          setUserFormNotice('User berhasil dihubungkan ke Firebase Auth.');
+        } catch (error) {
+          setUserFormError(getFirebaseAuthErrorMessage(error));
+          return;
+        }
+      } else {
+        const credential = await createPasswordCredential(passwordInput);
+        authPayload = {
+          hasCredential: credential.hasCredential,
+          passwordSalt: credential.passwordSalt,
+          passwordHash: credential.passwordHash,
+          authProvider: 'legacy',
+          firebaseUid: null,
+        };
+        setUserFormNotice('Firebase Auth belum aktif, jadi password baru disimpan secara lokal.');
+      }
+    }
+
+    const selectedUserIndex = Math.max(usersData.findIndex(u => u.id === selectedUser.id), 0);
+    const nextRole = ACCESS_ROLE_VALUES.includes(selectedUser.role) ? selectedUser.role : ACCESS_ROLES.PETUGAS;
+    const nextShipAssigned = selectedUser.shipAssigned || null;
+    const previewUser = normalizeUserRecord({
+      ...(currentRecord || {}),
+      ...selectedUser,
+      name: safeName,
+      role: nextRole,
+      email: nextEmail,
+      password: '',
+      hasCredential: isFirebaseUser ? false : (authPayload?.hasCredential ?? currentRecord?.hasCredential ?? false),
+      passwordSalt: isFirebaseUser ? '' : (authPayload?.passwordSalt ?? currentRecord?.passwordSalt ?? ''),
+      passwordHash: isFirebaseUser ? '' : (authPayload?.passwordHash ?? currentRecord?.passwordHash ?? ''),
+      authProvider: isFirebaseUser ? 'firebase' : (authPayload?.authProvider ?? currentRecord?.authProvider ?? 'none'),
+      firebaseUid: isFirebaseUser ? (currentRecord?.firebaseUid || selectedUser.firebaseUid || null) : (authPayload?.firebaseUid ?? currentRecord?.firebaseUid ?? null),
+      shipAssigned: nextShipAssigned,
+      status: nextRole === ACCESS_ROLES.PETUGAS ? (nextShipAssigned ? (selectedUser.status || currentRecord?.status || 'active') : 'off-duty') : (selectedUser.status || currentRecord?.status || 'active'),
+      phone: sanitizePhone(selectedUser.phone || ''),
+      address: sanitizeMultilineText(selectedUser.address || '', 180),
+      emergencyName: sanitizeText(selectedUser.emergencyName || '', 80),
+      emergencyContact: sanitizePhone(selectedUser.emergencyContact || ''),
+      emergencyRelation: sanitizeText(selectedUser.emergencyRelation || '', 40),
+      officeAddress: sanitizeMultilineText(selectedUser.officeAddress || '', 180),
+      photoUrl: selectedUser.photoUrl || currentRecord?.photoUrl || createUserAvatar(safeName, selectedUserIndex),
+    }, selectedUserIndex);
+
+    setUsersData(prev => prev.map((u, index) => {
+      if (u.id !== selectedUser.id) return u;
+      const nextUser = {
+        ...u,
+        ...previewUser,
+      };
+      return normalizeUserRecord(nextUser, index);
+    }));
+    setSelectedUser({ ...previewUser, password: '' });
+  }, [clearUserManagementFeedback, isAdmin, selectedUser, usersData]);
   const handleDeleteUser = useCallback((id) => {
     if (!isAdmin) return; 
     const targetUser = usersData.find(u => u.id === id); 
@@ -1477,7 +1666,7 @@ export function AppProvider({ children }) {
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, setIncidentForm, incidentLocationOptions, selectedIncident, setSelectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
     handleAddProgress, handleCloseIncident, newProgress, setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
     // Users
-    showUserForm, setShowUserForm, userFormData, setUserFormData, selectedUser, setSelectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
+    showUserForm, setShowUserForm, userFormData, setUserFormData, userFormError, userFormNotice, clearUserManagementFeedback, selectedUser, setSelectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     // Reports
     selectedReportDetail, setSelectedReportDetail, previewPhoto, setPreviewPhoto,
     // Weather
@@ -1497,7 +1686,7 @@ export function AppProvider({ children }) {
     showShipForm, shipFormData, newCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, incidentLocationOptions, selectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
     handleAddProgress, handleCloseIncident, newProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
-    showUserForm, userFormData, selectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
+    showUserForm, userFormData, userFormError, userFormNotice, clearUserManagementFeedback, selectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     selectedReportDetail, previewPhoto,
     weatherInfo, weatherLoading, getWeatherDetail,
     historyEntries, selectedHistoryEntry, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,

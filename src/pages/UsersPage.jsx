@@ -7,11 +7,12 @@ import UserFormView from '../components/views/UserFormView';
 import UserDetailView from '../components/views/UserDetailView';
 
 const UsersPage = React.memo(function UsersPage() {
-  const { usersData, setSelectedUser, selectedUser, setShowUserForm, showUserForm, isAdmin } = useApp();
+  const { usersData, setSelectedUser, selectedUser, setShowUserForm, showUserForm, clearUserManagementFeedback, isAdmin } = useApp();
   if (!isAdmin) return null;
 
   const showRightPane = selectedUser || showUserForm;
   const handleUserSelect = (user) => {
+    clearUserManagementFeedback();
     if (showUserForm) {
       setShowUserForm(false);
     }
@@ -24,7 +25,7 @@ const UsersPage = React.memo(function UsersPage() {
       <div className="flex-1 overflow-y-auto p-4 space-y-4 animate-in fade-in scrollbar-thin scrollbar-thumb-cyan-900/50 lg:border-r lg:border-cyan-900/50">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-cyan-50 flex items-center gap-2"><Users className="w-5 h-5 text-cyan-400" /> DATA USER</h2>
-          <button onClick={() => setShowUserForm(true)} className="px-3 py-1.5 bg-cyan-600/20 text-cyan-300 border border-cyan-500/50 text-xs font-bold rounded-lg flex items-center gap-1 hover:bg-cyan-600/40 transition-colors active:scale-95 shadow-[0_0_10px_rgba(6,182,212,0.1)]">
+          <button onClick={() => { clearUserManagementFeedback(); setSelectedUser(null); setShowUserForm(true); }} className="px-3 py-1.5 bg-cyan-600/20 text-cyan-300 border border-cyan-500/50 text-xs font-bold rounded-lg flex items-center gap-1 hover:bg-cyan-600/40 transition-colors active:scale-95 shadow-[0_0_10px_rgba(6,182,212,0.1)]">
             <PlusCircle className="w-3.5 h-3.5" /> Tambah
           </button>
         </div>

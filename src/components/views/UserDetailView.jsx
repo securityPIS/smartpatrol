@@ -4,7 +4,7 @@ import { ChevronDown, Trash2, Camera, Save, AlertTriangle, CheckCircle2 } from '
 import AsyncImage from '../AsyncImage';
 
 export default function UserDetailView({ isInline = false }) {
-  const { selectedUser, setSelectedUser, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload } = useApp();
+  const { selectedUser, setSelectedUser, userFormError, userFormNotice, clearUserManagementFeedback, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload } = useApp();
   const isFirebaseAccount = selectedUser?.authProvider === 'firebase' || Boolean(selectedUser?.firebaseUid);
 
   if (!selectedUser) {
@@ -27,7 +27,7 @@ export default function UserDetailView({ isInline = false }) {
       <div className="p-4 border-b border-cyan-500/30 flex items-center justify-between bg-[#0b1229] shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
           {!isInline && (
-            <button onClick={() => setSelectedUser(null)} className="p-2 bg-[#070b19] border border-cyan-800 text-cyan-300 rounded-full hover:bg-cyan-900/50 transition-colors" aria-label="Kembali">
+            <button onClick={() => { clearUserManagementFeedback(); setSelectedUser(null); }} className="p-2 bg-[#070b19] border border-cyan-800 text-cyan-300 rounded-full hover:bg-cyan-900/50 transition-colors" aria-label="Kembali">
               <ChevronDown className="w-5 h-5 rotate-90" />
             </button>
           )}
@@ -43,6 +43,8 @@ export default function UserDetailView({ isInline = false }) {
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6">
         <div className="space-y-4">
+          {userFormNotice && <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-200">{userFormNotice}</div>}
+          {userFormError && <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-200">{userFormError}</div>}
           <div className="flex flex-col items-center mb-6">
             {!selectedUser.photoUrl ? (
               <button onClick={handleEditUserPhotoUpload} className="w-24 h-24 rounded-2xl border-2 border-dashed border-cyan-500/50 bg-[#070b19] flex flex-col items-center justify-center text-cyan-500 hover:text-cyan-300 hover:border-cyan-400 transition-colors shadow-sm">
@@ -69,6 +71,9 @@ export default function UserDetailView({ isInline = false }) {
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <p>Email dan password akun ini dikelola oleh Firebase Auth. Pada fase ini admin hanya mengubah profil, role, dan penugasan lokalnya.</p>
             </div>
+          )}
+          {!isFirebaseAccount && (
+            <p className="text-[10px] text-cyan-600 leading-relaxed">Isi password jika Anda ingin menyambungkan user legacy ini ke Firebase Auth. Jika Firebase Auth belum aktif, password akan tetap disimpan secara lokal.</p>
           )}
 
           <div className="grid grid-cols-2 gap-3">

@@ -1,10 +1,13 @@
 import {
   createUserWithEmailAndPassword,
+  getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
+  updateProfile,
 } from 'firebase/auth';
-import { firebaseAuth, isFirebaseConfigured } from './app';
+import { deleteApp, initializeApp } from 'firebase/app';
+import { firebaseApp, firebaseAuth, firebaseConfig, isFirebaseConfigured } from './app';
 
 function ensureFirebaseAuth() {
   if (!firebaseAuth || !isFirebaseConfigured) {
@@ -51,13 +54,36 @@ async function registerWithFirebaseEmail(email, password) {
   return createUserWithEmailAndPassword(ensureFirebaseAuth(), email, password);
 }
 
+async function provisionFirebaseEmailUser({ email, password, displayName = '' }) {
+  ensureFirebaseAuth();
+
+  const tempAppName = `smartpatrol-admin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const tempApp = initializeApp(firebaseConfig, tempAppName);
+  const tempAuth = getAuth(tempApp);
+
+  try {
+    const credential = await createUserWithEmailAndPassword(tempAuth, email, password);
+    if (displayName) {
+      await updateProfile(credential.user, { displayName });
+    }
+    return credential;
+  } finally {
+    try {
+      await signOut(tempAuth);
+    } catch (error) {
+      console.error('Gagal membersihkan sesi Firebase sementara', error);
+    }
+    await deleteApp(tempApp);
+  }
+}
+
 async function logoutFirebaseUser() {
   if (!firebaseAuth) return;
   await signOut(firebaseAuth);
 }
 
 function subscribeToFirebaseAuthChanges(callback) {
-  if (!firebaseAuth) return () => {};
+  if (!firebaseAuth || !firebaseApp) return () => {};
   return onAuthStateChanged(firebaseAuth, callback);
 }
 
@@ -66,6 +92,7 @@ export {
   isFirebaseConfigured as isFirebaseAuthEnabled,
   loginWithFirebaseEmail,
   logoutFirebaseUser,
+  provisionFirebaseEmailUser,
   registerWithFirebaseEmail,
   subscribeToFirebaseAuthChanges,
 };
