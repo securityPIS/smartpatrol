@@ -19,11 +19,11 @@ export default function LoginPage() {
               <Ship className="w-8 h-8 text-cyan-300 relative z-10 drop-shadow-[0_0_15px_rgba(34,211,238,0.4)]" />
             </div>
             <div>
-              <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-[0.35em]">SmartPatrol Local</p>
+              <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-[0.35em]">SmartPatrol Hybrid</p>
               <h1 className="text-3xl font-black text-white leading-none mt-1">Akses Sistem</h1>
             </div>
           </div>
-          <p className="text-sm text-cyan-500 leading-relaxed">Masuk menggunakan kredensial akun Anda untuk mengakses sistem patroli.</p>
+          <p className="text-sm text-cyan-500 leading-relaxed">Masuk menggunakan akun patroli Anda. Registrasi baru akan terhubung ke Firebase Auth, sementara akun demo lama tetap didukung selama masa transisi.</p>
         </div>
 
         {authNotice && <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 font-medium">{authNotice}</div>}
@@ -57,9 +57,10 @@ export default function LoginPage() {
             <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Alamat Email</label>
             <input type="email" value={authForm.email} onChange={e => setAuthForm({ ...authForm, email: e.target.value })} placeholder="nama@domain.com" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
           </div>
+
           <div className="relative">
             <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Password</label>
-            <input type={showPassword ? 'text' : 'password'} value={authForm.password} onChange={e => setAuthForm({ ...authForm, password: e.target.value })} placeholder="••••••••" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm pr-12" />
+            <input type={showPassword ? 'text' : 'password'} value={authForm.password} onChange={e => setAuthForm({ ...authForm, password: e.target.value })} placeholder="********" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm pr-12" />
             <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-[34px] text-cyan-600 hover:text-cyan-400 transition-colors">
               {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </button>
@@ -68,7 +69,7 @@ export default function LoginPage() {
           {authMode === 'register' && (
             <div>
               <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Konfirmasi Password</label>
-              <input type="password" value={authForm.confirmPassword} onChange={e => setAuthForm({ ...authForm, confirmPassword: e.target.value })} placeholder="••••••••" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
+              <input type="password" value={authForm.confirmPassword} onChange={e => setAuthForm({ ...authForm, confirmPassword: e.target.value })} placeholder="********" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
             </div>
           )}
 
@@ -78,7 +79,7 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-8 text-center">
-          <p className="text-[10px] text-cyan-700">SmartPatrol Local v0.1 • Offline-First Staging</p>
+          <p className="text-[10px] text-cyan-700">SmartPatrol Hybrid v0.2 | Hosting + Firebase Auth Staging</p>
         </div>
       </div>
     </div>
