@@ -73,7 +73,7 @@ const PatrolPage = React.memo(function PatrolPage() {
     patrolTab, setPatrolTab, searchQuery, setSearchQuery, filteredCheckpoints,
     handleActionClick, handleOpenPatrolResult, handleAddCustomPatrolNode,
     newCustomNode, setNewCustomNode, completedCount, totalCount, progressPercentage,
-    operationalShip, operationalShipName, usersData, checkpoints,
+    operationalShip, operationalShipName, checkpoints, activeShiftGuardSnapshot,
     weatherInfo, weatherLoading, getWeatherDetail, setPreviewPhoto,
     currentShiftMeta, selectedHistoryEntry, closeHistoryEntry,
     activeForms, selectedIncident, selectedReportDetail
@@ -109,7 +109,7 @@ const PatrolPage = React.memo(function PatrolPage() {
   const displayWeatherLoading = isHistoryMode ? false : weatherLoading;
   const displayCrew = isHistoryMode
     ? (selectedHistoryEntry?.crewSnapshot || []).filter(user => user.role === ACCESS_ROLES.PETUGAS)
-    : usersData.filter(user => user.shipAssigned === operationalShipName && user.status === 'active' && user.role === ACCESS_ROLES.PETUGAS);
+    : activeShiftGuardSnapshot;
   const infoEntryData = React.useMemo(() => (
     isHistoryMode
       ? selectedHistoryEntry

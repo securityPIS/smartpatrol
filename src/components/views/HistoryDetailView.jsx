@@ -6,6 +6,33 @@ import {
 } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
+function createGuardNameKey(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+function buildGuardScoreMaps(checkpoints = []) {
+  return checkpoints.reduce((accumulator, checkpoint) => {
+    if (checkpoint.status !== 'completed') return accumulator;
+
+    if (checkpoint.completedByUserId) {
+      accumulator.byId.set(
+        checkpoint.completedByUserId,
+        (accumulator.byId.get(checkpoint.completedByUserId) || 0) + 1,
+      );
+    }
+
+    const guardNameKey = createGuardNameKey(checkpoint.completedBy);
+    if (guardNameKey) {
+      accumulator.byName.set(
+        guardNameKey,
+        (accumulator.byName.get(guardNameKey) || 0) + 1,
+      );
+    }
+
+    return accumulator;
+  }, { byId: new Map(), byName: new Map() });
+}
+
 export default function HistoryDetailView({ isInline = false, entryData = null, onSummaryCardClick = null }) {
   const { 
     selectedHistoryEntry, operationalShip, operationalShipName,
@@ -43,8 +70,19 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
     { type: 'missed', count: entry.missed || 0 },
   ];
 
-  const displayCrew = (entry.crewSnapshot || usersData.filter(u => u.shipAssigned === displayShipName && u.status === 'active'))
-    .filter(user => user.role === ACCESS_ROLES.PETUGAS);
+  const displayCrew = React.useMemo(() => {
+    const scoreMaps = buildGuardScoreMaps(entry.checkpoints || checkpoints);
+    const baseCrew = entry.crewSnapshot || usersData.filter(u => u.shipAssigned === displayShipName && u.status === 'active');
+
+    return baseCrew
+      .filter(user => user.role === ACCESS_ROLES.PETUGAS)
+      .map((user) => ({
+        ...user,
+        score: typeof user.score === 'number'
+          ? user.score
+          : (scoreMaps.byId.get(user.id) || scoreMaps.byName.get(createGuardNameKey(user.name)) || 0),
+      }));
+  }, [displayShipName, entry.checkpoints, entry.crewSnapshot, checkpoints, usersData]);
 
   const getSummaryCardMeta = (type) => {
     switch(type) {
@@ -151,14 +189,13 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
         </div>
 
         <div className="space-y-3 pb-8">
-          <h3 className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest mb-1 pl-1">Petugas Tercatat</h3>
+          <h3 className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest mb-1 pl-1">Petugas Jaga</h3>
           {displayCrew.length === 0 && (
             <p className="text-xs text-cyan-700 italic border border-dashed border-cyan-900/50 p-4 rounded-xl text-center">
-              Belum ada data petugas untuk riwayat ini.
+              Belum ada data petugas jaga untuk shift ini.
             </p>
           )}
           {displayCrew.map((user) => {
-            // In history mode, we might not have activeCheckpoints, so we just show the name/role
             return (
               <div key={user.id} className="bg-[#0b1229] rounded-2xl p-3 border border-cyan-800/50 flex items-center justify-between shadow-sm">
                 <div className="flex items-center gap-3">
@@ -169,6 +206,10 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
                     <p className="text-sm font-bold text-cyan-50">{user.name}</p>
                     <p className="text-[10px] text-cyan-500 uppercase font-bold tracking-tight">{user.role}</p>
                   </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold">Skor</p>
+                  <p className="text-lg font-black text-cyan-200">{user.score || 0}</p>
                 </div>
               </div>
             );

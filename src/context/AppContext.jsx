@@ -206,7 +206,35 @@ function summarizePatrolCheckpoints(checkpoints) {
   }, { aman: 0, temuan: 0, missed: 0, completed: 0, total: 0 });
 }
 
-function buildCrewSnapshot(users, shipName) {
+function createGuardNameKey(name) {
+  return sanitizeText(name || '', 80).trim().toLowerCase();
+}
+
+function buildGuardScoreMaps(checkpoints = []) {
+  return checkpoints.reduce((accumulator, checkpoint) => {
+    if (checkpoint.status !== 'completed') return accumulator;
+
+    if (checkpoint.completedByUserId) {
+      accumulator.byId.set(
+        checkpoint.completedByUserId,
+        (accumulator.byId.get(checkpoint.completedByUserId) || 0) + 1,
+      );
+    }
+
+    const guardNameKey = createGuardNameKey(checkpoint.completedBy);
+    if (guardNameKey) {
+      accumulator.byName.set(
+        guardNameKey,
+        (accumulator.byName.get(guardNameKey) || 0) + 1,
+      );
+    }
+
+    return accumulator;
+  }, { byId: new Map(), byName: new Map() });
+}
+
+function buildGuardShiftSnapshot(users, shipName, checkpoints = []) {
+  const scoreMaps = buildGuardScoreMaps(checkpoints);
   return users
     .filter(user => user.shipAssigned === shipName && user.status === 'active' && user.role === ACCESS_ROLES.PETUGAS)
     .map(user => ({
@@ -214,6 +242,7 @@ function buildCrewSnapshot(users, shipName) {
       name: user.name,
       role: user.role,
       photoUrl: user.photoUrl || null,
+      score: scoreMaps.byId.get(user.id) || scoreMaps.byName.get(createGuardNameKey(user.name)) || 0,
     }));
 }
 
@@ -237,7 +266,7 @@ function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo })
     time: shiftMeta.timeRange,
     ship: shipName,
     shipSnapshot: ship ? { id: ship.id, name: ship.name, lat: ship.lat, lng: ship.lng } : null,
-    crewSnapshot: buildCrewSnapshot(users, shipName),
+    crewSnapshot: buildGuardShiftSnapshot(users, shipName, snapshotCheckpoints),
     weatherSnapshot: weatherInfo ? { ...weatherInfo } : null,
     checkpoints: snapshotCheckpoints,
     summary,
@@ -714,6 +743,10 @@ export function AppProvider({ children }) {
   const patrolIncidents = useMemo(() => checkpoints.filter(c => c.status === 'completed' && c.resultType === 'temuan').map(c => ({ id: `p-${c.id}`, date: new Date().toLocaleDateString('id-ID'), time: c.time, location: c.name, shipName: c.shipName || 'MT MENGGALA', deskripsi: c.kejadian, penyebab: c.penyebab, tindakLanjut: c.tindakLanjut, reportedBy: c.completedBy, photoUrl: c.photoUrl, isPatrol: true })), [checkpoints]);
   const allIncidents = useMemo(() => [...incidentsData, ...patrolIncidents].map(incident => ({ ...incident, shipName: incident.shipName || 'MT MENGGALA' })), [incidentsData, patrolIncidents]);
   const visibleIncidents = useMemo(() => isPetugas && currentUserRecord?.shipAssigned ? allIncidents.filter(incident => incident.shipName === currentUserRecord.shipAssigned) : allIncidents, [allIncidents, currentUserRecord?.shipAssigned, isPetugas]);
+  const activeShiftGuardSnapshot = useMemo(
+    () => buildGuardShiftSnapshot(usersData, operationalShipName, checkpoints),
+    [checkpoints, operationalShipName, usersData],
+  );
 
   const handleNotificationClick = useCallback((notification) => {
     if (!notification) return;
@@ -889,6 +922,7 @@ export function AppProvider({ children }) {
       ...currentCheckpoint,
       status: 'completed',
       completedBy: currentUser,
+      completedByUserId: currentUserRecord.id,
       time: timeString,
       completedAt: now.toISOString(),
       shipName: operationalShipName,
@@ -1655,7 +1689,7 @@ export function AppProvider({ children }) {
     // User role
     currentUserRecord, currentUser, currentUserRole, isAdmin, isPic, isPetugas,
     // Core data
-    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey,
+    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey, activeShiftGuardSnapshot,
     // Patrol
     filteredCheckpoints, searchQuery, setSearchQuery, patrolTab, setPatrolTab, activeForms, setActiveForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode,
@@ -1679,7 +1713,7 @@ export function AppProvider({ children }) {
     currentPage, theme, isOffline, showSettingsDropdown, showNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog,
     sessionUserId, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout,
     currentUserRecord, currentUser, currentUserRole, isAdmin, isPic, isPetugas,
-    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey,
+    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey, activeShiftGuardSnapshot,
     filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, completedCount, totalCount, progressPercentage, newCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode,
     operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
