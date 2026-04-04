@@ -1044,8 +1044,8 @@ export function AppProvider({ children }) {
     setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: newProgress.photoUrl, time, date, author: currentUser }] } }));
     appendNotifications([{
       type: 'incident_progress_updated',
-      title: 'Progress temuan diperbarui',
-      message: `${incident?.location || 'Temuan'} mendapat update progress dari ${currentUser}.`,
+      title: 'Update temuan baru',
+      message: `${incident?.location || 'Temuan'} mendapat update baru dari ${currentUser}.`,
       senderName: currentUser,
       senderRole: currentUserRole,
       targetUserIds: getShipRecipients(incident?.shipName || operationalShipName, { includeAdmins: true, includePic: true, includeUserIds: incident?.reportedBy ? usersData.filter(user => user.name === incident.reportedBy).map(user => user.id) : [] }),
@@ -1082,6 +1082,19 @@ export function AppProvider({ children }) {
     }); 
   }, [allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, operationalShipName, selectedIncident, usersData]);
   const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
+  const handleUpdateIncidentPhoto = useCallback(async (incidentId) => {
+    const dataUrl = await pickLocalImage();
+    if (!dataUrl) return;
+    const url = await saveImageToDB(dataUrl);
+    if (!url) return;
+    if (typeof incidentId === 'string' && incidentId.startsWith('p-')) {
+      const checkpointId = Number(incidentId.replace('p-', ''));
+      setCheckpoints(prev => prev.map(c => c.id === checkpointId ? { ...c, photoUrl: url } : c));
+    } else {
+      setIncidentsData(prev => prev.map(inc => inc.id === incidentId ? { ...inc, photoUrl: url } : inc));
+    }
+    setSelectedIncident(prev => prev && prev.id === incidentId ? { ...prev, photoUrl: url } : prev);
+  }, []);
 
   // Ship form handlers
   const handleSaveShip = useCallback(() => { if (!isAdmin) return; const safeName = sanitizeText(shipFormData.name, 80); if (!safeName) return; const newShip = { id: 's' + Date.now(), ...shipFormData, name: safeName, route: sanitizeText(shipFormData.route, 100), cargoType: sanitizeText(shipFormData.cargoType, 80), cargoAmount: sanitizeText(shipFormData.cargoAmount, 40), lat: '-6.0000', lng: '106.0000', personnel: [], personnelNextMonth: [], documents: [], photoUrl: shipFormData.photoUrl || createPosterDataUrl(safeName, 'Armada Lokal', 2, false) }; setShipsData(prev => [...prev, newShip]); setShowShipForm(false); setShipFormData(createShipFormState()); setNewCheckpoint(''); }, [isAdmin, shipFormData]);
@@ -1155,7 +1168,7 @@ export function AppProvider({ children }) {
     showShipForm, setShowShipForm, shipFormData, setShipFormData, newCheckpoint, setNewCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     // Incidents
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, setIncidentForm, incidentLocationOptions, selectedIncident, setSelectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
-    handleAddProgress, handleCloseIncident, newProgress, setNewProgress, handlePhotoProgress,
+    handleAddProgress, handleCloseIncident, newProgress, setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
     // Users
     showUserForm, setShowUserForm, userFormData, setUserFormData, selectedUser, setSelectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     // Reports
@@ -1176,7 +1189,7 @@ export function AppProvider({ children }) {
     operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
     showShipForm, shipFormData, newCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, incidentLocationOptions, selectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
-    handleAddProgress, handleCloseIncident, newProgress, handlePhotoProgress,
+    handleAddProgress, handleCloseIncident, newProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
     showUserForm, userFormData, selectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     selectedReportDetail, previewPhoto,
     weatherInfo, weatherLoading, getWeatherDetail,

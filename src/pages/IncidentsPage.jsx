@@ -32,9 +32,13 @@ const IncidentsPage = React.memo(function IncidentsPage() {
                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${isClosed ? 'bg-slate-700' : (inc.isPatrol ? 'bg-emerald-500' : 'bg-yellow-500')}`}></div>
                  <div className="flex-1 ml-1 min-w-0 flex flex-col justify-between">
                     <div>
-                       <div className="flex items-start justify-between gap-2 mb-2">
-                         <h3 className={`font-bold text-lg leading-tight flex-1 min-w-0 ${isClosed ? 'text-slate-400' : 'text-yellow-400'}`}>{inc.location}</h3>
-                         <span className="shrink-0 whitespace-nowrap text-[10px] text-cyan-500 font-mono bg-[#070b19] px-2 py-1 rounded border border-cyan-900 inline-block">{inc.date} | {inc.time}</span>
+                       <div className="flex items-center gap-2 mb-2">
+                         <h3 className={`font-bold text-lg leading-tight truncate ${isClosed ? 'text-slate-400' : 'text-yellow-400'}`}>{inc.location}</h3>
+                         {isClosed ? (
+                            <span className="shrink-0 text-[8px] px-1.5 py-0.5 border border-slate-600 text-slate-400 bg-slate-800/50 rounded uppercase font-black tracking-widest">CLOSED</span>
+                         ) : (
+                            <span className="shrink-0 text-[8px] px-1.5 py-0.5 border border-yellow-500 text-yellow-400 bg-yellow-500/10 rounded uppercase font-black tracking-widest animate-pulse">OPEN</span>
+                         )}
                        </div>
                        <p className="text-[10px] uppercase tracking-widest font-bold text-cyan-600 mb-2">{inc.shipName || operationalShipName}</p>
                        <p className={`text-xs ${isClosed ? 'text-slate-500' : 'text-yellow-100/70'} line-clamp-2 leading-relaxed mb-3`}>"{inc.deskripsi}"</p>
@@ -51,11 +55,7 @@ const IncidentsPage = React.memo(function IncidentsPage() {
                     ) : (
                        <div className="w-20 h-20"></div>
                     )}
-                    {isClosed ? (
-                       <span className="text-[9px] px-2 py-0.5 border border-slate-600 text-slate-400 bg-slate-800/50 rounded uppercase font-bold tracking-widest text-center mt-auto w-full">CLOSED</span>
-                    ) : (
-                       <span className="text-[9px] px-2 py-0.5 border border-yellow-500 text-yellow-400 bg-yellow-500/10 rounded uppercase font-bold tracking-widest text-center mt-auto w-full">OPEN</span>
-                    )}
+                    <span className="shrink-0 whitespace-nowrap text-[9px] text-cyan-500 font-mono bg-[#070b19] px-2 py-1 rounded border border-cyan-900 inline-block mt-auto uppercase tracking-tighter">{inc.date} | {inc.time}</span>
                  </div>
               </div>
               );

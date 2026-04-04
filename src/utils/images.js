@@ -22,7 +22,7 @@ export async function readImageFileAsDataUrl(file, maxEdge = 1280, quality = 0.8
     }
 
     context.drawImage(image, 0, 0, width, height);
-    return canvas.toDataURL("image/jpeg", quality);
+    return canvas.toDataURL("image/webp", quality);
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
