@@ -4,7 +4,7 @@ import { X, Camera, Send, Lock } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function PatrolFormView({ isInline = false }) {
-  const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol } = useApp();
+  const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol, shouldForcePatrolCameraCapture } = useApp();
 
   if (!activePatrolItem || !activePatrolState) {
     if (isInline) return (
@@ -40,9 +40,9 @@ export default function PatrolFormView({ isInline = false }) {
         {activePatrolState.type === 'temuan' ? (
           <>
             {!activePatrolState.photoUrl ? (
-              <button onClick={() => handlePhotoUpload(activePatrolId)} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40">
+              <button onClick={() => handlePhotoUpload(activePatrolId, false, { cameraOnly: shouldForcePatrolCameraCapture })} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40">
                 <Camera className="w-8 h-8" />
-                <span className="text-sm font-bold uppercase tracking-wider">Unggah Visual Temuan</span>
+                <span className="text-sm font-bold uppercase tracking-wider">{shouldForcePatrolCameraCapture ? 'Ambil Foto Temuan' : 'Unggah Visual Temuan'}</span>
               </button>
             ) : (
               <div className="w-full aspect-video bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
@@ -65,9 +65,9 @@ export default function PatrolFormView({ isInline = false }) {
           </>
         ) : (
           !activePatrolState.photoUrl ? (
-            <button onClick={() => handlePhotoUpload(activePatrolId)} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-emerald-500/40 bg-emerald-950/20 text-emerald-400 hover:bg-emerald-900/40">
+            <button onClick={() => handlePhotoUpload(activePatrolId, false, { cameraOnly: shouldForcePatrolCameraCapture })} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-emerald-500/40 bg-emerald-950/20 text-emerald-400 hover:bg-emerald-900/40">
               <Camera className="w-8 h-8" /> 
-              <span className="text-sm font-bold uppercase tracking-wider">Unggah Visual Aman</span>
+              <span className="text-sm font-bold uppercase tracking-wider">{shouldForcePatrolCameraCapture ? 'Ambil Foto Aman' : 'Unggah Visual Aman'}</span>
             </button>
           ) : (
             <div className="w-full aspect-video bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
