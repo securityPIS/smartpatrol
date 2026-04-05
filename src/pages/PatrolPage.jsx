@@ -338,21 +338,9 @@ const PatrolPage = React.memo(function PatrolPage() {
                   </div>
                 )}
 
-                <div className="mt-4 p-4 bg-[#0b1229] border border-cyan-800 border-dashed rounded-xl mb-6">
-                  <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1 pl-1">Sumber Checkpoint</p>
-                  <p className="text-xs text-cyan-300/80">
-                    Titik patroli pada halaman ini mengikuti checkpoint yang sudah di-assign pada armada {operationalShipName || 'aktif'}.
-                  </p>
-                  {!canPatrolCurrentShip && (
-                    <p className="mt-2 text-[11px] text-yellow-300">
-                      Akun ini tidak punya penugasan patroli aktif pada armada tersebut.
-                    </p>
-                  )}
-                </div>
-
                 <div className="fixed lg:absolute bottom-[65px] lg:bottom-0 left-0 right-0 z-30 w-full sm:max-w-md lg:max-w-none sm:mx-auto lg:mx-0 bg-[#070b19]/95 backdrop-blur-md px-4 py-4 border-t border-cyan-900/50 shadow-[0_-5px_15px_rgba(0,0,0,0.3)]">
                   <div className="flex justify-between text-xs mb-2">
-                    <span className="text-cyan-500 font-bold uppercase tracking-widest">Progres Shift</span>
+                    <span className="text-cyan-500 font-bold uppercase tracking-widest">Progress Patroli</span>
                     <span className="text-cyan-300 font-black">{completedCount}/{totalCount} <span className="font-normal text-[9px]">SELESAI</span></span>
                   </div>
                   <div className="w-full bg-[#0b1229] rounded-full h-2.5 border border-cyan-900/50 overflow-hidden">
