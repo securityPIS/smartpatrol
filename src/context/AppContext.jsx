@@ -517,6 +517,7 @@ async function pickLocalImage(options = {}) {
   input.type = 'file';
   input.accept = 'image/*';
   if (cameraOnly) {
+    input.capture = 'environment';
     input.setAttribute('capture', 'environment');
   }
 
@@ -1193,20 +1194,16 @@ export function AppProvider({ children }) {
     if (!canPatrolCurrentShip) return;
 
     const nextForm = { type, penyebab: '', kejadian: '', tindakLanjut: '', photoUrl: null };
+    if (shouldForcePatrolCameraCapture && type === 'aman') {
+      const dataUrl = await pickLocalImage({ cameraOnly: true });
+      if (!dataUrl) return;
+      const url = await saveImageToDB(dataUrl);
+      if (!url) return;
+      setActiveForms({ [id]: { ...nextForm, photoUrl: url } });
+      return;
+    }
+
     setActiveForms({ [id]: nextForm });
-
-    if (!shouldForcePatrolCameraCapture || type !== 'aman') return;
-
-    const dataUrl = await pickLocalImage({ cameraOnly: true });
-    if (!dataUrl) return;
-    const url = await saveImageToDB(dataUrl);
-    if (!url) return;
-
-    setActiveForms(prev => (
-      prev[id]
-        ? { ...prev, [id]: { ...prev[id], photoUrl: url } }
-        : prev
-    ));
   }, [canPatrolCurrentShip, shouldForcePatrolCameraCapture]);
   const handleFormChange = useCallback((id, field, value) => { setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } })); }, []);
   const handlePhotoUpload = useCallback(async (id, isIncident = false, options = {}) => {
