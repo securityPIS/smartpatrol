@@ -1418,8 +1418,10 @@ export function AppProvider({ children }) {
         }
         return incidentMap;
       }, new Map()).values(),
-    ).sort((left, right) => getIncidentSortTimestamp(right) - getIncidentSortTimestamp(left))
-  ), [historyPatrolIncidents, incidentsData, operationalShipName, patrolIncidents]);
+    )
+      .filter((incident) => incidentMeta[incident.id]?.deleted !== true)
+      .sort((left, right) => getIncidentSortTimestamp(right) - getIncidentSortTimestamp(left))
+  ), [historyPatrolIncidents, incidentMeta, incidentsData, operationalShipName, patrolIncidents]);
   const visibleIncidents = useMemo(() => (
     isPetugas && assignedShipForCurrentUser
       ? allIncidents.filter(incident => incident.shipName === assignedShipForCurrentUser.name)
@@ -2218,6 +2220,64 @@ export function AppProvider({ children }) {
       } 
     }); 
   }, [allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, operationalShipName, selectedIncident, usersData]);
+  const handleDeleteIncident = useCallback((incidentId) => {
+    if (!isAdmin) return;
+
+    const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
+    if (!incident) return;
+
+    setConfirmDialog({
+      title: 'Hapus Temuan',
+      message: `Anda yakin ingin menghapus temuan ${incident.location || 'ini'}?`,
+      confirmText: 'YA, HAPUS',
+      cancelText: 'BATAL',
+      onConfirm: () => {
+        if (incident.isPatrol) {
+          let removedFromActiveShift = false;
+
+          setCheckpointsByShip((previousState) => Object.fromEntries(
+            Object.entries(previousState).map(([shipId, shipCheckpoints]) => ([
+              shipId,
+              shipCheckpoints.map((checkpoint) => {
+                if (createPatrolIncidentId(checkpoint) !== incidentId) return checkpoint;
+                removedFromActiveShift = true;
+                return resetCheckpointForShift(checkpoint);
+              }),
+            ])),
+          ));
+
+          if (!removedFromActiveShift) {
+            setIncidentMeta((previousMeta) => ({
+              ...previousMeta,
+              [incidentId]: {
+                ...(previousMeta[incidentId] || {}),
+                deleted: true,
+              },
+            }));
+          } else {
+            setIncidentMeta((previousMeta) => {
+              if (!previousMeta[incidentId]) return previousMeta;
+              const nextMeta = { ...previousMeta };
+              delete nextMeta[incidentId];
+              return nextMeta;
+            });
+          }
+        } else {
+          setIncidentsData((previousIncidents) => previousIncidents.filter((entry) => entry.id !== incidentId));
+          setIncidentMeta((previousMeta) => {
+            if (!previousMeta[incidentId]) return previousMeta;
+            const nextMeta = { ...previousMeta };
+            delete nextMeta[incidentId];
+            return nextMeta;
+          });
+        }
+
+        setSelectedIncident((previousIncident) => (
+          previousIncident?.id === incidentId ? null : previousIncident
+        ));
+      },
+    });
+  }, [allIncidents, isAdmin, selectedIncident]);
   const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
   const handleUpdateIncidentPhoto = useCallback(async (incidentId) => {
     const dataUrl = await pickLocalImage();
@@ -2657,7 +2717,7 @@ export function AppProvider({ children }) {
     showShipForm, setShowShipForm, shipFormData, setShipFormData, newCheckpoint, setNewCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     // Incidents
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, setIncidentForm, incidentLocationOptions, selectedIncident, setSelectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
-    handleAddProgress, handleCloseIncident, newProgress, setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
+    handleAddProgress, handleCloseIncident, handleDeleteIncident, newProgress, setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
     // Users
     showUserForm, setShowUserForm, userFormData, setUserFormData, userFormError, userFormNotice, clearUserManagementFeedback, selectedUser, setSelectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     // Reports
@@ -2678,7 +2738,7 @@ export function AppProvider({ children }) {
     operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
     showShipForm, shipFormData, newCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, incidentLocationOptions, selectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
-    handleAddProgress, handleCloseIncident, newProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
+    handleAddProgress, handleCloseIncident, handleDeleteIncident, newProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
     showUserForm, userFormData, userFormError, userFormNotice, clearUserManagementFeedback, selectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     selectedReportDetail, previewPhoto,
     weatherInfo, weatherLoading, getWeatherDetail,

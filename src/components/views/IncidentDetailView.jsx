@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, ImageIcon } from 'lucide-react';
+import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, Trash2 } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function IncidentDetailView({ isInline = false }) {
   const { 
     selectedIncident, setSelectedIncident, incidentMeta, canManageIncident, 
-    canCloseIncident, handleAddProgress, handleCloseIncident, newProgress, 
+    canCloseIncident, handleAddProgress, handleCloseIncident, handleDeleteIncident, isAdmin, newProgress, 
     setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto, setPreviewPhoto 
   } = useApp();
   
@@ -136,6 +136,13 @@ export default function IncidentDetailView({ isInline = false }) {
                  <div className="bg-[#0b1229] p-4 rounded-xl border border-amber-900/50 mt-6"><p className="text-xs text-amber-300 leading-relaxed">Update terbatas.</p></div>
                )
              )}
+            {isAdmin ? (
+              <div className="pt-1">
+                <button onClick={() => handleDeleteIncident(selectedIncident.id)} className="w-full py-4 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-300 text-xs font-black uppercase tracking-widest transition-all hover:bg-rose-500 hover:text-white flex items-center justify-center gap-2">
+                  <Trash2 className="w-4 h-4"/> Hapus Temuan
+                </button>
+              </div>
+            ) : null}
            </div>
          )}
        </div>
