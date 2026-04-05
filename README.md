@@ -35,9 +35,11 @@ npm run firebase:emulate
 
 - Data patroli, temuan, user, armada, progress, notifikasi, dan riwayat shift tetap disimpan lokal di browser sebagai fallback, lalu disinkronkan ke Firebase saat online.
 - Upload gambar dikompresi di client, disimpan lokal untuk mode offline, lalu dicoba dikirim ke Firebase Storage agar bisa tampil di device lain.
+- File [firestore.rules](C:/dev/SmartPatrol/firestore.rules) dan [storage.rules](C:/dev/SmartPatrol/storage.rules) saat ini disetel untuk mode staging agar sinkronisasi lintas device mudah diuji. Sebelum produksi, rules ini harus diperketat.
 - Registrasi dari halaman login sekarang membuat akun Email/Password di Firebase Auth.
 - Akun demo lama dan akun yang dibuat admin dengan password lokal masih didukung lewat fallback legacy agar staging tidak putus.
 - Akun yang sudah terhubung ke Firebase Auth belum bisa ganti email/password dari panel admin. Untuk fase ini, perubahan kredensial dilakukan dari Firebase Console.
 - File `App.jsx` lama di root tetap dibiarkan sebagai referensi prototype awal.
-- Deploy Firebase Hosting saat ini mempublikasikan aplikasi hybrid: Hosting + Firebase Auth + sinkronisasi data cloud untuk state patroli utama.
+- Deploy Firebase utama saat ini mempublikasikan aplikasi hybrid: Hosting + Firebase Auth + Firestore rules untuk sinkronisasi state patroli utama.
+- Script `npm run firebase:deploy:storage` baru bisa dipakai setelah Firebase Storage diaktifkan lewat Firebase Console.
 - Kredensial web app Firebase tersedia sebagai template di [.env.example](/C:/dev/SmartPatrol/.env.example). Untuk deploy lokal saya memakai `.env.local` yang tidak ikut masuk git.

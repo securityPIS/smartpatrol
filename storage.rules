@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /state-assets/{allPaths=**} {
+      // Staging rule: allow report photos uploaded by the web client to be shared across devices.
+      allow read, write: if true;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

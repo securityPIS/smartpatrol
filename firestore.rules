@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /smartpatrol/{document=**} {
+      // Staging rule: allow shared-state sync before all users are fully migrated to Firebase Auth.
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

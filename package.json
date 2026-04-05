@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "firebase:emulate": "firebase emulators:start --only hosting",
-    "firebase:deploy": "npm run build && firebase deploy --only hosting"
+    "firebase:deploy": "npm run build && firebase deploy --only hosting,firestore:rules",
+    "firebase:deploy:storage": "firebase deploy --only storage"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
