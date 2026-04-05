@@ -258,7 +258,7 @@ const ShipsPage = React.memo(function ShipsPage() {
                           </p>
                           <p className="text-xs text-cyan-500 mt-1">{cp.desc || 'Tanpa deskripsi'}</p>
                        </div>
-                       <button onClick={() => !cp.isDefault && updateActiveShip({customCheckpoints: activeShip.customCheckpoints.filter((_,i)=>i!==idx)})} disabled={cp.isDefault} className={`p-1 rounded ${cp.isDefault ? 'text-cyan-800 cursor-not-allowed' : 'text-rose-500 hover:bg-rose-500/20'}`} aria-label="Hapus titik periksa"><Trash2 className="w-4 h-4"/></button>
+                       <button onClick={() => updateActiveShip({customCheckpoints: activeShip.customCheckpoints.filter((_,i)=>i!==idx)})} className="p-1 rounded text-rose-500 hover:bg-rose-500/20" aria-label="Hapus titik periksa"><Trash2 className="w-4 h-4"/></button>
                      </div>
                    ))
                 )}

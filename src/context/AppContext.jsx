@@ -52,7 +52,7 @@ function createDefaultShipCheckpoints() {
   }));
 }
 
-function mergeShipCheckpointDefinitions(checkpoints = []) {
+function normalizeShipCheckpointDefinitions(checkpoints = []) {
   const normalizedCheckpoints = Array.isArray(checkpoints) ? checkpoints : [];
   const byName = new Map();
 
@@ -67,41 +67,23 @@ function mergeShipCheckpointDefinitions(checkpoints = []) {
     });
   });
 
-  const defaults = createDefaultShipCheckpoints().map((checkpoint) => {
-    const key = createCheckpointNameKey(checkpoint.name);
-    const existing = byName.get(key);
-    return {
-      name: checkpoint.name,
-      desc: existing?.desc || checkpoint.desc,
-      isDefault: true,
-    };
-  });
+  return Array.from(byName.values());
+}
 
-  const extras = normalizedCheckpoints
-    .map((checkpoint) => {
-      const safeName = sanitizeText(checkpoint?.name || '', 80);
-      return {
-        name: safeName,
-        desc: sanitizeMultilineText(checkpoint?.desc || '', 140),
-        isDefault: false,
-      };
-    })
-    .filter((checkpoint) => checkpoint.name && !defaultLocationOptions.some(defaultName => createCheckpointNameKey(defaultName) === createCheckpointNameKey(checkpoint.name)));
-
-  const extrasByName = new Map();
-  extras.forEach((checkpoint) => {
-    const key = createCheckpointNameKey(checkpoint.name);
-    if (!key || extrasByName.has(key)) return;
-    extrasByName.set(key, checkpoint);
-  });
-
-  return [...defaults, ...extrasByName.values()];
+function initializeShipCheckpointDefinitions(checkpoints = []) {
+  return normalizeShipCheckpointDefinitions([
+    ...createDefaultShipCheckpoints(),
+    ...(Array.isArray(checkpoints) ? checkpoints : []),
+  ]);
 }
 
 function normalizeShipsCollection(ships = []) {
   return (Array.isArray(ships) ? ships : []).map((ship) => ({
     ...ship,
-    customCheckpoints: mergeShipCheckpointDefinitions(ship?.customCheckpoints),
+    defaultCheckpointsInitialized: true,
+    customCheckpoints: ship?.defaultCheckpointsInitialized
+      ? normalizeShipCheckpointDefinitions(ship?.customCheckpoints)
+      : initializeShipCheckpointDefinitions(ship?.customCheckpoints),
   }));
 }
 
@@ -113,7 +95,10 @@ const defaultIncidentForm = { locType: 'default', location: defaultLocationOptio
 
 const createAuthFormState = (overrides = {}) => ({ ...defaultAuthForm, ...overrides });
 const createUserFormState = () => ({ ...defaultUserForm });
-const createShipFormState = () => ({ ...defaultShipForm });
+const createShipFormState = () => ({
+  ...defaultShipForm,
+  customCheckpoints: createDefaultShipCheckpoints(),
+});
 const createShipDocumentState = () => ({ ...defaultShipDocumentForm });
 const createIncidentFormState = () => ({ ...defaultIncidentForm });
 
@@ -1428,7 +1413,8 @@ export function AppProvider({ children }) {
       const nextShip = { ...ship, ...updates };
       return {
         ...nextShip,
-        customCheckpoints: mergeShipCheckpointDefinitions(nextShip.customCheckpoints),
+        defaultCheckpointsInitialized: true,
+        customCheckpoints: normalizeShipCheckpointDefinitions(nextShip.customCheckpoints),
       };
     }));
   }, [isAdmin, activeShipId]);
@@ -1830,7 +1816,8 @@ export function AppProvider({ children }) {
       route: sanitizeText(shipFormData.route, 100),
       cargoType: sanitizeText(shipFormData.cargoType, 80),
       cargoAmount: sanitizeText(shipFormData.cargoAmount, 40),
-      customCheckpoints: mergeShipCheckpointDefinitions(shipFormData.customCheckpoints),
+      defaultCheckpointsInitialized: true,
+      customCheckpoints: normalizeShipCheckpointDefinitions(shipFormData.customCheckpoints),
       lat: '-6.0000',
       lng: '106.0000',
       personnel: [],
@@ -1864,8 +1851,6 @@ export function AppProvider({ children }) {
   }, []);
   const handleRemoveCheckpointFromForm = useCallback((index) => {
     setShipFormData((previousFormData) => {
-      const targetCheckpoint = previousFormData.customCheckpoints[index];
-      if (targetCheckpoint?.isDefault) return previousFormData;
       return {
         ...previousFormData,
         customCheckpoints: previousFormData.customCheckpoints.filter((_, checkpointIndex) => checkpointIndex !== index),

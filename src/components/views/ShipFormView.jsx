@@ -61,7 +61,7 @@ export default function ShipFormView({ isInline = false }) {
         <div className="pt-2 border-t border-cyan-900/30">
           <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3 pb-2">Daftar TITIK Periksa</h4>
           <p className="text-[11px] text-cyan-500 mb-3">
-            16 titik default armada dibuat otomatis. Anda hanya bisa menambah titik tambahan di luar daftar wajib.
+            16 titik default armada dibuat otomatis saat armada baru dibuat, lalu admin tetap bisa menambah atau menghapus titik sesuai kebutuhan armada.
           </p>
           <div className="flex gap-2 mb-3">
             <input type="text" value={newCheckpoint} onChange={e => setNewCheckpoint(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleAddCheckpointToForm()} placeholder="Nama Titik Baru..." className="flex-1 bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
@@ -75,7 +75,7 @@ export default function ShipFormView({ isInline = false }) {
                   {cp.name}
                   {cp.isDefault && <span className="text-[9px] uppercase tracking-widest text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded">Default</span>}
                 </span>
-                <button onClick={() => handleRemoveCheckpointFromForm(idx)} disabled={cp.isDefault} className={`p-1.5 rounded-lg transition-colors ${cp.isDefault ? 'text-cyan-800 cursor-not-allowed' : 'text-rose-500/70 hover:text-rose-400 hover:bg-rose-500/10'}`} aria-label="Hapus titik periksa"><Trash2 className="w-4 h-4"/></button>
+                <button onClick={() => handleRemoveCheckpointFromForm(idx)} className="p-1.5 rounded-lg transition-colors text-rose-500/70 hover:text-rose-400 hover:bg-rose-500/10" aria-label="Hapus titik periksa"><Trash2 className="w-4 h-4"/></button>
               </div>
             ))}
             {shipFormData.customCheckpoints.length === 0 && <p className="text-xs text-rose-400 text-center py-3 italic border border-dashed border-rose-900/50 rounded-xl">Belum ada titik periksa.</p>}
