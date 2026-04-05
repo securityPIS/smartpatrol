@@ -45,7 +45,7 @@ export default function PatrolFormView({ isInline = false }) {
                 <span className="text-sm font-bold uppercase tracking-wider">{shouldForcePatrolCameraCapture ? 'Ambil Foto Temuan' : 'Unggah Visual Temuan'}</span>
               </button>
             ) : (
-              <div className="w-full aspect-video bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
+              <div className="w-full aspect-[4/5] bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
                 <AsyncImage src={activePatrolState.photoUrl} alt="Preview" className="w-full h-full object-cover" />
                 <button onClick={() => handleFormChange(activePatrolId, 'photoUrl', null)} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors" aria-label="Hapus foto"><X className="w-4 h-4" /></button>
               </div>
@@ -70,7 +70,7 @@ export default function PatrolFormView({ isInline = false }) {
               <span className="text-sm font-bold uppercase tracking-wider">{shouldForcePatrolCameraCapture ? 'Ambil Foto Aman' : 'Unggah Visual Aman'}</span>
             </button>
           ) : (
-            <div className="w-full aspect-video bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
+            <div className="w-full aspect-[4/5] bg-[#070b19] rounded-xl border border-cyan-800 overflow-hidden relative">
               <AsyncImage src={activePatrolState.photoUrl} alt="Preview" className="w-full h-full object-cover" />
               <button onClick={() => handleFormChange(activePatrolId, 'photoUrl', null)} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-lg border border-yellow-500/50 text-white hover:bg-rose-500 transition-colors" aria-label="Hapus foto"><X className="w-4 h-4" /></button>
             </div>

@@ -4,8 +4,10 @@ import { ChevronDown, Trash2, Camera, Save, AlertTriangle, CheckCircle2 } from '
 import AsyncImage from '../AsyncImage';
 
 export default function UserDetailView({ isInline = false }) {
-  const { selectedUser, setSelectedUser, userFormError, userFormNotice, clearUserManagementFeedback, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload } = useApp();
+  const { selectedUser, setSelectedUser, userFormError, userFormNotice, clearUserManagementFeedback, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload, isAdmin, setConfirmDialog } = useApp();
   const isFirebaseAccount = selectedUser?.authProvider === 'firebase' || Boolean(selectedUser?.firebaseUid);
+  const canEditRole = isAdmin;
+  const canDeleteUser = isAdmin && selectedUser?.role !== ACCESS_ROLES.ADMIN;
 
   if (!selectedUser) {
     if (isInline) {
@@ -36,9 +38,11 @@ export default function UserDetailView({ isInline = false }) {
             <h3 className="font-bold text-xl text-cyan-50 line-clamp-1">Detail User</h3>
           </div>
         </div>
-        <button onClick={() => handleDeleteUser(selectedUser.id)} className="p-2 bg-rose-500/10 text-rose-500 border border-rose-500/30 rounded-lg hover:bg-rose-500 hover:text-white transition-colors flex items-center gap-2" aria-label="Hapus pengguna">
-          <Trash2 className="w-4 h-4" />
-        </button>
+        {canDeleteUser && (
+          <button onClick={() => handleDeleteUser(selectedUser.id)} className="p-2 bg-rose-500/10 text-rose-500 border border-rose-500/30 rounded-lg hover:bg-rose-500 hover:text-white transition-colors flex items-center gap-2" aria-label="Hapus pengguna">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6">
@@ -79,11 +83,12 @@ export default function UserDetailView({ isInline = false }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">ROLE</label>
-              <select value={selectedUser.role || 'PETUGAS'} onChange={e => setSelectedUser({ ...selectedUser, role: e.target.value })} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none appearance-none shadow-sm">
+              <select value={selectedUser.role || 'PETUGAS'} onChange={e => setSelectedUser({ ...selectedUser, role: e.target.value })} disabled={!canEditRole} className={`w-full border rounded-xl p-3.5 text-sm outline-none appearance-none shadow-sm ${canEditRole ? 'bg-[#0b1229] border-cyan-800/50 text-cyan-50 focus:border-cyan-400' : 'bg-slate-950/60 border-slate-800 text-slate-500 cursor-not-allowed'}`}>
                 <option value={ACCESS_ROLES.ADMIN}>ADMIN</option>
                 <option value={ACCESS_ROLES.PETUGAS}>PETUGAS</option>
                 <option value={ACCESS_ROLES.PIC}>PIC</option>
               </select>
+              {!canEditRole && <p className="mt-1.5 text-[10px] text-cyan-600">Role hanya dapat diubah oleh admin.</p>}
             </div>
             <div>
               <label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Instansi</label>
@@ -151,13 +156,23 @@ export default function UserDetailView({ isInline = false }) {
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="p-4 bg-[#0b1229] border-t border-cyan-900/50 shrink-0 pb-safe">
-        <button onClick={handleUpdateUser} disabled={!selectedUser.name} className="w-full py-4 rounded-xl font-black uppercase tracking-widest text-xs bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(6,182,212,0.3)]">
-          <Save className="w-4 h-4" /> Simpan Perubahan
-        </button>
+          <div className="sticky bottom-0 -mx-5 px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] bg-gradient-to-t from-[#0b1229] via-[#0b1229]/95 to-transparent border-t border-cyan-900/50">
+            <button
+              onClick={() => setConfirmDialog({
+                title: 'Simpan Perubahan',
+                message: `Simpan perubahan profil untuk ${selectedUser.name || 'user ini'}?`,
+                confirmText: 'YA, SIMPAN',
+                cancelText: 'BATAL',
+                onConfirm: handleUpdateUser,
+              })}
+              disabled={!selectedUser.name}
+              className="w-full py-4 rounded-xl font-black uppercase tracking-widest text-xs bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+            >
+              <Save className="w-4 h-4" /> Simpan Perubahan
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

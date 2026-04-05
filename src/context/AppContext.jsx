@@ -1648,8 +1648,9 @@ export function AppProvider({ children }) {
     setSelectedUser(nextUserRecord);
   }, [clearUserManagementFeedback, isAdmin, userFormData, usersData]);
   const handleUpdateUser = useCallback(async () => {
-    if (!isAdmin) return;
     if (!selectedUser?.id) return;
+    const isEditingOwnProfile = selectedUser.id === sessionUserId;
+    if (!isAdmin && !isEditingOwnProfile) return;
 
     clearUserManagementFeedback();
     const currentRecord = usersData.find(u => u.id === selectedUser.id) || null;
@@ -1707,7 +1708,10 @@ export function AppProvider({ children }) {
     }
 
     const selectedUserIndex = Math.max(usersData.findIndex(u => u.id === selectedUser.id), 0);
-    const nextRole = ACCESS_ROLE_VALUES.includes(selectedUser.role) ? selectedUser.role : ACCESS_ROLES.PETUGAS;
+    const preservedRole = currentRecord?.role || ACCESS_ROLES.PETUGAS;
+    const nextRole = isAdmin
+      ? (ACCESS_ROLE_VALUES.includes(selectedUser.role) ? selectedUser.role : ACCESS_ROLES.PETUGAS)
+      : preservedRole;
     const nextShipAssigned = selectedUser.shipAssigned || null;
     const previewUser = normalizeUserRecord({
       ...(currentRecord || {}),
@@ -1741,7 +1745,7 @@ export function AppProvider({ children }) {
       return normalizeUserRecord(nextUser, index);
     }));
     setSelectedUser({ ...previewUser, password: '' });
-  }, [clearUserManagementFeedback, isAdmin, selectedUser, usersData]);
+  }, [clearUserManagementFeedback, isAdmin, selectedUser, sessionUserId, usersData]);
   const handleDeleteUser = useCallback((id) => {
     if (!isAdmin) return; 
     const targetUser = usersData.find(u => u.id === id); 

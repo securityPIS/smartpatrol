@@ -36,8 +36,9 @@ export default function PatrolCameraModal() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          aspectRatio: { ideal: 4 / 5 },
+          width: { ideal: 1080 },
+          height: { ideal: 1350 },
         },
         audio: false,
       });
@@ -86,9 +87,23 @@ export default function PatrolCameraModal() {
 
     const width = video.videoWidth || 1280;
     const height = video.videoHeight || 720;
+    const targetAspectRatio = 4 / 5;
+    let sourceWidth = width;
+    let sourceHeight = height;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (width / height > targetAspectRatio) {
+      sourceWidth = Math.round(height * targetAspectRatio);
+      offsetX = Math.round((width - sourceWidth) / 2);
+    } else {
+      sourceHeight = Math.round(width / targetAspectRatio);
+      offsetY = Math.round((height - sourceHeight) / 2);
+    }
+
     const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = sourceWidth;
+    canvas.height = sourceHeight;
 
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) {
@@ -96,7 +111,7 @@ export default function PatrolCameraModal() {
       return;
     }
 
-    context.drawImage(video, 0, 0, width, height);
+    context.drawImage(video, offsetX, offsetY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
     const dataUrl = canvas.toDataURL('image/webp', 0.82);
     await handlePatrolCameraCapture(dataUrl);
     stopCameraStream();
@@ -125,7 +140,7 @@ export default function PatrolCameraModal() {
         </div>
 
         <div className="flex-1 flex flex-col p-4 gap-4">
-          <div className="flex-1 rounded-2xl overflow-hidden border border-cyan-900/50 bg-black relative min-h-[320px]">
+          <div className="w-full max-w-sm mx-auto aspect-[4/5] rounded-2xl overflow-hidden border border-cyan-900/50 bg-black relative">
             <video
               ref={videoRef}
               className="w-full h-full object-cover"

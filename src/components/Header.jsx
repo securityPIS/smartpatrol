@@ -8,7 +8,7 @@ const Header = React.memo(function Header() {
     theme, setTheme, isOffline,
     showSettingsDropdown, setShowSettingsDropdown, setShowNotificationsDropdown,
     unreadNotificationCount, openNotificationsPage,
-    setSelectedUser, setShowUserForm, handleLogout
+    clearUserManagementFeedback, setSelectedUser, setShowUserForm, handleLogout
   } = useApp();
 
   return (
@@ -54,7 +54,15 @@ const Header = React.memo(function Header() {
               <button onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); setShowSettingsDropdown(false); }} className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50">
                 {theme === 'dark' ? <Sun className="w-4 h-4 text-yellow-400" /> : <Moon className="w-4 h-4 text-cyan-400" />} {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
               </button>
-              <button onClick={() => { setSelectedUser(currentUserRecord); setShowUserForm(true); setShowSettingsDropdown(false); }} className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50">
+              <button
+                onClick={() => {
+                  clearUserManagementFeedback();
+                  setShowUserForm(false);
+                  setSelectedUser(currentUserRecord ? { ...currentUserRecord, password: '' } : null);
+                  setShowSettingsDropdown(false);
+                }}
+                className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50"
+              >
                 <UserCog className="w-4 h-4" /> Edit Data Saya
               </button>
               <div className="border-t border-cyan-900/50 my-1"></div>
