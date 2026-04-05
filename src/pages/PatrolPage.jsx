@@ -1,7 +1,7 @@
 import React from 'react';
 import { useApp, ACCESS_ROLES } from '../context/AppContext';
 import {
-  CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft,
+  CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft, Plus,
   CalendarDays, User, Thermometer, Wind, FileText, CircleOff,
 } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
@@ -71,11 +71,11 @@ const PatrolPage = React.memo(function PatrolPage() {
   const [summaryDetailType, setSummaryDetailType] = React.useState(null);
   const {
     patrolTab, setPatrolTab, searchQuery, setSearchQuery, filteredCheckpoints,
-    handleActionClick, handleOpenPatrolResult,
-    completedCount, totalCount, progressPercentage,
+    handleActionClick, handleOpenPatrolResult, handleAddCustomPatrolNode,
+    completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
     operationalShip, operationalShipName, checkpoints, activeShiftGuardSnapshot,
     weatherInfo, weatherLoading, getWeatherDetail, setPreviewPhoto,
-    currentShiftMeta, selectedHistoryEntry, closeHistoryEntry, canPatrolCurrentShip,
+    currentShiftMeta, selectedHistoryEntry, closeHistoryEntry, canPatrolCurrentShip, canAddTemporaryPatrolNode,
     activeForms, selectedIncident, selectedReportDetail
   } = useApp();
 
@@ -167,6 +167,11 @@ const PatrolPage = React.memo(function PatrolPage() {
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-0.5">
             <p className={`font-bold ${meta.itemTextClass}`}>{item.name}</p>
+            {item.isTemporaryShiftNode && (
+              <span className="text-[9px] uppercase tracking-widest text-yellow-300 border border-yellow-500/40 px-1.5 py-0.5 rounded">
+                Tambahan Shift
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-cyan-200/60 mt-1">
             {meta.itemIcon}
@@ -290,7 +295,14 @@ const PatrolPage = React.memo(function PatrolPage() {
                     return (
                       <div key={item.id} className="p-3 bg-[#0b1229] border border-cyan-800/50 rounded-xl transition-all hover:border-cyan-500/30">
                         <div className="flex items-center justify-between gap-2">
-                          <p className="font-bold text-white truncate flex-1">{item.name}</p>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <p className="font-bold text-white truncate">{item.name}</p>
+                            {item.isTemporaryShiftNode && (
+                              <span className="shrink-0 text-[9px] uppercase tracking-widest text-yellow-300 border border-yellow-500/40 px-1.5 py-0.5 rounded">
+                                Tambahan Shift
+                              </span>
+                            )}
+                          </div>
                           <div className="flex gap-2 shrink-0">
                             <button onClick={() => handleActionClick(item.id, 'aman')} className="flex items-center justify-center gap-1.5 bg-[#070b19] hover:bg-emerald-950/30 border border-emerald-900/50 hover:border-emerald-500/50 text-emerald-100 px-3 py-2 rounded-xl font-bold text-xs transition-colors shadow-sm">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> AMAN
@@ -304,6 +316,27 @@ const PatrolPage = React.memo(function PatrolPage() {
                     );
                   })}
                 </div>
+
+                {canAddTemporaryPatrolNode && (
+                  <div className="mt-4 p-4 bg-[#0b1229] border border-yellow-500/20 rounded-xl mb-2">
+                    <p className="text-[10px] text-yellow-300 font-bold uppercase tracking-widest mb-1 pl-1">Titik Tambahan Shift</p>
+                    <p className="text-xs text-cyan-300/80 mb-3">
+                      Tambahkan titik patroli sementara jika lokasi yang Anda cek tidak ada di daftar. Titik ini hanya berlaku untuk kapal ini pada shift berjalan dan tetap masuk riwayat shift.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newCustomNode}
+                        onChange={event => setNewCustomNode(event.target.value)}
+                        placeholder="Nama titik tambahan..."
+                        className="flex-1 bg-[#070b19] border border-cyan-800/50 rounded-lg p-2.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none"
+                      />
+                      <button onClick={handleAddCustomPatrolNode} className="px-4 bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/40 text-yellow-200 rounded-lg transition-colors flex items-center justify-center">
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-4 p-4 bg-[#0b1229] border border-cyan-800 border-dashed rounded-xl mb-6">
                   <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1 pl-1">Sumber Checkpoint</p>

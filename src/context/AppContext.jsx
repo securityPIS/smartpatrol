@@ -258,7 +258,9 @@ function resetCheckpointForShift(checkpoint) {
 }
 
 function resetCheckpointCollection(checkpoints) {
-  return checkpoints.map(resetCheckpointForShift);
+  return checkpoints
+    .filter(checkpoint => !checkpoint.isTemporaryShiftNode)
+    .map(resetCheckpointForShift);
 }
 
 function normalizeShipScopedCheckpoints(ship, checkpoints = []) {
@@ -879,6 +881,7 @@ export function AppProvider({ children }) {
   const activePatrolState = useMemo(() => activePatrolId ? activeForms[activePatrolId] : null, [activeForms, activePatrolId]);
   const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => String(c.id) === String(activePatrolId)) : null, [activePatrolId, checkpoints]);
   const canPatrolCurrentShip = Boolean(currentUserRecord && operationalShip && (isAdmin || isPic || (isPetugas && assignedShipForCurrentUser?.id === operationalShip.id)));
+  const canAddTemporaryPatrolNode = Boolean(isPetugas && canPatrolCurrentShip && operationalShip && !selectedHistoryEntry);
   const shouldForcePatrolCameraCapture = isMobilePatrolViewport();
 
   const canManageIncident = useCallback((incident) => {
@@ -1358,8 +1361,32 @@ export function AppProvider({ children }) {
     });
   }, [selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
   const handleAddCustomPatrolNode = useCallback(() => {
+    if (!canAddTemporaryPatrolNode || !operationalShip) return;
+
+    const safeName = sanitizeText(newCustomNode, 80);
+    if (!safeName) return;
+
+    const nameKey = createCheckpointNameKey(safeName);
+    if (checkpoints.some(checkpoint => createCheckpointNameKey(checkpoint.name) === nameKey)) {
+      setNewCustomNode('');
+      return;
+    }
+
+    updateOperationalShipCheckpoints((previousCheckpoints) => ([
+      ...previousCheckpoints,
+      {
+        id: `${operationalShip.id}::temporary::${Date.now()}`,
+        name: safeName,
+        desc: 'Titik tambahan sementara untuk shift berjalan.',
+        status: 'pending',
+        shipId: operationalShip.id,
+        shipName: operationalShip.name,
+        isTemporaryShiftNode: true,
+        createdInShiftKey: currentShiftMeta.key,
+      },
+    ]));
     setNewCustomNode('');
-  }, []);
+  }, [canAddTemporaryPatrolNode, checkpoints, currentShiftMeta.key, newCustomNode, operationalShip, updateOperationalShipCheckpoints]);
   const closePatrolCameraCapture = useCallback(() => {
     setPendingPatrolCameraCapture(null);
   }, []);
@@ -2182,7 +2209,7 @@ export function AppProvider({ children }) {
     // Core data
     checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey, activeShiftGuardSnapshot,
     // Patrol
-    filteredCheckpoints, searchQuery, setSearchQuery, patrolTab, setPatrolTab, activeForms, setActiveForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
+    filteredCheckpoints, searchQuery, setSearchQuery, patrolTab, setPatrolTab, activeForms, setActiveForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
     // Ship
     operationalShip, operationalShipName, activeShipId, setActiveShipId, activeShip, shipDetailTab, setShipDetailTab, scheduleMonth, setScheduleMonth, isEditingShipInfo, setIsEditingShipInfo, editShipInfoData, setEditShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, setNewShipCp, newShipDoc, setNewShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
@@ -2205,7 +2232,7 @@ export function AppProvider({ children }) {
     sessionUserId, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout,
     currentUserRecord, currentUser, currentUserRole, isAdmin, isPic, isPetugas,
     checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey, activeShiftGuardSnapshot,
-    filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode,
+    filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
     operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
     showShipForm, shipFormData, newCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
