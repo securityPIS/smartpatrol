@@ -16,6 +16,12 @@ import {
   registerWithFirebaseEmail,
   subscribeToFirebaseAuthChanges,
 } from '../services/firebase/auth';
+import {
+  isCloudSyncEnabled,
+  saveCloudAppState,
+  subscribeToCloudAppState,
+  uploadCloudDataUrlAsset,
+} from '../services/firebase/cloudState';
 
 // --- DATA MOCKUP ---
 const ACCESS_ROLES = {
@@ -571,6 +577,49 @@ function loadPersistedState() { try { const raw = window.localStorage.getItem(AP
 function savePersistedState(data) { try { window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify({ version: 1, savedAt: new Date().toISOString(), data })); checkStorageQuota(); } catch (error) { console.error('Gagal menyimpan data lokal', error); } }
 function loadWeatherCache() { try { const raw = window.localStorage.getItem(WEATHER_STORAGE_KEY); if (!raw) return null; const parsed = JSON.parse(raw); if (!parsed?.savedAt || !parsed?.data) return null; if (Date.now() - new Date(parsed.savedAt).getTime() > WEATHER_TTL_MS) return null; return parsed.data; } catch { return null; } }
 function saveWeatherCache(data) { try { window.localStorage.setItem(WEATHER_STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data })); } catch (error) { console.error('Gagal menyimpan cache cuaca', error); } }
+function sanitizeCloudAssetSegment(value, fallback = 'asset') {
+  return sanitizeText(String(value || ''), 120)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/(^-|-$)/g, '') || fallback;
+}
+
+function createCloudAssetPath(...segments) {
+  return ['state-assets', ...segments]
+    .map((segment, index) => sanitizeCloudAssetSegment(segment, `part-${index + 1}`))
+    .join('/');
+}
+
+function createSharedStateSnapshot({
+  activeShiftKey,
+  checkpointsByShip,
+  historyEntries,
+  incidentMeta,
+  incidentsData,
+  notifications,
+  shipsData,
+  usersData,
+}) {
+  return {
+    checkpointsByShip,
+    shipsData,
+    usersData,
+    incidentsData,
+    incidentMeta,
+    historyEntries,
+    activeShiftKey,
+    notifications,
+  };
+}
+
+function serializeSharedStateSnapshot(snapshot) {
+  try {
+    return JSON.stringify(snapshot);
+  } catch {
+    return '';
+  }
+}
 
 function isMobilePatrolViewport() {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
@@ -828,7 +877,11 @@ export function AppProvider({ children }) {
   const [selectedUser, setSelectedUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [patrolTab, setPatrolTab] = useState('checkpoint');
+  const [cloudSyncBootstrapped, setCloudSyncBootstrapped] = useState(() => !isCloudSyncEnabled);
   const previousUsersDataRef = useRef(usersData);
+  const lastSharedStateRef = useRef('');
+  const cloudAssetCacheRef = useRef(new Map());
+  const cloudSaveQueueRef = useRef(Promise.resolve());
 
   // Computed values
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -909,6 +962,169 @@ export function AppProvider({ children }) {
     return Boolean(assignedShipForCurrentUser && incident.shipName === assignedShipForCurrentUser.name);
   }, [assignedShipForCurrentUser, currentUserRecord, isAdmin, isPic, isPetugas]);
   const canCloseIncident = useCallback((incident) => Boolean(currentUserRecord && incident && isPic), [currentUserRecord, isPic]);
+  const sharedState = useMemo(() => createSharedStateSnapshot({
+    activeShiftKey,
+    checkpointsByShip,
+    historyEntries,
+    incidentMeta,
+    incidentsData,
+    notifications,
+    shipsData,
+    usersData,
+  }), [
+    activeShiftKey,
+    checkpointsByShip,
+    historyEntries,
+    incidentMeta,
+    incidentsData,
+    notifications,
+    shipsData,
+    usersData,
+  ]);
+  const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
+    if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
+    if (!photoUrl.startsWith('idb://')) return photoUrl;
+
+    const cachedUrl = cloudAssetCacheRef.current.get(photoUrl);
+    if (cachedUrl) return cachedUrl;
+
+    const dataUrl = await loadImageFromDB(photoUrl);
+    if (!dataUrl) return null;
+
+    try {
+      const uploadedUrl = await uploadCloudDataUrlAsset({
+        dataUrl,
+        path: createCloudAssetPath(...pathSegments),
+      });
+
+      const resolvedUrl = uploadedUrl || dataUrl;
+      cloudAssetCacheRef.current.set(photoUrl, resolvedUrl);
+      return resolvedUrl;
+    } catch (error) {
+      console.error('Gagal upload aset patroli ke cloud', error);
+      cloudAssetCacheRef.current.set(photoUrl, dataUrl);
+      return dataUrl;
+    }
+  }, []);
+  const prepareSharedStateForCloudSync = useCallback(async (stateSnapshot) => {
+    const preparedCheckpointsByShip = Object.fromEntries(await Promise.all(
+      Object.entries(stateSnapshot.checkpointsByShip || {}).map(async ([shipId, shipCheckpoints]) => ([
+        shipId,
+        await Promise.all((shipCheckpoints || []).map(async (checkpoint) => ({
+          ...checkpoint,
+          photoUrl: await prepareCloudPhotoUrl(
+            checkpoint.photoUrl,
+            ['checkpoints', shipId, checkpoint.id, checkpoint.photoUrl],
+          ),
+        }))),
+      ])),
+    ));
+
+    const preparedShipsData = await Promise.all((stateSnapshot.shipsData || []).map(async (ship) => ({
+      ...ship,
+      photoUrl: await prepareCloudPhotoUrl(
+        ship.photoUrl,
+        ['ships', ship.id, 'cover', ship.photoUrl],
+      ),
+    })));
+
+    const preparedUsersData = await Promise.all((stateSnapshot.usersData || []).map(async (user) => ({
+      ...user,
+      photoUrl: await prepareCloudPhotoUrl(
+        user.photoUrl,
+        ['users', user.id, 'avatar', user.photoUrl],
+      ),
+    })));
+
+    const preparedIncidentsData = await Promise.all((stateSnapshot.incidentsData || []).map(async (incident) => ({
+      ...incident,
+      photoUrl: await prepareCloudPhotoUrl(
+        incident.photoUrl,
+        ['incidents', incident.id, 'photo', incident.photoUrl],
+      ),
+    })));
+
+    const preparedIncidentMeta = Object.fromEntries(await Promise.all(
+      Object.entries(stateSnapshot.incidentMeta || {}).map(async ([incidentId, meta]) => ([
+        incidentId,
+        {
+          ...meta,
+          progress: await Promise.all((meta?.progress || []).map(async (progressItem, progressIndex) => ({
+            ...progressItem,
+            photoUrl: await prepareCloudPhotoUrl(
+              progressItem.photoUrl,
+              ['incident-progress', incidentId, progressItem.id || progressIndex, progressItem.photoUrl],
+            ),
+          }))),
+        },
+      ])),
+    ));
+
+    const preparedHistoryEntries = await Promise.all((stateSnapshot.historyEntries || []).map(async (entry) => ({
+      ...entry,
+      checkpoints: await Promise.all((entry.checkpoints || []).map(async (checkpoint) => ({
+        ...checkpoint,
+        photoUrl: await prepareCloudPhotoUrl(
+          checkpoint.photoUrl,
+          ['history', entry.id || entry.key, checkpoint.id, checkpoint.photoUrl],
+        ),
+      }))),
+      crewSnapshot: await Promise.all((entry.crewSnapshot || []).map(async (crew) => ({
+        ...crew,
+        photoUrl: await prepareCloudPhotoUrl(
+          crew.photoUrl,
+          ['history-crew', entry.id || entry.key, crew.id || crew.name, crew.photoUrl],
+        ),
+      }))),
+    })));
+
+    return createSharedStateSnapshot({
+      activeShiftKey: stateSnapshot.activeShiftKey,
+      checkpointsByShip: preparedCheckpointsByShip,
+      historyEntries: preparedHistoryEntries,
+      incidentMeta: preparedIncidentMeta,
+      incidentsData: preparedIncidentsData,
+      notifications: stateSnapshot.notifications || [],
+      shipsData: preparedShipsData,
+      usersData: preparedUsersData,
+    });
+  }, [prepareCloudPhotoUrl]);
+  const applyCloudSharedState = useCallback((nextState) => {
+    if (!nextState || typeof nextState !== 'object') return;
+
+    const nextShips = normalizeShipsCollection(nextState.shipsData || initialShipsData);
+    const nextUsers = applyAdminCredentialReset(
+      normalizeUsersCollection(nextState.usersData || mockUsersList),
+    );
+    const nextCheckpointsByShip = createCheckpointsByShipState(
+      nextShips,
+      nextState.checkpointsByShip,
+      nextState.checkpoints,
+    );
+    const normalizedState = createSharedStateSnapshot({
+      activeShiftKey: nextState.activeShiftKey || getShiftMeta().key,
+      checkpointsByShip: nextCheckpointsByShip,
+      historyEntries: sortHistoryEntries(nextState.historyEntries || createSeedHistoryEntries()),
+      incidentMeta: nextState.incidentMeta && typeof nextState.incidentMeta === 'object' ? nextState.incidentMeta : {},
+      incidentsData: Array.isArray(nextState.incidentsData) ? nextState.incidentsData : [],
+      notifications: sortNotifications(nextState.notifications || []),
+      shipsData: nextShips,
+      usersData: nextUsers,
+    });
+    const serializedState = serializeSharedStateSnapshot(normalizedState);
+
+    if (serializedState === lastSharedStateRef.current) return;
+
+    lastSharedStateRef.current = serializedState;
+    setActiveShiftKey(normalizedState.activeShiftKey);
+    setCheckpointsByShip(normalizedState.checkpointsByShip);
+    setShipsData(normalizedState.shipsData);
+    setUsersData(normalizedState.usersData);
+    setIncidentsData(normalizedState.incidentsData);
+    setIncidentMeta(normalizedState.incidentMeta);
+    setHistoryEntries(normalizedState.historyEntries);
+    setNotifications(normalizedState.notifications);
+  }, []);
   const getUsersByRole = useCallback((roles) => (
     usersData.filter(user => roles.includes(user.role)).map(user => user.id)
   ), [usersData]);
@@ -2190,17 +2406,47 @@ export function AppProvider({ children }) {
   // Persistence effects
   useEffect(() => {
     savePersistedState({
-      checkpointsByShip,
-      shipsData,
-      usersData,
-      incidentsData,
-      incidentMeta,
-      historyEntries,
-      activeShiftKey,
-      notifications,
+      ...sharedState,
       theme,
     });
-  }, [checkpointsByShip, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications, theme]);
+  }, [sharedState, theme]);
+  useEffect(() => {
+    if (!isCloudSyncEnabled) return () => {};
+
+    return subscribeToCloudAppState((cloudPayload) => {
+      setCloudSyncBootstrapped(true);
+
+      if (!cloudPayload?.state) return;
+      applyCloudSharedState(cloudPayload.state);
+    }, (error) => {
+      setCloudSyncBootstrapped(true);
+      console.error('Gagal subscribe data patroli cloud', error);
+    });
+  }, [applyCloudSharedState]);
+  useEffect(() => {
+    if (!isCloudSyncEnabled || isOffline || !cloudSyncBootstrapped) return;
+
+    const serializedState = serializeSharedStateSnapshot(sharedState);
+    if (!serializedState || serializedState === lastSharedStateRef.current) return;
+
+    cloudSaveQueueRef.current = cloudSaveQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        const latestSerializedState = serializeSharedStateSnapshot(sharedState);
+        if (!latestSerializedState || latestSerializedState === lastSharedStateRef.current) return;
+
+        const preparedState = await prepareSharedStateForCloudSync(sharedState);
+        const preparedSerializedState = serializeSharedStateSnapshot(preparedState);
+
+        if (!preparedSerializedState || preparedSerializedState === lastSharedStateRef.current) return;
+
+        await saveCloudAppState(preparedState);
+        lastSharedStateRef.current = preparedSerializedState;
+      })
+      .catch((error) => {
+        console.error('Gagal mengirim laporan patroli ke cloud', error);
+      });
+  }, [cloudSyncBootstrapped, isOffline, prepareSharedStateForCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
