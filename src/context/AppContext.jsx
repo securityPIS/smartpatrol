@@ -44,9 +44,70 @@ const defaultLocationOptions = [
   'Gudang Logistik', 'Gudang Spare Part', 'Alat Dapur', 'Fasilitas Pendukung'
 ];
 
+function createDefaultShipCheckpoints() {
+  return defaultLocationOptions.map((name) => ({
+    name,
+    desc: '',
+    isDefault: true,
+  }));
+}
+
+function mergeShipCheckpointDefinitions(checkpoints = []) {
+  const normalizedCheckpoints = Array.isArray(checkpoints) ? checkpoints : [];
+  const byName = new Map();
+
+  normalizedCheckpoints.forEach((checkpoint) => {
+    const safeName = sanitizeText(checkpoint?.name || '', 80);
+    const key = createCheckpointNameKey(safeName);
+    if (!key || byName.has(key)) return;
+    byName.set(key, {
+      name: safeName,
+      desc: sanitizeMultilineText(checkpoint?.desc || '', 140),
+      isDefault: Boolean(checkpoint?.isDefault),
+    });
+  });
+
+  const defaults = createDefaultShipCheckpoints().map((checkpoint) => {
+    const key = createCheckpointNameKey(checkpoint.name);
+    const existing = byName.get(key);
+    return {
+      name: checkpoint.name,
+      desc: existing?.desc || checkpoint.desc,
+      isDefault: true,
+    };
+  });
+
+  const extras = normalizedCheckpoints
+    .map((checkpoint) => {
+      const safeName = sanitizeText(checkpoint?.name || '', 80);
+      return {
+        name: safeName,
+        desc: sanitizeMultilineText(checkpoint?.desc || '', 140),
+        isDefault: false,
+      };
+    })
+    .filter((checkpoint) => checkpoint.name && !defaultLocationOptions.some(defaultName => createCheckpointNameKey(defaultName) === createCheckpointNameKey(checkpoint.name)));
+
+  const extrasByName = new Map();
+  extras.forEach((checkpoint) => {
+    const key = createCheckpointNameKey(checkpoint.name);
+    if (!key || extrasByName.has(key)) return;
+    extrasByName.set(key, checkpoint);
+  });
+
+  return [...defaults, ...extrasByName.values()];
+}
+
+function normalizeShipsCollection(ships = []) {
+  return (Array.isArray(ships) ? ships : []).map((ship) => ({
+    ...ship,
+    customCheckpoints: mergeShipCheckpointDefinitions(ship?.customCheckpoints),
+  }));
+}
+
 const defaultAuthForm = { name: '', email: '', password: '', confirmPassword: '', phone: '', type: 'BUJP' };
 const defaultUserForm = { name: '', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', dob: '', email: '', password: '', phone: '', address: '', emergencyName: '', emergencyContact: '', emergencyRelation: 'Orang Tua', officeAddress: '', photoUrl: null };
-const defaultShipForm = { name: '', type: 'Oil Tanker', route: '', cargoType: '', cargoAmount: '', status: 'UPP', customCheckpoints: [], photoUrl: null };
+const defaultShipForm = { name: '', type: 'Oil Tanker', route: '', cargoType: '', cargoAmount: '', status: 'UPP', customCheckpoints: createDefaultShipCheckpoints(), photoUrl: null };
 const defaultShipDocumentForm = { title: '', desc: '', fileUrl: null, fileName: '', mimeType: '' };
 const defaultIncidentForm = { locType: 'default', location: defaultLocationOptions[0], customLocation: '', penyebab: '', deskripsi: '', tindakLanjut: '', photoUrl: null };
 
@@ -646,7 +707,7 @@ export const useApp = () => useContext(AppContext);
 export { ACCESS_ROLES, defaultLocationOptions };
 
 export function AppProvider({ children }) {
-  const initialShipsCollection = persistedState?.shipsData || initialShipsData;
+  const initialShipsCollection = normalizeShipsCollection(persistedState?.shipsData || initialShipsData);
   const initialUsersCollection = applyAdminCredentialReset(
     normalizeUsersCollection(persistedState?.usersData || mockUsersList),
   );
@@ -1360,7 +1421,17 @@ export function AppProvider({ children }) {
 
   // Ship handlers
   const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
-  const updateActiveShip = useCallback((updates) => { if (!isAdmin || !activeShipId) return; setShipsData(prev => prev.map(s => s.id === activeShipId ? { ...s, ...updates } : s)); }, [isAdmin, activeShipId]);
+  const updateActiveShip = useCallback((updates) => {
+    if (!isAdmin || !activeShipId) return;
+    setShipsData(prev => prev.map((ship) => {
+      if (ship.id !== activeShipId) return ship;
+      const nextShip = { ...ship, ...updates };
+      return {
+        ...nextShip,
+        customCheckpoints: mergeShipCheckpointDefinitions(nextShip.customCheckpoints),
+      };
+    }));
+  }, [isAdmin, activeShipId]);
   const openShipDocForm = useCallback(() => {
     if (!isAdmin || !activeShip) return;
     setNewShipDoc(createShipDocumentState());
@@ -1371,7 +1442,22 @@ export function AppProvider({ children }) {
     setNewShipDoc(createShipDocumentState());
   }, []);
   const handleTogglePersonnel = useCallback((userId) => { if (!isAdmin || !activeShip) return; const targetArray = scheduleMonth === 'current' ? activeShip.personnel : activeShip.personnelNextMonth; const isAssigned = targetArray.includes(userId); if (isAssigned) { updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) }); if(scheduleMonth === 'current') setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: null, status: 'off-duty'} : u)); } else { updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: [...targetArray, userId] }); if(scheduleMonth === 'current') setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: activeShip.name, status: 'active'} : u)); } }, [isAdmin, activeShip, scheduleMonth, updateActiveShip]);
-  const handleAddShipCp = useCallback(() => { if (!isAdmin || !activeShip) return; const safeName = sanitizeText(newShipCp.name, 80); if(safeName) { updateActiveShip({ customCheckpoints: [...activeShip.customCheckpoints, { name: safeName, desc: sanitizeMultilineText(newShipCp.desc, 140) }] }); setNewShipCp({name: '', desc: ''}); } }, [isAdmin, activeShip, newShipCp, updateActiveShip]);
+  const handleAddShipCp = useCallback(() => {
+    if (!isAdmin || !activeShip) return;
+    const safeName = sanitizeText(newShipCp.name, 80);
+    if (!safeName) return;
+    if (activeShip.customCheckpoints.some(checkpoint => createCheckpointNameKey(checkpoint.name) === createCheckpointNameKey(safeName))) {
+      setNewShipCp({ name: '', desc: '' });
+      return;
+    }
+    updateActiveShip({
+      customCheckpoints: [
+        ...activeShip.customCheckpoints,
+        { name: safeName, desc: sanitizeMultilineText(newShipCp.desc, 140), isDefault: false },
+      ],
+    });
+    setNewShipCp({name: '', desc: ''});
+  }, [isAdmin, activeShip, newShipCp, updateActiveShip]);
   const handleShipPhotoUpdate = useCallback(async () => { if (!isAdmin || !activeShipId) return; const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) updateActiveShip({ photoUrl: url }); }, [isAdmin, activeShipId, updateActiveShip]);
   const handleChangeSchedule = useCallback((userId, field, value) => { if (!isAdmin || !activeShip) return; const currentSchedules = activeShip.personnelSchedules || {}; const newSchedules = { ...currentSchedules, [userId]: { ...(currentSchedules[userId] || {}), [field]: value } }; updateActiveShip({ personnelSchedules: newSchedules }); }, [isAdmin, activeShip, updateActiveShip]);
   const handleShipFormPhotoUpload = useCallback(async () => {
@@ -1733,9 +1819,59 @@ export function AppProvider({ children }) {
   }, []);
 
   // Ship form handlers
-  const handleSaveShip = useCallback(() => { if (!isAdmin) return; const safeName = sanitizeText(shipFormData.name, 80); if (!safeName) return; const newShip = { id: 's' + Date.now(), ...shipFormData, name: safeName, route: sanitizeText(shipFormData.route, 100), cargoType: sanitizeText(shipFormData.cargoType, 80), cargoAmount: sanitizeText(shipFormData.cargoAmount, 40), lat: '-6.0000', lng: '106.0000', personnel: [], personnelNextMonth: [], documents: [], photoUrl: shipFormData.photoUrl || createPosterDataUrl(safeName, 'Armada Lokal', 2, false) }; setShipsData(prev => [...prev, newShip]); setShowShipForm(false); setShipFormData(createShipFormState()); setNewCheckpoint(''); }, [isAdmin, shipFormData]);
-  const handleAddCheckpointToForm = useCallback(() => { setNewCheckpoint(prev => { const safeName = sanitizeText(prev, 80); if(safeName !== '') { setShipFormData(fd => ({...fd, customCheckpoints: [...fd.customCheckpoints, { name: safeName, desc: '' }]})); return ''; } return prev; }); }, []);
-  const handleRemoveCheckpointFromForm = useCallback((index) => { setShipFormData(prev => ({ ...prev, customCheckpoints: prev.customCheckpoints.filter((_, i) => i !== index) })); }, []);
+  const handleSaveShip = useCallback(() => {
+    if (!isAdmin) return;
+    const safeName = sanitizeText(shipFormData.name, 80);
+    if (!safeName) return;
+    const newShip = {
+      id: 's' + Date.now(),
+      ...shipFormData,
+      name: safeName,
+      route: sanitizeText(shipFormData.route, 100),
+      cargoType: sanitizeText(shipFormData.cargoType, 80),
+      cargoAmount: sanitizeText(shipFormData.cargoAmount, 40),
+      customCheckpoints: mergeShipCheckpointDefinitions(shipFormData.customCheckpoints),
+      lat: '-6.0000',
+      lng: '106.0000',
+      personnel: [],
+      personnelNextMonth: [],
+      documents: [],
+      photoUrl: shipFormData.photoUrl || createPosterDataUrl(safeName, 'Armada Lokal', 2, false),
+    };
+    setShipsData(prev => [...prev, newShip]);
+    setShowShipForm(false);
+    setShipFormData(createShipFormState());
+    setNewCheckpoint('');
+  }, [isAdmin, shipFormData]);
+  const handleAddCheckpointToForm = useCallback(() => {
+    setNewCheckpoint((previousValue) => {
+      const safeName = sanitizeText(previousValue, 80);
+      if (!safeName) return previousValue;
+      setShipFormData((formData) => {
+        if (formData.customCheckpoints.some(checkpoint => createCheckpointNameKey(checkpoint.name) === createCheckpointNameKey(safeName))) {
+          return formData;
+        }
+        return {
+          ...formData,
+          customCheckpoints: [
+            ...formData.customCheckpoints,
+            { name: safeName, desc: '', isDefault: false },
+          ],
+        };
+      });
+      return '';
+    });
+  }, []);
+  const handleRemoveCheckpointFromForm = useCallback((index) => {
+    setShipFormData((previousFormData) => {
+      const targetCheckpoint = previousFormData.customCheckpoints[index];
+      if (targetCheckpoint?.isDefault) return previousFormData;
+      return {
+        ...previousFormData,
+        customCheckpoints: previousFormData.customCheckpoints.filter((_, checkpointIndex) => checkpointIndex !== index),
+      };
+    });
+  }, []);
 
   // Auth handlers
   const resetAuthSession = useCallback((message = 'Sesi Anda telah berakhir. Silakan login kembali.') => {

@@ -251,10 +251,14 @@ const ShipsPage = React.memo(function ShipsPage() {
                    activeShip.customCheckpoints.map((cp, idx) => (
                      <div key={idx} className="p-3 bg-[#070b19] border border-cyan-800/50 rounded-xl flex justify-between items-start">
                        <div>
-                          <p className="font-bold text-cyan-100 flex items-center gap-2 text-left"><span className="text-[9px] text-cyan-600 border border-cyan-800 px-1 rounded shrink-0">TITIK-{idx+1}</span>{cp.name}</p>
+                          <p className="font-bold text-cyan-100 flex items-center gap-2 text-left">
+                            <span className="text-[9px] text-cyan-600 border border-cyan-800 px-1 rounded shrink-0">TITIK-{idx+1}</span>
+                            {cp.name}
+                            {cp.isDefault && <span className="text-[9px] uppercase tracking-widest text-emerald-300 border border-emerald-500/40 px-1 rounded shrink-0">Default</span>}
+                          </p>
                           <p className="text-xs text-cyan-500 mt-1">{cp.desc || 'Tanpa deskripsi'}</p>
                        </div>
-                       <button onClick={() => updateActiveShip({customCheckpoints: activeShip.customCheckpoints.filter((_,i)=>i!==idx)})} className="p-1 text-rose-500 hover:bg-rose-500/20 rounded" aria-label="Hapus titik periksa"><Trash2 className="w-4 h-4"/></button>
+                       <button onClick={() => !cp.isDefault && updateActiveShip({customCheckpoints: activeShip.customCheckpoints.filter((_,i)=>i!==idx)})} disabled={cp.isDefault} className={`p-1 rounded ${cp.isDefault ? 'text-cyan-800 cursor-not-allowed' : 'text-rose-500 hover:bg-rose-500/20'}`} aria-label="Hapus titik periksa"><Trash2 className="w-4 h-4"/></button>
                      </div>
                    ))
                 )}
