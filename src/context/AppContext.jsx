@@ -27,6 +27,9 @@ const ACCESS_ROLES = {
 const ACCESS_ROLE_VALUES = Object.values(ACCESS_ROLES);
 const AUTH_SESSION_KEY = 'smartpatrol.auth.local.v1';
 const APP_TIME_ZONE = 'Asia/Jakarta';
+const ADMIN_RESET_EMAIL = 'admin@smartpatrol.local';
+const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
+const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
 const SHIFT_SEQUENCE = [
   { id: 'shift-4', label: 'Shift 4', startHour: 0, endHour: 6, timeRange: '00:00 - 06:00' },
   { id: 'shift-1', label: 'Shift 1', startHour: 6, endHour: 12, timeRange: '06:00 - 12:00' },
@@ -63,7 +66,7 @@ initialCheckpoints[0] = { ...initialCheckpoints[0], status: 'completed', complet
 initialCheckpoints[1] = { ...initialCheckpoints[1], status: 'completed', completedBy: 'Sertu Agus', time: '12:20', photoUrl: createPosterDataUrl('HALUAN', 'Temuan jangkar', 4, false), resultType: 'temuan', penyebab: 'Gesekan berlebih karena cuaca buruk', kejadian: 'Karat parah pada rantai jangkar kiri.', tindakLanjut: 'Lapor Chief Officer.' };
 
 const mockUsersList = [
-  { id: 'u1', name: 'Budi Santoso', role: ACCESS_ROLES.ADMIN, type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', email: 'admin@smartpatrol.local', hasCredential: true, passwordSalt: '4e7f1a9c2d6b8f10', passwordHash: 'e0b98996bdd6437310b21efdce9329a01a2212db84c43e6ea103d4ec908f2dd8', photoUrl: createPosterDataUrl('BS', 'Budi Santoso', 0, true) },
+  { id: 'u1', name: 'Budi Santoso', role: ACCESS_ROLES.ADMIN, type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', email: ADMIN_RESET_EMAIL, hasCredential: true, passwordSalt: ADMIN_RESET_SALT, passwordHash: ADMIN_RESET_HASH, photoUrl: createPosterDataUrl('BS', 'Budi Santoso', 0, true) },
   { id: 'u2', name: 'Sertu Agus', role: ACCESS_ROLES.PIC, type: 'TNI', status: 'active', shipAssigned: 'MT MENGGALA', email: 'pic@smartpatrol.local', hasCredential: true, passwordSalt: '7ab31d8f22ce9014', passwordHash: 'ded78e74253898700b4c5c06479e492b8a918b427441094d84f837d9cde3aa1b', photoUrl: createPosterDataUrl('SA', 'Sertu Agus', 1, true) },
   { id: 'u3', name: 'Cipto Mangunkusumo', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', email: 'petugas@smartpatrol.local', hasCredential: true, passwordSalt: '91c4ef0a5d7b2c38', passwordHash: 'f6df216170e0fa8cbfdffaa046b3d785e6e289627af9f8753addec4a11860a8b', photoUrl: createPosterDataUrl('CM', 'Cipto', 2, true) },
   { id: 'u4', name: 'Deni Setiawan', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', status: 'off-duty', shipAssigned: null, email: 'deni@smartpatrol.local', hasCredential: true, passwordSalt: 'bc72ea19453f8d26', passwordHash: '79907b35981fa38d4b7cecb3554985d3ed0e668f0ecddee204e30b614247d9c2', photoUrl: createPosterDataUrl('DS', 'Deni', 3, true) },
@@ -167,12 +170,102 @@ function getNextShiftMeta(meta) {
   return shiftMetaFromParts(meta.dateKey, SHIFT_SEQUENCE[currentIndex + 1].id);
 }
 
+function createCheckpointNameKey(name) {
+  return sanitizeText(name || '', 120).trim().toLowerCase();
+}
+
+function createShipCheckpointId(ship, checkpointName, index) {
+  const slug = sanitizeText(checkpointName || '', 120)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || `checkpoint-${index + 1}`;
+
+  return `${ship?.id || ship?.name || 'ship'}::${slug}::${index + 1}`;
+}
+
+function createBaseCheckpointRecord(ship, checkpoint, index) {
+  return {
+    id: createShipCheckpointId(ship, checkpoint?.name, index),
+    name: sanitizeText(checkpoint?.name || '', 80) || `Checkpoint ${index + 1}`,
+    desc: sanitizeMultilineText(checkpoint?.desc || '', 140),
+    status: 'pending',
+    shipId: ship?.id || null,
+    shipName: ship?.name || '',
+  };
+}
+
+function createShipCheckpointCollection(ship) {
+  if (!ship) return [];
+  return (ship.customCheckpoints || []).map((checkpoint, index) => createBaseCheckpointRecord(ship, checkpoint, index));
+}
+
 function resetCheckpointForShift(checkpoint) {
-  return { id: checkpoint.id, name: checkpoint.name, status: 'pending' };
+  return {
+    id: checkpoint.id,
+    name: checkpoint.name,
+    desc: checkpoint.desc || '',
+    status: 'pending',
+    shipId: checkpoint.shipId || null,
+    shipName: checkpoint.shipName || '',
+  };
 }
 
 function resetCheckpointCollection(checkpoints) {
   return checkpoints.map(resetCheckpointForShift);
+}
+
+function normalizeShipScopedCheckpoints(ship, checkpoints = []) {
+  const baseCheckpoints = createShipCheckpointCollection(ship);
+  const checkpointsById = new Map((checkpoints || []).map(checkpoint => [String(checkpoint.id), checkpoint]));
+  const checkpointsByName = new Map((checkpoints || []).map(checkpoint => [createCheckpointNameKey(checkpoint.name), checkpoint]));
+
+  return baseCheckpoints.map((baseCheckpoint) => {
+    const matchedCheckpoint = checkpointsById.get(String(baseCheckpoint.id))
+      || checkpointsByName.get(createCheckpointNameKey(baseCheckpoint.name));
+
+    if (!matchedCheckpoint) return baseCheckpoint;
+
+    return {
+      ...baseCheckpoint,
+      ...matchedCheckpoint,
+      id: baseCheckpoint.id,
+      name: baseCheckpoint.name,
+      desc: baseCheckpoint.desc,
+      shipId: ship?.id || matchedCheckpoint.shipId || null,
+      shipName: ship?.name || matchedCheckpoint.shipName || '',
+    };
+  });
+}
+
+function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, legacyCheckpoints = null) {
+  const savedState = savedCheckpointsByShip && typeof savedCheckpointsByShip === 'object'
+    ? savedCheckpointsByShip
+    : {};
+  const fallbackShip = ships[0] || null;
+
+  return ships.reduce((collection, ship) => {
+    const savedForShip = Array.isArray(savedState[ship.id])
+      ? savedState[ship.id]
+      : Array.isArray(savedState[ship.name])
+        ? savedState[ship.name]
+        : fallbackShip?.id === ship.id && Array.isArray(legacyCheckpoints)
+          ? legacyCheckpoints
+          : [];
+
+    collection[ship.id] = normalizeShipScopedCheckpoints(ship, savedForShip);
+    return collection;
+  }, {});
+}
+
+function createHistoryEntryKey(ship, shiftMeta) {
+  const shipToken = sanitizeText(ship?.id || ship?.name || 'ship', 120)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'ship';
+
+  return `${shipToken}|${shiftMeta.key}`;
 }
 
 function createMissedCheckpoint(checkpoint, shiftMeta) {
@@ -247,7 +340,8 @@ function buildGuardShiftSnapshot(users, shipName, checkpoints = []) {
 }
 
 function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo }) {
-  const historyId = `history-${shiftMeta.key}`;
+  const historyKey = createHistoryEntryKey(ship, shiftMeta);
+  const historyId = `history-${historyKey}`;
   const snapshotCheckpoints = checkpoints.map(checkpoint => (
     checkpoint.status === 'completed'
       ? { ...checkpoint, readOnly: true, historyId, date: shiftMeta.dateLabel }
@@ -258,7 +352,7 @@ function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo })
 
   return {
     id: historyId,
-    key: shiftMeta.key,
+    key: historyKey,
     date: shiftMeta.dateLabel,
     dateKey: shiftMeta.dateKey,
     shift: shiftMeta.label,
@@ -357,6 +451,24 @@ function normalizeUsersCollection(users) {
   return normalized;
 }
 
+function applyAdminCredentialReset(users = []) {
+  return users.map((user) => {
+    const normalizedEmail = sanitizeEmail(user?.email || '');
+    const isAdminTarget = user?.id === 'u1' || normalizedEmail === ADMIN_RESET_EMAIL;
+    if (!isAdminTarget) return user;
+
+    return {
+      ...user,
+      email: ADMIN_RESET_EMAIL,
+      hasCredential: true,
+      passwordSalt: ADMIN_RESET_SALT,
+      passwordHash: ADMIN_RESET_HASH,
+      authProvider: 'legacy',
+      firebaseUid: null,
+    };
+  });
+}
+
 function isFirebaseManagedUser(user) {
   return Boolean(user?.authProvider === 'firebase' || user?.firebaseUid);
 }
@@ -428,33 +540,56 @@ async function pickLocalFile(accept = '.pdf,.doc,.docx,.xls,.xlsx,image/*') {
 
 function createSeedHistoryEntries() {
   const ship = initialShipsData[0];
+  const firstShiftCheckpoints = createShipCheckpointCollection(ship).map(checkpoint => ({ ...checkpoint }));
+  const secondShiftCheckpoints = createShipCheckpointCollection(ship).map(checkpoint => ({ ...checkpoint }));
 
-  const firstShiftCheckpoints = initialCheckpoints.map((checkpoint) => ({ ...checkpoint }));
-  const secondShiftCheckpoints = resetCheckpointCollection(initialCheckpoints);
-  secondShiftCheckpoints[2] = {
-    ...secondShiftCheckpoints[2],
-    status: 'completed',
-    completedBy: 'Cipto Mangunkusumo',
-    time: '05:10',
-    shipName: ship.name,
-    photoUrl: createPosterDataUrl('BURITAN', 'Inspeksi selesai', 0, false),
-    resultType: 'aman',
-    kejadian: 'Kondisi buritan aman dan tidak ada hambatan.',
-    penyebab: '',
-    tindakLanjut: 'Lanjut patroli rutin.',
-  };
-  secondShiftCheckpoints[3] = {
-    ...secondShiftCheckpoints[3],
-    status: 'completed',
-    completedBy: 'Sertu Agus',
-    time: '05:35',
-    shipName: ship.name,
-    photoUrl: createPosterDataUrl('DECK', 'Permukaan licin', 4, false),
-    resultType: 'temuan',
-    kejadian: 'Ada genangan oli tipis di sisi deck kanan.',
-    penyebab: 'Sisa tetesan dari perawatan pompa sebelumnya.',
-    tindakLanjut: 'Pasang tanda bahaya dan bersihkan area deck.',
-  };
+  if (firstShiftCheckpoints[0]) {
+    firstShiftCheckpoints[0] = {
+      ...firstShiftCheckpoints[0],
+      status: 'completed',
+      completedBy: 'Cipto Mangunkusumo',
+      completedByUserId: 'u3',
+      time: '08:15',
+      shipName: ship.name,
+      photoUrl: createPosterDataUrl('CUACA', 'Kondisi aman', 0, false),
+      resultType: 'aman',
+      kejadian: 'Visibilitas baik dan gelombang stabil.',
+      penyebab: '',
+      tindakLanjut: 'Lanjut patroli rutin.',
+    };
+  }
+
+  if (firstShiftCheckpoints[1]) {
+    firstShiftCheckpoints[1] = {
+      ...firstShiftCheckpoints[1],
+      status: 'completed',
+      completedBy: 'Sertu Agus',
+      completedByUserId: 'u2',
+      time: '08:40',
+      shipName: ship.name,
+      photoUrl: createPosterDataUrl('MESIN', 'Perlu tindak lanjut', 4, false),
+      resultType: 'temuan',
+      kejadian: 'Suhu generator naik di atas ambang normal.',
+      penyebab: 'Sirkulasi udara ruang mesin terhambat.',
+      tindakLanjut: 'Lapor Chief Engineer dan buka ventilasi tambahan.',
+    };
+  }
+
+  if (secondShiftCheckpoints[1]) {
+    secondShiftCheckpoints[1] = {
+      ...secondShiftCheckpoints[1],
+      status: 'completed',
+      completedBy: 'Cipto Mangunkusumo',
+      completedByUserId: 'u3',
+      time: '05:10',
+      shipName: ship.name,
+      photoUrl: createPosterDataUrl('MESIN', 'Inspeksi selesai', 0, false),
+      resultType: 'aman',
+      kejadian: 'Ruang mesin aman dan peralatan beroperasi normal.',
+      penyebab: '',
+      tindakLanjut: 'Lanjut patroli rutin.',
+    };
+  }
 
   return sortHistoryEntries([
     buildHistoryEntry({
@@ -482,6 +617,16 @@ export const useApp = () => useContext(AppContext);
 export { ACCESS_ROLES, defaultLocationOptions };
 
 export function AppProvider({ children }) {
+  const initialShipsCollection = persistedState?.shipsData || initialShipsData;
+  const initialUsersCollection = applyAdminCredentialReset(
+    normalizeUsersCollection(persistedState?.usersData || mockUsersList),
+  );
+  const initialCheckpointsByShip = createCheckpointsByShipState(
+    initialShipsCollection,
+    persistedState?.checkpointsByShip,
+    persistedState?.checkpoints,
+  );
+
   // Theme & connectivity
   const [currentPage, setCurrentPage] = useState('home');
   const [theme, setTheme] = useState(() => persistedState?.theme || 'dark');
@@ -519,9 +664,9 @@ export function AppProvider({ children }) {
 
   // Core data
   const [activeShiftKey, setActiveShiftKey] = useState(() => persistedState?.activeShiftKey || getShiftMeta().key);
-  const [checkpoints, setCheckpoints] = useState(() => persistedState?.checkpoints || initialCheckpoints);
-  const [shipsData, setShipsData] = useState(() => persistedState?.shipsData || initialShipsData);
-  const [usersData, setUsersData] = useState(() => normalizeUsersCollection(persistedState?.usersData || mockUsersList));
+  const [checkpointsByShip, setCheckpointsByShip] = useState(() => initialCheckpointsByShip);
+  const [shipsData, setShipsData] = useState(() => initialShipsCollection);
+  const [usersData, setUsersData] = useState(() => initialUsersCollection);
   const [incidentsData, setIncidentsData] = useState(() => persistedState?.incidentsData || []);
   const [historyEntries, setHistoryEntries] = useState(() => sortHistoryEntries(persistedState?.historyEntries || createSeedHistoryEntries()));
   const [notifications, setNotifications] = useState(() => sortNotifications(persistedState?.notifications || []));
@@ -609,9 +754,38 @@ export function AppProvider({ children }) {
   const isPic = currentUserRole === ACCESS_ROLES.PIC;
   const isPetugas = currentUserRole === ACCESS_ROLES.PETUGAS;
   const currentUserId = currentUserRecord?.id || null;
-  const operationalShip = useMemo(() => { if (shipsData.length === 0) return null; if (currentUserRecord?.shipAssigned) return shipsData.find(ship => ship.name === currentUserRecord.shipAssigned) || shipsData[0]; return shipsData[0]; }, [shipsData, currentUserRecord?.shipAssigned]);
-  const operationalShipName = operationalShip?.name || currentUserRecord?.shipAssigned || 'MT MENGGALA';
-  const selectedHistoryEntry = useMemo(() => historyEntries.find(entry => entry.id === selectedHistoryId) || null, [historyEntries, selectedHistoryId]);
+  const assignedShipForCurrentUser = useMemo(() => {
+    if (!currentUserRecord) return null;
+    return shipsData.find((ship) => (
+      ship.name === currentUserRecord.shipAssigned
+      && Array.isArray(ship.personnel)
+      && ship.personnel.includes(currentUserRecord.id)
+      && currentUserRecord.status === 'active'
+    )) || null;
+  }, [currentUserRecord, shipsData]);
+  const operationalShip = useMemo(() => {
+    if (shipsData.length === 0) return null;
+    if (isPetugas) return assignedShipForCurrentUser;
+    if (currentUserRecord?.shipAssigned) {
+      return shipsData.find(ship => ship.name === currentUserRecord.shipAssigned) || assignedShipForCurrentUser || shipsData[0];
+    }
+    return assignedShipForCurrentUser || shipsData[0];
+  }, [assignedShipForCurrentUser, currentUserRecord?.shipAssigned, isPetugas, shipsData]);
+  const operationalShipName = operationalShip?.name || (isPetugas ? null : currentUserRecord?.shipAssigned || shipsData[0]?.name || null);
+  const checkpoints = useMemo(() => {
+    if (!operationalShip?.id) return [];
+    return checkpointsByShip[operationalShip.id] || [];
+  }, [checkpointsByShip, operationalShip?.id]);
+  const visibleHistoryEntries = useMemo(() => {
+    if (!currentUserRecord) return [];
+    if (isAdmin || isPic) return historyEntries;
+    if (!assignedShipForCurrentUser) return [];
+    return historyEntries.filter(entry => (
+      entry.shipSnapshot?.id === assignedShipForCurrentUser.id
+      || entry.ship === assignedShipForCurrentUser.name
+    ));
+  }, [assignedShipForCurrentUser, currentUserRecord, historyEntries, isAdmin, isPic]);
+  const selectedHistoryEntry = useMemo(() => visibleHistoryEntries.find(entry => entry.id === selectedHistoryId) || null, [visibleHistoryEntries, selectedHistoryId]);
   const visibleNotifications = useMemo(() => {
     if (!currentUserId) return [];
     return notifications.filter(notification => notification.targetUserIds.includes(currentUserId));
@@ -627,10 +801,15 @@ export function AppProvider({ children }) {
   const progressPercentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
   const activePatrolId = useMemo(() => Object.keys(activeForms)[0], [activeForms]);
   const activePatrolState = useMemo(() => activePatrolId ? activeForms[activePatrolId] : null, [activeForms, activePatrolId]);
-  const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => c.id === Number(activePatrolId)) : null, [activePatrolId, checkpoints]);
-  const canPatrolCurrentShip = Boolean(currentUserRecord && (isAdmin || isPic || (isPetugas && currentUserRecord.shipAssigned && currentUserRecord.status === 'active')));
+  const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => String(c.id) === String(activePatrolId)) : null, [activePatrolId, checkpoints]);
+  const canPatrolCurrentShip = Boolean(currentUserRecord && operationalShip && (isAdmin || isPic || (isPetugas && assignedShipForCurrentUser?.id === operationalShip.id)));
 
-  const canManageIncident = useCallback((incident) => { if (!currentUserRecord || !incident) return false; if (isAdmin || isPic) return true; if (!isPetugas) return false; return Boolean(currentUserRecord.shipAssigned && incident.shipName === currentUserRecord.shipAssigned); }, [currentUserRecord, isAdmin, isPic, isPetugas]);
+  const canManageIncident = useCallback((incident) => {
+    if (!currentUserRecord || !incident) return false;
+    if (isAdmin || isPic) return true;
+    if (!isPetugas) return false;
+    return Boolean(assignedShipForCurrentUser && incident.shipName === assignedShipForCurrentUser.name);
+  }, [assignedShipForCurrentUser, currentUserRecord, isAdmin, isPic, isPetugas]);
   const canCloseIncident = useCallback((incident) => Boolean(currentUserRecord && incident && isPic), [currentUserRecord, isPic]);
   const getUsersByRole = useCallback((roles) => (
     usersData.filter(user => roles.includes(user.role)).map(user => user.id)
@@ -638,13 +817,23 @@ export function AppProvider({ children }) {
   const getShipRecipients = useCallback((shipName, options = {}) => {
     const { includeAdmins = false, includePic = false, includePetugas = false, includeUserIds = [] } = options;
     const recipients = new Set(includeUserIds.filter(Boolean));
+    const targetShip = shipsData.find(ship => ship.name === shipName) || null;
     usersData.forEach((user) => {
       if (includeAdmins && user.role === ACCESS_ROLES.ADMIN) recipients.add(user.id);
       if (shipName && includePic && user.role === ACCESS_ROLES.PIC && user.shipAssigned === shipName) recipients.add(user.id);
-      if (shipName && includePetugas && user.role === ACCESS_ROLES.PETUGAS && user.shipAssigned === shipName && user.status === 'active') recipients.add(user.id);
+      if (
+        shipName
+        && includePetugas
+        && user.role === ACCESS_ROLES.PETUGAS
+        && user.shipAssigned === shipName
+        && user.status === 'active'
+        && targetShip?.personnel?.includes(user.id)
+      ) {
+        recipients.add(user.id);
+      }
     });
     return Array.from(recipients);
-  }, [usersData]);
+  }, [shipsData, usersData]);
   const appendNotifications = useCallback((nextNotifications) => {
     if (!Array.isArray(nextNotifications) || nextNotifications.length === 0) return;
     setNotifications((previousNotifications) => {
@@ -695,6 +884,7 @@ export function AppProvider({ children }) {
     setCurrentPage(notificationReturnPage || 'home');
   }, [notificationReturnPage]);
   const openHistoryEntry = useCallback((historyId) => {
+    if (!visibleHistoryEntries.some(entry => entry.id === historyId)) return;
     setSelectedHistoryId(historyId);
     setCurrentPage('home');
     setPatrolTab('info');
@@ -702,7 +892,7 @@ export function AppProvider({ children }) {
     setActiveForms({});
     setSelectedReportDetail(null);
     setSelectedIncident(null);
-  }, []);
+  }, [visibleHistoryEntries]);
   const closeHistoryEntry = useCallback(() => {
     setSelectedHistoryId(null);
     setCurrentPage('history');
@@ -740,11 +930,37 @@ export function AppProvider({ children }) {
   }, [appendNotifications, currentUser, currentUserRole, getUsersByRole, historyEntries, isAdmin, selectedHistoryId]);
 
   // Computed incident lists
-  const patrolIncidents = useMemo(() => checkpoints.filter(c => c.status === 'completed' && c.resultType === 'temuan').map(c => ({ id: `p-${c.id}`, date: new Date().toLocaleDateString('id-ID'), time: c.time, location: c.name, shipName: c.shipName || 'MT MENGGALA', deskripsi: c.kejadian, penyebab: c.penyebab, tindakLanjut: c.tindakLanjut, reportedBy: c.completedBy, photoUrl: c.photoUrl, isPatrol: true })), [checkpoints]);
-  const allIncidents = useMemo(() => [...incidentsData, ...patrolIncidents].map(incident => ({ ...incident, shipName: incident.shipName || 'MT MENGGALA' })), [incidentsData, patrolIncidents]);
-  const visibleIncidents = useMemo(() => isPetugas && currentUserRecord?.shipAssigned ? allIncidents.filter(incident => incident.shipName === currentUserRecord.shipAssigned) : allIncidents, [allIncidents, currentUserRecord?.shipAssigned, isPetugas]);
+  const patrolIncidents = useMemo(() => (
+    Object.values(checkpointsByShip)
+      .flat()
+      .filter(checkpoint => checkpoint.status === 'completed' && checkpoint.resultType === 'temuan')
+      .map(checkpoint => ({
+        id: `p-${checkpoint.id}`,
+        date: new Date().toLocaleDateString('id-ID'),
+        time: checkpoint.time,
+        location: checkpoint.name,
+        shipName: checkpoint.shipName || operationalShipName || '',
+        deskripsi: checkpoint.kejadian,
+        penyebab: checkpoint.penyebab,
+        tindakLanjut: checkpoint.tindakLanjut,
+        reportedBy: checkpoint.completedBy,
+        photoUrl: checkpoint.photoUrl,
+        isPatrol: true,
+      }))
+  ), [checkpointsByShip, operationalShipName]);
+  const allIncidents = useMemo(() => (
+    [...incidentsData, ...patrolIncidents].map(incident => ({
+      ...incident,
+      shipName: incident.shipName || operationalShipName || '',
+    }))
+  ), [incidentsData, operationalShipName, patrolIncidents]);
+  const visibleIncidents = useMemo(() => (
+    isPetugas && assignedShipForCurrentUser
+      ? allIncidents.filter(incident => incident.shipName === assignedShipForCurrentUser.name)
+      : allIncidents
+  ), [allIncidents, assignedShipForCurrentUser, isPetugas]);
   const activeShiftGuardSnapshot = useMemo(
-    () => buildGuardShiftSnapshot(usersData, operationalShipName, checkpoints),
+    () => (operationalShipName ? buildGuardShiftSnapshot(usersData, operationalShipName, checkpoints) : []),
     [checkpoints, operationalShipName, usersData],
   );
 
@@ -786,6 +1002,26 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const timerId = window.setInterval(() => setShiftClock(Date.now()), 60 * 1000);
     return () => window.clearInterval(timerId);
+  }, []);
+
+  useEffect(() => {
+    setCheckpointsByShip((previousState) => {
+      const nextState = createCheckpointsByShipState(shipsData, previousState);
+      return JSON.stringify(previousState) === JSON.stringify(nextState) ? previousState : nextState;
+    });
+  }, [shipsData]);
+
+  useEffect(() => {
+    if (!selectedHistoryId) return;
+    if (selectedHistoryEntry) return;
+    setSelectedHistoryId(null);
+  }, [selectedHistoryEntry, selectedHistoryId]);
+
+  useEffect(() => {
+    setUsersData((previousUsers) => {
+      const nextUsers = applyAdminCredentialReset(previousUsers);
+      return JSON.stringify(previousUsers) === JSON.stringify(nextUsers) ? previousUsers : nextUsers;
+    });
   }, []);
 
   useEffect(() => {
@@ -844,20 +1080,22 @@ export function AppProvider({ children }) {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
     if (!persistedShiftMeta || persistedShiftMeta.key === currentShiftMeta.key) return;
 
-    const shipSnapshot = operationalShip || shipsData[0] || null;
     const nextHistoryBatch = [];
     let workingShiftMeta = persistedShiftMeta;
-    let workingCheckpoints = checkpoints;
+    let workingCheckpointsByShip = { ...checkpointsByShip };
 
     while (workingShiftMeta.key !== currentShiftMeta.key) {
-      nextHistoryBatch.push(buildHistoryEntry({
-        shiftMeta: workingShiftMeta,
-        checkpoints: workingCheckpoints,
-        ship: shipSnapshot,
-        users: usersData,
-        weatherInfo,
-      }));
-      workingCheckpoints = resetCheckpointCollection(workingCheckpoints);
+      shipsData.forEach((ship) => {
+        const shipCheckpoints = workingCheckpointsByShip[ship.id] || createShipCheckpointCollection(ship);
+        nextHistoryBatch.push(buildHistoryEntry({
+          shiftMeta: workingShiftMeta,
+          checkpoints: shipCheckpoints,
+          ship,
+          users: usersData,
+          weatherInfo,
+        }));
+        workingCheckpointsByShip[ship.id] = resetCheckpointCollection(shipCheckpoints);
+      });
       workingShiftMeta = getNextShiftMeta(workingShiftMeta);
     }
 
@@ -899,22 +1137,37 @@ export function AppProvider({ children }) {
 
       return notificationsBatch;
     }));
-    setCheckpoints(workingCheckpoints);
+    setCheckpointsByShip(workingCheckpointsByShip);
     setActiveForms({});
     setSelectedReportDetail(null);
     setSelectedIncident(null);
     setActiveShiftKey(currentShiftMeta.key);
-  }, [activeShiftKey, appendNotifications, checkpoints, currentShiftMeta.key, getShipRecipients, operationalShip, shipsData, usersData, weatherInfo]);
+  }, [activeShiftKey, appendNotifications, checkpointsByShip, currentShiftMeta.key, getShipRecipients, shipsData, usersData, weatherInfo]);
+
+  const updateOperationalShipCheckpoints = useCallback((updater) => {
+    if (!operationalShip?.id) return;
+    setCheckpointsByShip((previousState) => {
+      const currentShipCheckpoints = previousState[operationalShip.id] || [];
+      const nextShipCheckpoints = typeof updater === 'function'
+        ? updater(currentShipCheckpoints)
+        : updater;
+
+      return {
+        ...previousState,
+        [operationalShip.id]: nextShipCheckpoints,
+      };
+    });
+  }, [operationalShip?.id]);
 
   // Patrol handlers
   const handleActionClick = useCallback((id, type) => { if (!canPatrolCurrentShip) return; setActiveForms({ [id]: { type, penyebab: '', kejadian: '', tindakLanjut: '', photoUrl: null } }); }, [canPatrolCurrentShip]);
   const handleFormChange = useCallback((id, field, value) => { setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } })); }, []);
   const handlePhotoUpload = useCallback(async (id, isIncident = false) => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if(!url) return; if(isIncident) setIncidentForm(prev => ({...prev, photoUrl: url})); else setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], photoUrl: url } })); }, []);
   const handleSubmitPatrol = useCallback((id) => {
-    if (!currentUserRecord) return;
+    if (!currentUserRecord || !operationalShip) return;
     const now = new Date();
     const timeString = now.toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'});
-    const currentCheckpoint = checkpoints.find(checkpoint => checkpoint.id === id);
+    const currentCheckpoint = checkpoints.find(checkpoint => String(checkpoint.id) === String(id));
     if (!currentCheckpoint) return;
     const formState = activeForms[id];
     if (!formState) return;
@@ -933,7 +1186,9 @@ export function AppProvider({ children }) {
       tindakLanjut: sanitizeMultilineText(formState.tindakLanjut, 240),
     };
     setActiveForms(prev => {
-      setCheckpoints(cp => cp.map((checkpoint) => checkpoint.id === id ? submittedItem : checkpoint));
+      updateOperationalShipCheckpoints(shipCheckpoints => shipCheckpoints.map((checkpoint) => (
+        String(checkpoint.id) === String(id) ? submittedItem : checkpoint
+      )));
       const newForms = { ...prev };
       delete newForms[id];
       return newForms;
@@ -953,7 +1208,7 @@ export function AppProvider({ children }) {
         shipName: operationalShipName,
       }]);
     }
-  }, [activeForms, appendNotifications, checkpoints, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShipName]);
+  }, [activeForms, appendNotifications, checkpoints, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, updateOperationalShipCheckpoints]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -961,11 +1216,13 @@ export function AppProvider({ children }) {
       confirmText: 'YA, HAPUS',
       cancelText: 'BATAL',
       onConfirm: () => { 
-        setCheckpoints(prev => prev.map(c => c.id === id ? { id: c.id, name: c.name, status: 'pending' } : c)); 
+        updateOperationalShipCheckpoints(prev => prev.map(c => (
+          String(c.id) === String(id) ? resetCheckpointForShift(c) : c
+        )));
         setSelectedReportDetail(null); 
       } 
     }); 
-  }, []);
+  }, [updateOperationalShipCheckpoints]);
   const handleOpenPatrolResult = useCallback((item) => {
     setActiveForms({});
     const isReadOnly = Boolean(item?.readOnly || item?.historyId || selectedHistoryEntry);
@@ -995,7 +1252,9 @@ export function AppProvider({ children }) {
       readOnly: isReadOnly,
     });
   }, [selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
-  const handleAddCustomPatrolNode = useCallback(() => { setNewCustomNode(prev => { const safeName = sanitizeText(prev, 80); if(safeName !== '') { setCheckpoints(cp => [...cp, { id: Date.now(), name: safeName, status: 'pending' }]); return ''; } return prev; }); }, []);
+  const handleAddCustomPatrolNode = useCallback(() => {
+    setNewCustomNode('');
+  }, []);
 
   // Incident handlers
   const openIncidentModal = useCallback(() => { setIncidentForm(createIncidentFormState()); setShowIncidentModal(true); }, []);
@@ -1378,8 +1637,17 @@ export function AppProvider({ children }) {
     const url = await saveImageToDB(dataUrl);
     if (!url) return;
     if (typeof incidentId === 'string' && incidentId.startsWith('p-')) {
-      const checkpointId = Number(incidentId.replace('p-', ''));
-      setCheckpoints(prev => prev.map(c => c.id === checkpointId ? { ...c, photoUrl: url } : c));
+      const checkpointId = incidentId.replace('p-', '');
+      setCheckpointsByShip(previousState => Object.fromEntries(
+        Object.entries(previousState).map(([shipId, shipCheckpoints]) => ([
+          shipId,
+          shipCheckpoints.map(checkpoint => (
+            String(checkpoint.id) === String(checkpointId)
+              ? { ...checkpoint, photoUrl: url }
+              : checkpoint
+          )),
+        ])),
+      ));
     } else {
       setIncidentsData(prev => prev.map(inc => inc.id === incidentId ? { ...inc, photoUrl: url } : inc));
     }
@@ -1581,7 +1849,19 @@ export function AppProvider({ children }) {
   }, [authForm, usersData]);
 
   // Persistence effects
-  useEffect(() => { savePersistedState({ checkpoints, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications, theme }); }, [checkpoints, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications, theme]);
+  useEffect(() => {
+    savePersistedState({
+      checkpointsByShip,
+      shipsData,
+      usersData,
+      incidentsData,
+      incidentMeta,
+      historyEntries,
+      activeShiftKey,
+      notifications,
+      theme,
+    });
+  }, [checkpointsByShip, shipsData, usersData, incidentsData, incidentMeta, historyEntries, activeShiftKey, notifications, theme]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
@@ -1644,8 +1924,13 @@ export function AppProvider({ children }) {
     
     if (!canUserAccessApplication(activeUser)) {
       handleLogout('Petugas off-duty atau tanpa penugasan kapal tidak bisa tetap login.');
+      return;
     }
-  }, [firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
+
+    if (activeUser.role === ACCESS_ROLES.PETUGAS && !assignedShipForCurrentUser) {
+      handleLogout('Petugas yang tidak lagi terdaftar di armada aktif tidak bisa tetap login.');
+    }
+  }, [assignedShipForCurrentUser, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
   useEffect(() => { if (!currentUserRecord) return; if (!isAdmin && (currentPage === 'users' || currentPage === 'ships')) { setCurrentPage('home'); setActiveShipId(null); setShowShipForm(false); setShowShipDocForm(false); setShowUserForm(false); setSelectedUser(null); } }, [currentPage, currentUserRecord, isAdmin]);
   useEffect(() => { if (activeShipId) return; setShowShipDocForm(false); }, [activeShipId]);
   useEffect(() => {
@@ -1712,7 +1997,7 @@ export function AppProvider({ children }) {
     // Weather
     weatherInfo, weatherLoading, getWeatherDetail,
     // History
-    historyEntries, selectedHistoryEntry, setSelectedHistoryId, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
+    historyEntries: visibleHistoryEntries, selectedHistoryEntry, setSelectedHistoryId, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     // Notifications
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
   }), [
@@ -1729,7 +2014,7 @@ export function AppProvider({ children }) {
     showUserForm, userFormData, userFormError, userFormNotice, clearUserManagementFeedback, selectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     selectedReportDetail, previewPhoto,
     weatherInfo, weatherLoading, getWeatherDetail,
-    historyEntries, selectedHistoryEntry, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
+    visibleHistoryEntries, selectedHistoryEntry, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
   ]);
 

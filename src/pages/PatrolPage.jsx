@@ -1,7 +1,7 @@
 import React from 'react';
 import { useApp, ACCESS_ROLES } from '../context/AppContext';
 import {
-  CheckCircle2, AlertTriangle, Search, Plus, Ship, MapPin, ExternalLink, ArrowLeft,
+  CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft,
   CalendarDays, User, Thermometer, Wind, FileText, CircleOff,
 } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
@@ -71,11 +71,11 @@ const PatrolPage = React.memo(function PatrolPage() {
   const [summaryDetailType, setSummaryDetailType] = React.useState(null);
   const {
     patrolTab, setPatrolTab, searchQuery, setSearchQuery, filteredCheckpoints,
-    handleActionClick, handleOpenPatrolResult, handleAddCustomPatrolNode,
-    newCustomNode, setNewCustomNode, completedCount, totalCount, progressPercentage,
+    handleActionClick, handleOpenPatrolResult,
+    completedCount, totalCount, progressPercentage,
     operationalShip, operationalShipName, checkpoints, activeShiftGuardSnapshot,
     weatherInfo, weatherLoading, getWeatherDetail, setPreviewPhoto,
-    currentShiftMeta, selectedHistoryEntry, closeHistoryEntry,
+    currentShiftMeta, selectedHistoryEntry, closeHistoryEntry, canPatrolCurrentShip,
     activeForms, selectedIncident, selectedReportDetail
   } = useApp();
 
@@ -306,13 +306,15 @@ const PatrolPage = React.memo(function PatrolPage() {
                 </div>
 
                 <div className="mt-4 p-4 bg-[#0b1229] border border-cyan-800 border-dashed rounded-xl mb-6">
-                  <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-2.5 pl-1">Titik Patroli Tambahan</p>
-                  <div className="flex gap-2">
-                    <input type="text" value={newCustomNode} onChange={event => setNewCustomNode(event.target.value)} placeholder="Nama Lokasi Ekstra..." className="flex-1 bg-[#070b19] border border-cyan-800/50 rounded-lg p-2.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
-                    <button onClick={handleAddCustomPatrolNode} className="px-4 bg-cyan-900/50 hover:bg-cyan-600 border border-cyan-700 text-cyan-300 hover:text-white rounded-lg transition-colors flex items-center justify-center">
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
+                  <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1 pl-1">Sumber Checkpoint</p>
+                  <p className="text-xs text-cyan-300/80">
+                    Titik patroli pada halaman ini mengikuti checkpoint yang sudah di-assign pada armada {operationalShipName || 'aktif'}.
+                  </p>
+                  {!canPatrolCurrentShip && (
+                    <p className="mt-2 text-[11px] text-yellow-300">
+                      Akun ini tidak punya penugasan patroli aktif pada armada tersebut.
+                    </p>
+                  )}
                 </div>
 
                 <div className="fixed lg:absolute bottom-[65px] lg:bottom-0 left-0 right-0 z-30 w-full sm:max-w-md lg:max-w-none sm:mx-auto lg:mx-0 bg-[#070b19]/95 backdrop-blur-md px-4 py-4 border-t border-cyan-900/50 shadow-[0_-5px_15px_rgba(0,0,0,0.3)]">
