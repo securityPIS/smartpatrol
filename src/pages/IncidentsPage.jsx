@@ -17,6 +17,7 @@ const IncidentsPage = React.memo(function IncidentsPage() {
     selectedIncident,
     showIncidentModal,
   } = useApp();
+  const [statusFilter, setStatusFilter] = React.useState('open');
 
   const showRightPane = (selectedIncident && !selectedIncident.isPatrol) || showIncidentModal;
   const handleIncidentSelect = (incident) => {
@@ -25,6 +26,29 @@ const IncidentsPage = React.memo(function IncidentsPage() {
     }
     setSelectedIncident(incident);
   };
+  const incidentGroups = React.useMemo(() => {
+    const open = [];
+    const closed = [];
+
+    visibleIncidents.forEach((incident) => {
+      const meta = incidentMeta[incident.id] || { status: 'open' };
+      if (meta.status === 'closed') {
+        closed.push(incident);
+        return;
+      }
+
+      open.push(incident);
+    });
+
+    return { open, closed };
+  }, [incidentMeta, visibleIncidents]);
+  const filteredIncidents = statusFilter === 'closed' ? incidentGroups.closed : incidentGroups.open;
+
+  React.useEffect(() => {
+    if (!selectedIncident) return;
+    if (filteredIncidents.some((incident) => incident.id === selectedIncident.id)) return;
+    setSelectedIncident(null);
+  }, [filteredIncidents, selectedIncident, setSelectedIncident]);
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -38,15 +62,35 @@ const IncidentsPage = React.memo(function IncidentsPage() {
              <PlusCircle className="w-3.5 h-3.5" /> Lapor Baru
            </button>
         </div>
+        <div className="grid grid-cols-2 gap-2 rounded-2xl border border-cyan-900/50 bg-[#0b1229] p-1.5">
+          <button
+            type="button"
+            onClick={() => setStatusFilter('open')}
+            className={`rounded-xl px-4 py-3 text-left transition-all ${statusFilter === 'open' ? 'bg-yellow-500/10 text-yellow-300 border border-yellow-500/40' : 'border border-transparent text-cyan-500 hover:text-cyan-300'}`}
+          >
+            <p className="text-[10px] font-black uppercase tracking-widest">Open</p>
+            <p className="mt-1 text-lg font-black">{incidentGroups.open.length}</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('closed')}
+            className={`rounded-xl px-4 py-3 text-left transition-all ${statusFilter === 'closed' ? 'bg-slate-800/80 text-slate-200 border border-slate-600' : 'border border-transparent text-cyan-500 hover:text-cyan-300'}`}
+          >
+            <p className="text-[10px] font-black uppercase tracking-widest">Closed</p>
+            <p className="mt-1 text-lg font-black">{incidentGroups.closed.length}</p>
+          </button>
+        </div>
         
-         {visibleIncidents.length === 0 ? (
+         {filteredIncidents.length === 0 ? (
             <div className="p-8 text-center border border-dashed border-cyan-900/50 rounded-xl">
               <AlertOctagon className="w-10 h-10 text-cyan-900 mx-auto mb-2" />
-              <p className="text-cyan-600 text-sm font-bold uppercase tracking-widest">Belum Ada Laporan Temuan</p>
+              <p className="text-cyan-600 text-sm font-bold uppercase tracking-widest">
+                {statusFilter === 'closed' ? 'Belum Ada Temuan Closed' : 'Belum Ada Temuan Open'}
+              </p>
             </div>
          ) : (
             <div className="space-y-3">
-              {visibleIncidents.map(inc => {
+              {filteredIncidents.map(inc => {
                  const meta = incidentMeta[inc.id] || { status: 'open' };
                  const isClosed = meta.status === 'closed';
                  const isSelected = selectedIncident?.id === inc.id;

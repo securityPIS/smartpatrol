@@ -323,6 +323,76 @@ function createHistoryEntryKey(ship, shiftMeta) {
   return `${shipToken}|${shiftMeta.key}`;
 }
 
+function createPatrolIncidentId(checkpoint) {
+  const existingIncidentId = sanitizeText(checkpoint?.incidentId || '', 200).trim();
+  if (existingIncidentId) return existingIncidentId;
+
+  const checkpointToken = sanitizeText(checkpoint?.id || 'checkpoint', 120)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'checkpoint';
+
+  const completedToken = sanitizeText(checkpoint?.completedAt || '', 120)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+
+  return completedToken ? `p-${checkpointToken}-${completedToken}` : `p-${checkpoint.id}`;
+}
+
+function getIncidentDateLabel(value) {
+  if (!value) return new Date().toLocaleDateString('id-ID');
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) return String(value);
+  return parsedDate.toLocaleDateString('id-ID');
+}
+
+function getIncidentSortTimestamp(incident) {
+  const directTimestamp = new Date(
+    incident?.completedAt
+    || incident?.createdAt
+    || incident?.reportedAt
+    || '',
+  ).getTime();
+
+  if (!Number.isNaN(directTimestamp) && directTimestamp > 0) {
+    return directTimestamp;
+  }
+
+  if (typeof incident?.id === 'number') {
+    return incident.id;
+  }
+
+  return 0;
+}
+
+function createPatrolIncidentRecord(checkpoint, options = {}) {
+  const {
+    fallbackShipName = '',
+    fallbackDate = '',
+    readOnly = false,
+  } = options;
+
+  return {
+    id: createPatrolIncidentId(checkpoint),
+    date: checkpoint?.date || getIncidentDateLabel(checkpoint?.completedAt || fallbackDate),
+    time: checkpoint?.time || '-',
+    location: checkpoint?.name || '-',
+    shipName: checkpoint?.shipName || fallbackShipName || '',
+    deskripsi: checkpoint?.kejadian || '',
+    penyebab: checkpoint?.penyebab || '',
+    tindakLanjut: checkpoint?.tindakLanjut || '',
+    reportedBy: checkpoint?.completedBy || '-',
+    photoUrl: checkpoint?.photoUrl || null,
+    isPatrol: true,
+    readOnly,
+    completedAt: checkpoint?.completedAt || null,
+    checkpointId: checkpoint?.id || null,
+  };
+}
+
 function createMissedCheckpoint(checkpoint, shiftMeta) {
   return {
     id: checkpoint.id,
@@ -1321,26 +1391,35 @@ export function AppProvider({ children }) {
     Object.values(checkpointsByShip)
       .flat()
       .filter(checkpoint => checkpoint.status === 'completed' && checkpoint.resultType === 'temuan')
-      .map(checkpoint => ({
-        id: `p-${checkpoint.id}`,
-        date: new Date().toLocaleDateString('id-ID'),
-        time: checkpoint.time,
-        location: checkpoint.name,
-        shipName: checkpoint.shipName || operationalShipName || '',
-        deskripsi: checkpoint.kejadian,
-        penyebab: checkpoint.penyebab,
-        tindakLanjut: checkpoint.tindakLanjut,
-        reportedBy: checkpoint.completedBy,
-        photoUrl: checkpoint.photoUrl,
-        isPatrol: true,
+      .map(checkpoint => createPatrolIncidentRecord(checkpoint, {
+        fallbackShipName: checkpoint.shipName || operationalShipName || '',
       }))
   ), [checkpointsByShip, operationalShipName]);
+  const historyPatrolIncidents = useMemo(() => (
+    historyEntries.flatMap((entry) => (
+      (entry.checkpoints || [])
+        .filter(checkpoint => checkpoint.status === 'completed' && checkpoint.resultType === 'temuan')
+        .map(checkpoint => createPatrolIncidentRecord(checkpoint, {
+          fallbackShipName: entry.ship,
+          fallbackDate: entry.date,
+        }))
+    ))
+  ), [historyEntries]);
   const allIncidents = useMemo(() => (
-    [...incidentsData, ...patrolIncidents].map(incident => ({
-      ...incident,
-      shipName: incident.shipName || operationalShipName || '',
-    }))
-  ), [incidentsData, operationalShipName, patrolIncidents]);
+    Array.from(
+      [...incidentsData, ...patrolIncidents, ...historyPatrolIncidents].reduce((incidentMap, incident) => {
+        const normalizedIncident = {
+          ...incident,
+          shipName: incident.shipName || operationalShipName || '',
+        };
+        const existingIncident = incidentMap.get(normalizedIncident.id);
+        if (!existingIncident || getIncidentSortTimestamp(normalizedIncident) >= getIncidentSortTimestamp(existingIncident)) {
+          incidentMap.set(normalizedIncident.id, normalizedIncident);
+        }
+        return incidentMap;
+      }, new Map()).values(),
+    ).sort((left, right) => getIncidentSortTimestamp(right) - getIncidentSortTimestamp(left))
+  ), [historyPatrolIncidents, incidentsData, operationalShipName, patrolIncidents]);
   const visibleIncidents = useMemo(() => (
     isPetugas && assignedShipForCurrentUser
       ? allIncidents.filter(incident => incident.shipName === assignedShipForCurrentUser.name)
@@ -1603,6 +1682,9 @@ export function AppProvider({ children }) {
     if (!formState) return;
     const submittedItem = {
       ...currentCheckpoint,
+      incidentId: formState.type === 'temuan'
+        ? `p-${currentCheckpoint.id}-${now.toISOString().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+        : null,
       status: 'completed',
       completedBy: currentUser,
       completedByUserId: currentUserRecord.id,
@@ -1634,8 +1716,8 @@ export function AppProvider({ children }) {
         senderRole: currentUserRole,
         targetUserIds: getShipRecipients(operationalShipName, { includeAdmins: true, includePic: true }),
         route: 'incidents/detail',
-        routeParams: { incidentId: `p-${submittedItem.id}` },
-        incidentId: `p-${submittedItem.id}`,
+        routeParams: { incidentId: submittedItem.incidentId },
+        incidentId: submittedItem.incidentId,
         shipName: operationalShipName,
       }]);
     }
@@ -1661,7 +1743,7 @@ export function AppProvider({ children }) {
     if (item.resultType === 'temuan') {
       setSelectedReportDetail(null);
       setSelectedIncident({
-        id: item.incidentId || `p-${item.id}`,
+        id: createPatrolIncidentId(item),
         date: item.date || selectedHistoryEntry?.date || new Date().toLocaleDateString('id-ID'),
         time: item.time,
         location: item.name,
@@ -1738,7 +1820,8 @@ export function AppProvider({ children }) {
     if (!currentUserRecord) return;
     const loc = incidentForm.locType === 'custom' ? sanitizeText(incidentForm.customLocation, 80) : sanitizeText(incidentForm.location, 80);
     if (!loc || !sanitizeMultilineText(incidentForm.deskripsi, 320)) return;
-    const newIncident = { ...incidentForm, id: Date.now(), time: new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}), date: new Date().toLocaleDateString('id-ID'), reportedBy: currentUser, shipName: operationalShipName, location: loc, customLocation: incidentForm.locType === 'custom' ? loc : '', photoUrl: incidentForm.photoUrl, penyebab: sanitizeMultilineText(incidentForm.penyebab, 240), deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320), tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240) };
+    const createdAt = new Date().toISOString();
+    const newIncident = { ...incidentForm, id: Date.now(), createdAt, time: new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}), date: new Date().toLocaleDateString('id-ID'), reportedBy: currentUser, shipName: operationalShipName, location: loc, customLocation: incidentForm.locType === 'custom' ? loc : '', photoUrl: incidentForm.photoUrl, penyebab: sanitizeMultilineText(incidentForm.penyebab, 240), deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320), tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240) };
     setIncidentsData(prev => [newIncident, ...prev]);
     appendNotifications([{
       type: 'incident_created',
