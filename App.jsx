@@ -13,6 +13,7 @@ const UsersPage = lazy(() => import('./src/pages/UsersPage'));
 const ShipsPage = lazy(() => import('./src/pages/ShipsPage'));
 
 import PatrolFormModal from './src/components/modals/PatrolFormModal';
+import PatrolCameraModal from './src/components/modals/PatrolCameraModal';
 import IncidentFormModal from './src/components/modals/IncidentFormModal';
 import IncidentDetailModal from './src/components/modals/IncidentDetailModal';
 import { ShipDocumentFormModal, ShipFormModal, UserFormModal } from './src/components/modals/FormModals';
@@ -56,6 +57,7 @@ function AppShell() {
       </div>
 
       {/* Modals - Hidden on SM via component internal logic or visibility classes */}
+      <PatrolCameraModal />
       <PatrolFormModal />
       <IncidentFormModal />
       <IncidentDetailModal />
