@@ -833,7 +833,7 @@ export function AppProvider({ children }) {
   const activePatrolState = useMemo(() => activePatrolId ? activeForms[activePatrolId] : null, [activeForms, activePatrolId]);
   const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => String(c.id) === String(activePatrolId)) : null, [activePatrolId, checkpoints]);
   const canPatrolCurrentShip = Boolean(currentUserRecord && operationalShip && (isAdmin || isPic || (isPetugas && assignedShipForCurrentUser?.id === operationalShip.id)));
-  const shouldForcePatrolCameraCapture = isPetugas && isMobilePatrolViewport();
+  const shouldForcePatrolCameraCapture = isMobilePatrolViewport();
 
   const canManageIncident = useCallback((incident) => {
     if (!currentUserRecord || !incident) return false;
