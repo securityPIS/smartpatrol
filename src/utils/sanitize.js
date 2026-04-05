@@ -55,6 +55,10 @@ export function sanitizeUrl(value) {
     return candidate;
   }
 
+  if (candidate.startsWith("idb://")) {
+    return candidate;
+  }
+
   try {
     const url = new URL(candidate);
     return url.protocol === "https:" ? url.toString() : "";
