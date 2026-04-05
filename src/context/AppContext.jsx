@@ -27,6 +27,7 @@ const ACCESS_ROLES = {
 const ACCESS_ROLE_VALUES = Object.values(ACCESS_ROLES);
 const AUTH_SESSION_KEY = 'smartpatrol.auth.local.v1';
 const APP_TIME_ZONE = 'Asia/Jakarta';
+const SHIFT_NOTIFICATION_DEBUG_KEY = 'smartpatrol.debug.shiftNotifications';
 const ADMIN_RESET_EMAIL = 'admin@smartpatrol.local';
 const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
 const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
@@ -461,6 +462,23 @@ function createNotificationRecord(notification) {
 
 function sortNotifications(notifications) {
   return [...notifications].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+function isShiftNotificationDebugEnabled() {
+  try {
+    return window.localStorage.getItem(SHIFT_NOTIFICATION_DEBUG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function isShiftNotificationType(type) {
+  return type === 'shift_started' || type === 'shift_ending_soon' || type === 'checkpoint_pending';
+}
+
+function logShiftNotificationDebug(event, payload) {
+  if (!isShiftNotificationDebugEnabled()) return;
+  console.info(`[SmartPatrol][shift-notif] ${event}`, payload);
 }
 
 function loadAuthSession() { try { const raw = window.localStorage.getItem(AUTH_SESSION_KEY); if (!raw) return null; const parsed = JSON.parse(raw); return typeof parsed?.userId === 'string' ? parsed.userId : null; } catch { return null; } }
@@ -917,17 +935,88 @@ export function AppProvider({ children }) {
   const appendNotifications = useCallback((nextNotifications) => {
     if (!Array.isArray(nextNotifications) || nextNotifications.length === 0) return;
     setNotifications((previousNotifications) => {
-      const dedupeSet = new Set(previousNotifications.map(notification => notification.dedupeKey).filter(Boolean));
-      const additions = [];
-      nextNotifications.forEach((notification) => {
-        if (!notification?.targetUserIds?.length) return;
-        if (notification.dedupeKey && dedupeSet.has(notification.dedupeKey)) return;
-        const record = createNotificationRecord(notification);
-        if (record.dedupeKey) dedupeSet.add(record.dedupeKey);
-        additions.push(record);
+      const workingNotifications = [...previousNotifications];
+      const dedupeIndexMap = new Map();
+
+      workingNotifications.forEach((notification, index) => {
+        if (notification?.dedupeKey) dedupeIndexMap.set(notification.dedupeKey, index);
       });
-      if (additions.length === 0) return previousNotifications;
-      return sortNotifications([...additions, ...previousNotifications]);
+
+      let didChange = false;
+
+      nextNotifications.forEach((notification) => {
+        const targetUserIds = Array.from(new Set(
+          (Array.isArray(notification?.targetUserIds) ? notification.targetUserIds : []).filter(Boolean),
+        ));
+        if (targetUserIds.length === 0) return;
+
+        if (notification.dedupeKey && dedupeIndexMap.has(notification.dedupeKey)) {
+          const existingIndex = dedupeIndexMap.get(notification.dedupeKey);
+          const existingNotification = workingNotifications[existingIndex];
+          const mergedTargetUserIds = Array.from(new Set([
+            ...(Array.isArray(existingNotification?.targetUserIds) ? existingNotification.targetUserIds : []),
+            ...targetUserIds,
+          ]));
+          const nextRecord = {
+            ...existingNotification,
+            ...notification,
+            id: existingNotification.id,
+            dedupeKey: existingNotification.dedupeKey,
+            createdAt: existingNotification.createdAt,
+            targetUserIds: mergedTargetUserIds,
+            readByUserIds: (Array.isArray(existingNotification?.readByUserIds) ? existingNotification.readByUserIds : [])
+              .filter(userId => mergedTargetUserIds.includes(userId)),
+          };
+
+          const hasChanged = (
+            existingNotification.title !== nextRecord.title
+            || existingNotification.message !== nextRecord.message
+            || existingNotification.senderName !== nextRecord.senderName
+            || existingNotification.senderRole !== nextRecord.senderRole
+            || existingNotification.route !== nextRecord.route
+            || existingNotification.shipName !== nextRecord.shipName
+            || existingNotification.shiftKey !== nextRecord.shiftKey
+            || existingNotification.incidentId !== nextRecord.incidentId
+            || existingNotification.historyId !== nextRecord.historyId
+            || JSON.stringify(existingNotification.routeParams || {}) !== JSON.stringify(nextRecord.routeParams || {})
+            || JSON.stringify(existingNotification.targetUserIds || []) !== JSON.stringify(mergedTargetUserIds)
+          );
+
+          if (hasChanged) {
+            workingNotifications[existingIndex] = nextRecord;
+            didChange = true;
+            if (isShiftNotificationType(nextRecord.type)) {
+              logShiftNotificationDebug('merge', {
+                dedupeKey: nextRecord.dedupeKey,
+                type: nextRecord.type,
+                shipName: nextRecord.shipName,
+                shiftKey: nextRecord.shiftKey,
+                targetUserIds: nextRecord.targetUserIds,
+                message: nextRecord.message,
+              });
+            }
+          }
+          return;
+        }
+
+        const record = createNotificationRecord({ ...notification, targetUserIds });
+        workingNotifications.push(record);
+        if (record.dedupeKey) dedupeIndexMap.set(record.dedupeKey, workingNotifications.length - 1);
+        didChange = true;
+        if (isShiftNotificationType(record.type)) {
+          logShiftNotificationDebug('add', {
+            dedupeKey: record.dedupeKey,
+            type: record.type,
+            shipName: record.shipName,
+            shiftKey: record.shiftKey,
+            targetUserIds: record.targetUserIds,
+            message: record.message,
+          });
+        }
+      });
+
+      if (!didChange) return previousNotifications;
+      return sortNotifications(workingNotifications);
     });
   }, []);
   const markNotificationAsRead = useCallback((notificationId) => {
@@ -1128,7 +1217,26 @@ export function AppProvider({ children }) {
     const parts = getJakartaDateParts(new Date(shiftClock));
     const remainingMinutes = (shiftDefinition.endHour * 60) - ((parts.hour * 60) + parts.minute);
     const pendingCheckpoints = checkpoints.filter(checkpoint => checkpoint.status === 'pending').length;
-    if (remainingMinutes > 30 || remainingMinutes <= 0) return;
+    const targetUserIds = getShipRecipients(operationalShipName, { includePic: true, includePetugas: true });
+
+    logShiftNotificationDebug('evaluate', {
+      shipName: operationalShipName,
+      shiftKey: currentShiftMeta.key,
+      shiftLabel: currentShiftMeta.label,
+      now: new Date(shiftClock).toISOString(),
+      remainingMinutes,
+      pendingCheckpoints,
+      targetUserIds,
+    });
+
+    if (remainingMinutes > 30 || remainingMinutes <= 0) {
+      logShiftNotificationDebug('skip-window', {
+        shipName: operationalShipName,
+        shiftKey: currentShiftMeta.key,
+        remainingMinutes,
+      });
+      return;
+    }
 
     appendNotifications([
       {
@@ -1137,7 +1245,7 @@ export function AppProvider({ children }) {
         message: `${currentShiftMeta.label} akan selesai dalam ${remainingMinutes} menit.`,
         senderName: 'Sistem',
         senderRole: 'SYSTEM',
-        targetUserIds: getShipRecipients(operationalShipName, { includePic: true, includePetugas: true }),
+        targetUserIds,
         route: 'patrol/info',
         shipName: operationalShipName,
         shiftKey: currentShiftMeta.key,
@@ -1149,7 +1257,7 @@ export function AppProvider({ children }) {
         message: `${pendingCheckpoints} checkpoint belum dipatroli pada ${currentShiftMeta.label}.`,
         senderName: 'Sistem',
         senderRole: 'SYSTEM',
-        targetUserIds: getShipRecipients(operationalShipName, { includePic: true, includePetugas: true }),
+        targetUserIds,
         route: 'patrol/checkpoint',
         shipName: operationalShipName,
         shiftKey: currentShiftMeta.key,
