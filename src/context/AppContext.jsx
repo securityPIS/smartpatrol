@@ -436,6 +436,7 @@ function createBaseCheckpointRecord(ship, checkpoint, index) {
     name: sanitizeText(checkpoint?.name || '', 80) || `Checkpoint ${index + 1}`,
     desc: sanitizeMultilineText(checkpoint?.desc || '', 140),
     status: 'pending',
+    updatedAt: null,
     shipId: ship?.id || null,
     shipName: ship?.name || '',
   };
@@ -446,24 +447,51 @@ function createShipCheckpointCollection(ship) {
   return (ship.customCheckpoints || []).map((checkpoint, index) => createBaseCheckpointRecord(ship, checkpoint, index));
 }
 
-function resetCheckpointForShift(checkpoint) {
+function resetCheckpointForShift(checkpoint, options = {}) {
+  const { updatedAt = new Date().toISOString(), shiftKey = null } = options;
   return {
     id: checkpoint.id,
     name: checkpoint.name,
     desc: checkpoint.desc || '',
     status: 'pending',
+    updatedAt,
+    shiftKey,
     shipId: checkpoint.shipId || null,
     shipName: checkpoint.shipName || '',
   };
 }
 
-function resetCheckpointCollection(checkpoints) {
+function resetCheckpointCollection(checkpoints, options = {}) {
   return checkpoints
     .filter(checkpoint => !checkpoint.isTemporaryShiftNode)
-    .map(resetCheckpointForShift);
+    .map(checkpoint => resetCheckpointForShift(checkpoint, options));
 }
 
-function normalizeShipScopedCheckpoints(ship, checkpoints = []) {
+function shouldResetCheckpointForActiveShift(checkpoint, activeShiftKey) {
+  if (!checkpoint || checkpoint.status === 'pending' || checkpoint.isTemporaryShiftNode) return false;
+  if (!activeShiftKey) return false;
+
+  if (checkpoint.shiftKey && checkpoint.shiftKey !== activeShiftKey) {
+    return true;
+  }
+
+  const activeShiftMeta = getShiftMetaFromKey(activeShiftKey);
+  if (!activeShiftMeta) return false;
+
+  const checkpointTimestamp = new Date(
+    checkpoint?.updatedAt
+    || checkpoint?.completedAt
+    || checkpoint?.createdAt
+    || '',
+  ).getTime();
+
+  if (Number.isNaN(checkpointTimestamp) || checkpointTimestamp <= 0) return false;
+
+  const activeShiftStartTimestamp = getShiftScheduleTimes(activeShiftMeta).startAt.getTime();
+  return checkpointTimestamp < activeShiftStartTimestamp;
+}
+
+function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey = null) {
   const baseCheckpoints = createShipCheckpointCollection(ship);
   const checkpointsById = new Map((checkpoints || []).map(checkpoint => [String(checkpoint.id), checkpoint]));
   const checkpointsByName = new Map((checkpoints || []).map(checkpoint => [createCheckpointNameKey(checkpoint.name), checkpoint]));
@@ -474,19 +502,23 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = []) {
 
     if (!matchedCheckpoint) return baseCheckpoint;
 
+    const normalizedCheckpoint = shouldResetCheckpointForActiveShift(matchedCheckpoint, activeShiftKey)
+      ? resetCheckpointForShift(matchedCheckpoint, { shiftKey: activeShiftKey })
+      : matchedCheckpoint;
+
     return {
       ...baseCheckpoint,
-      ...matchedCheckpoint,
+      ...normalizedCheckpoint,
       id: baseCheckpoint.id,
       name: baseCheckpoint.name,
       desc: baseCheckpoint.desc,
-      shipId: ship?.id || matchedCheckpoint.shipId || null,
-      shipName: ship?.name || matchedCheckpoint.shipName || '',
+      shipId: ship?.id || normalizedCheckpoint.shipId || null,
+      shipName: ship?.name || normalizedCheckpoint.shipName || '',
     };
   });
 }
 
-function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, legacyCheckpoints = null) {
+function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, legacyCheckpoints = null, activeShiftKey = null) {
   const savedState = savedCheckpointsByShip && typeof savedCheckpointsByShip === 'object'
     ? savedCheckpointsByShip
     : {};
@@ -501,7 +533,7 @@ function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, l
           ? legacyCheckpoints
           : [];
 
-    collection[ship.id] = normalizeShipScopedCheckpoints(ship, savedForShip);
+    collection[ship.id] = normalizeShipScopedCheckpoints(ship, savedForShip, activeShiftKey);
     return collection;
   }, {});
 }
@@ -726,9 +758,9 @@ function getCheckpointPriority(checkpoint) {
 
 function getCheckpointEffectiveTimestamp(checkpoint) {
   const directTimestamp = new Date(
-    checkpoint?.completedAt
+    checkpoint?.updatedAt
+    || checkpoint?.completedAt
     || checkpoint?.createdAt
-    || checkpoint?.updatedAt
     || '',
   ).getTime();
 
@@ -1331,6 +1363,7 @@ export function AppProvider({ children }) {
     initialShipsCollection,
     persistedState?.checkpointsByShip,
     persistedState?.checkpoints,
+    normalizeShiftKeyForCloudSync(persistedState?.activeShiftKey, getShiftMeta()),
   );
 
   // Theme & connectivity
@@ -1667,6 +1700,7 @@ export function AppProvider({ children }) {
       nextShips,
       nextState.checkpointsByShip,
       nextState.checkpoints,
+      normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
     );
     const incomingState = createSharedStateSnapshot({
       activeShiftKey: normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
@@ -1997,10 +2031,10 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     setCheckpointsByShip((previousState) => {
-      const nextState = createCheckpointsByShipState(shipsData, previousState);
+      const nextState = createCheckpointsByShipState(shipsData, previousState, null, activeShiftKey);
       return JSON.stringify(previousState) === JSON.stringify(nextState) ? previousState : nextState;
     });
-  }, [shipsData]);
+  }, [activeShiftKey, shipsData]);
 
   useEffect(() => {
     if (!selectedHistoryId) return;
@@ -2141,6 +2175,7 @@ export function AppProvider({ children }) {
     const nextHistoryBatch = [];
     let workingShiftMeta = persistedShiftMeta;
     let workingCheckpointsByShip = { ...checkpointsByShip };
+    const resetTimestamp = new Date().toISOString();
 
     while (workingShiftMeta.key !== currentShiftMeta.key) {
       shipsData.forEach((ship) => {
@@ -2152,7 +2187,10 @@ export function AppProvider({ children }) {
           users: usersData,
           weatherInfo,
         }));
-        workingCheckpointsByShip[ship.id] = resetCheckpointCollection(shipCheckpoints);
+        workingCheckpointsByShip[ship.id] = resetCheckpointCollection(shipCheckpoints, {
+          updatedAt: resetTimestamp,
+          shiftKey: currentShiftMeta.key,
+        });
       });
       workingShiftMeta = getNextShiftMeta(workingShiftMeta);
     }
@@ -2265,6 +2303,8 @@ export function AppProvider({ children }) {
       completedByUserId: currentUserRecord.id,
       time: timeString,
       completedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      shiftKey: currentShiftMeta.key,
       shipName: operationalShipName,
       photoUrl: formState.photoUrl,
       resultType: formState.type,
@@ -2297,7 +2337,7 @@ export function AppProvider({ children }) {
         createdAt: submittedItem.completedAt,
       }]);
     }
-  }, [activeForms, appendNotifications, checkpoints, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, updateOperationalShipCheckpoints]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, updateOperationalShipCheckpoints]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -2306,12 +2346,12 @@ export function AppProvider({ children }) {
       cancelText: 'BATAL',
       onConfirm: () => { 
         updateOperationalShipCheckpoints(prev => prev.map(c => (
-          String(c.id) === String(id) ? resetCheckpointForShift(c) : c
+          String(c.id) === String(id) ? resetCheckpointForShift(c, { shiftKey: currentShiftMeta.key }) : c
         )));
         setSelectedReportDetail(null); 
       } 
     }); 
-  }, [updateOperationalShipCheckpoints]);
+  }, [currentShiftMeta.key, updateOperationalShipCheckpoints]);
   const handleOpenPatrolResult = useCallback((item) => {
     setActiveForms({});
     setPendingPatrolCameraCapture(null);
@@ -2826,7 +2866,7 @@ export function AppProvider({ children }) {
               shipCheckpoints.map((checkpoint) => {
                 if (createPatrolIncidentId(checkpoint) !== incidentId) return checkpoint;
                 removedFromActiveShift = true;
-                return resetCheckpointForShift(checkpoint);
+                return resetCheckpointForShift(checkpoint, { shiftKey: currentShiftMeta.key });
               }),
             ])),
           ));
@@ -2864,7 +2904,7 @@ export function AppProvider({ children }) {
         ));
       },
     });
-  }, [allIncidents, isAdmin, selectedIncident]);
+  }, [allIncidents, currentShiftMeta.key, isAdmin, selectedIncident]);
   const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
   const handleUpdateIncidentPhoto = useCallback(async (incidentId) => {
     const dataUrl = await pickLocalImage();
