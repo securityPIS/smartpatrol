@@ -1,4 +1,4 @@
-import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadString } from 'firebase/storage';
 import { firebaseDb, firebaseStorage } from './app';
 
@@ -32,8 +32,28 @@ export function subscribeToCloudAppState(callback, onError) {
   );
 }
 
-export async function saveCloudAppState(state) {
-  if (!cloudStateRef || !isCloudWriteEnabled) return;
+export async function saveCloudAppState(state, options = {}) {
+  const { mergeState } = options;
+  if (!cloudStateRef || !isCloudWriteEnabled) return state;
+
+  if (typeof mergeState === 'function') {
+    let resolvedState = state;
+
+    await runTransaction(firebaseDb, async (transaction) => {
+      const snapshot = await transaction.get(cloudStateRef);
+      const currentState = snapshot.exists() ? snapshot.data()?.state || null : null;
+      resolvedState = mergeState(currentState, state);
+
+      transaction.set(cloudStateRef, {
+        schemaVersion: CLOUD_STATE_SCHEMA_VERSION,
+        clientUpdatedAt: Date.now(),
+        updatedAt: serverTimestamp(),
+        state: resolvedState,
+      });
+    });
+
+    return resolvedState;
+  }
 
   await setDoc(cloudStateRef, {
     schemaVersion: CLOUD_STATE_SCHEMA_VERSION,
@@ -41,6 +61,8 @@ export async function saveCloudAppState(state) {
     updatedAt: serverTimestamp(),
     state,
   });
+
+  return state;
 }
 
 export async function uploadCloudDataUrlAsset({ dataUrl, path }) {

@@ -42,12 +42,91 @@ const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
 const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
 const MINUTE_IN_MS = 60 * 1000;
 const SHIFT_SEQUENCE = [
-  { id: 'shift-4', label: 'Shift 4', startHour: 0, endHour: 6, timeRange: '00:00 - 06:00' },
-  { id: 'shift-1', label: 'Shift 1', startHour: 6, endHour: 12, timeRange: '06:00 - 12:00' },
-  { id: 'shift-2', label: 'Shift 2', startHour: 12, endHour: 18, timeRange: '12:00 - 18:00' },
-  { id: 'shift-3', label: 'Shift 3', startHour: 18, endHour: 24, timeRange: '18:00 - 24:00' },
+  {
+    id: 'shift-pagi',
+    label: 'Shift Pagi',
+    startHour: 6,
+    startMinute: 0,
+    endHour: 10,
+    endMinute: 0,
+    timeRange: '06:00 - <10:00',
+  },
+  {
+    id: 'shift-siang',
+    label: 'Shift Siang',
+    startHour: 10,
+    startMinute: 0,
+    endHour: 14,
+    endMinute: 0,
+    timeRange: '10:00 - <14:00',
+  },
+  {
+    id: 'shift-sore',
+    label: 'Shift Sore',
+    startHour: 14,
+    startMinute: 0,
+    endHour: 18,
+    endMinute: 0,
+    timeRange: '14:00 - <18:00',
+  },
+  {
+    id: 'shift-malam',
+    label: 'Shift Malam',
+    startHour: 18,
+    startMinute: 0,
+    endHour: 6,
+    endMinute: 0,
+    crossesMidnight: true,
+    timeRange: '18:00 - <06:00 hari berikutnya',
+  },
 ];
-const SHIFT_ORDER = SHIFT_SEQUENCE.reduce((accumulator, shift, index) => ({ ...accumulator, [shift.id]: index }), {});
+const LEGACY_SHIFT_SEQUENCE = [
+  {
+    id: 'shift-4',
+    label: 'Shift 4',
+    startHour: 0,
+    startMinute: 0,
+    endHour: 6,
+    endMinute: 0,
+    legacy: true,
+    timeRange: '00:00 - <06:00',
+  },
+  {
+    id: 'shift-1',
+    label: 'Shift 1',
+    startHour: 6,
+    startMinute: 0,
+    endHour: 12,
+    endMinute: 0,
+    legacy: true,
+    timeRange: '06:00 - <12:00',
+  },
+  {
+    id: 'shift-2',
+    label: 'Shift 2',
+    startHour: 12,
+    startMinute: 0,
+    endHour: 18,
+    endMinute: 0,
+    legacy: true,
+    timeRange: '12:00 - <18:00',
+  },
+  {
+    id: 'shift-3',
+    label: 'Shift 3',
+    startHour: 18,
+    startMinute: 0,
+    endHour: 0,
+    endMinute: 0,
+    crossesMidnight: true,
+    legacy: true,
+    timeRange: '18:00 - <00:00',
+  },
+];
+const SHIFT_DEFINITION_MAP = [...SHIFT_SEQUENCE, ...LEGACY_SHIFT_SEQUENCE].reduce((accumulator, shift) => ({
+  ...accumulator,
+  [shift.id]: shift,
+}), {});
 
 const defaultLocationOptions = [
   'Cuaca', 'Haluan', 'Buritan', 'Deck', 'Sekoci', 'Anjungan', 'Radio Room',
@@ -212,15 +291,59 @@ function createJakartaDate(dateKey, hour = 0, minute = 0) {
   ));
 }
 
+function getShiftStartMinutes(shift) {
+  return ((shift?.startHour || 0) * 60) + (shift?.startMinute || 0);
+}
+
+function getShiftEndMinutes(shift) {
+  return ((shift?.endHour || 0) * 60) + (shift?.endMinute || 0);
+}
+
+function isOvernightShift(shift) {
+  if (!shift) return false;
+  if (shift.crossesMidnight) return true;
+  return getShiftEndMinutes(shift) <= getShiftStartMinutes(shift);
+}
+
 function getShiftDefinition(shiftId) {
-  return SHIFT_SEQUENCE.find(shift => shift.id === shiftId) || SHIFT_SEQUENCE[0];
+  return SHIFT_DEFINITION_MAP[shiftId] || SHIFT_SEQUENCE[0];
+}
+
+function getCurrentShiftDefinitionByParts(parts) {
+  const currentMinutes = (parts.hour * 60) + parts.minute;
+
+  return SHIFT_SEQUENCE.find((shift) => {
+    const startMinutes = getShiftStartMinutes(shift);
+    const endMinutes = getShiftEndMinutes(shift);
+
+    if (isOvernightShift(shift)) {
+      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+    }
+
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  }) || SHIFT_SEQUENCE[0];
+}
+
+function isLegacyShiftDefinition(shift) {
+  return Boolean(shift?.legacy);
 }
 
 function getShiftScheduleTimes(meta) {
   const safeMeta = meta || getShiftMeta();
   const definition = getShiftDefinition(safeMeta.id);
-  const startAt = createJakartaDate(safeMeta.dateKey, definition.startHour, 0);
-  const endAt = createJakartaDate(safeMeta.dateKey, definition.endHour, 0);
+  const startAt = createJakartaDate(
+    safeMeta.dateKey,
+    definition.startHour || 0,
+    definition.startMinute || 0,
+  );
+  const endDateKey = isOvernightShift(definition)
+    ? addDaysToDateKey(safeMeta.dateKey, 1)
+    : safeMeta.dateKey;
+  const endAt = createJakartaDate(
+    endDateKey,
+    definition.endHour || 0,
+    definition.endMinute || 0,
+  );
 
   return {
     definition,
@@ -232,7 +355,7 @@ function getShiftScheduleTimes(meta) {
 }
 
 function shiftMetaFromParts(dateKey, shiftId) {
-  const definition = SHIFT_SEQUENCE.find(shift => shift.id === shiftId) || SHIFT_SEQUENCE[0];
+  const definition = getShiftDefinition(shiftId);
   return {
     id: definition.id,
     key: `${dateKey}|${definition.id}`,
@@ -245,14 +368,33 @@ function shiftMetaFromParts(dateKey, shiftId) {
 
 function getShiftMeta(date = new Date()) {
   const parts = getJakartaDateParts(date);
-  const definition = SHIFT_SEQUENCE.find(shift => parts.hour >= shift.startHour && parts.hour < shift.endHour) || SHIFT_SEQUENCE[0];
-  return shiftMetaFromParts(toDateKey(parts), definition.id);
+  const definition = getCurrentShiftDefinitionByParts(parts);
+  const currentDateKey = toDateKey(parts);
+  const currentMinutes = (parts.hour * 60) + parts.minute;
+  const dateKey = isOvernightShift(definition) && currentMinutes < getShiftEndMinutes(definition)
+    ? addDaysToDateKey(currentDateKey, -1)
+    : currentDateKey;
+  return shiftMetaFromParts(dateKey, definition.id);
 }
 
 function getShiftMetaFromKey(key) {
   const [dateKey, shiftId] = String(key || '').split('|');
   if (!dateKey || !shiftId) return null;
   return shiftMetaFromParts(dateKey, shiftId);
+}
+
+function normalizeShiftKeyForCloudSync(shiftKey, fallbackMeta = getShiftMeta()) {
+  const persistedShiftMeta = getShiftMetaFromKey(shiftKey);
+  if (!persistedShiftMeta) return fallbackMeta.key;
+
+  const persistedShiftDefinition = getShiftDefinition(persistedShiftMeta.id);
+  if (isLegacyShiftDefinition(persistedShiftDefinition)) return fallbackMeta.key;
+
+  const persistedShiftStartAt = getShiftScheduleTimes(persistedShiftMeta).startAt.getTime();
+  const fallbackShiftStartAt = getShiftScheduleTimes(fallbackMeta).startAt.getTime();
+
+  if (persistedShiftStartAt > fallbackShiftStartAt) return fallbackMeta.key;
+  return persistedShiftMeta.key;
 }
 
 function addDaysToDateKey(dateKey, days) {
@@ -445,13 +587,14 @@ function createPatrolIncidentRecord(checkpoint, options = {}) {
 }
 
 function createMissedCheckpoint(checkpoint, shiftMeta) {
+  const { endAt } = getShiftScheduleTimes(shiftMeta);
   return {
     id: checkpoint.id,
     name: checkpoint.name,
     status: 'missed',
     resultType: 'missed',
     completedBy: '-',
-    time: shiftMeta.timeRange.split(' - ')[1] || '-',
+    time: formatAppTime(endAt) || '-',
     shipName: checkpoint.shipName || '',
     photoUrl: null,
     penyebab: '',
@@ -550,8 +693,15 @@ function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo })
 
 function sortHistoryEntries(entries) {
   return [...entries].sort((left, right) => {
+    const leftTimestamp = new Date(left.createdAt || '').getTime();
+    const rightTimestamp = new Date(right.createdAt || '').getTime();
+
+    if (!Number.isNaN(leftTimestamp) && !Number.isNaN(rightTimestamp) && leftTimestamp !== rightTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+
     if (left.dateKey !== right.dateKey) return right.dateKey.localeCompare(left.dateKey);
-    return (SHIFT_ORDER[right.shiftId] ?? -1) - (SHIFT_ORDER[left.shiftId] ?? -1);
+    return String(right.shift || '').localeCompare(String(left.shift || ''));
   });
 }
 
@@ -561,6 +711,275 @@ function mergeHistoryEntries(previousEntries, nextEntries) {
     merged.set(entry.key || entry.id, entry);
   });
   return sortHistoryEntries(Array.from(merged.values()));
+}
+
+function getCheckpointMergeKey(checkpoint) {
+  return String(checkpoint?.id || createCheckpointNameKey(checkpoint?.name) || '');
+}
+
+function getCheckpointPriority(checkpoint) {
+  if (checkpoint?.status === 'completed') return 3;
+  if (checkpoint?.status === 'missed' || checkpoint?.resultType === 'missed') return 2;
+  if (checkpoint?.status === 'pending') return 1;
+  return 0;
+}
+
+function getCheckpointEffectiveTimestamp(checkpoint) {
+  const directTimestamp = new Date(
+    checkpoint?.completedAt
+    || checkpoint?.createdAt
+    || checkpoint?.updatedAt
+    || '',
+  ).getTime();
+
+  if (!Number.isNaN(directTimestamp) && directTimestamp > 0) return directTimestamp;
+  return getCheckpointPriority(checkpoint);
+}
+
+function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
+  if (!baseCheckpoint) return nextCheckpoint;
+  if (!nextCheckpoint) return baseCheckpoint;
+
+  const baseTimestamp = getCheckpointEffectiveTimestamp(baseCheckpoint);
+  const nextTimestamp = getCheckpointEffectiveTimestamp(nextCheckpoint);
+  const shouldUseNext = (
+    nextTimestamp > baseTimestamp
+    || (nextTimestamp === baseTimestamp && getCheckpointPriority(nextCheckpoint) >= getCheckpointPriority(baseCheckpoint))
+  );
+
+  const preferredCheckpoint = shouldUseNext ? nextCheckpoint : baseCheckpoint;
+  const fallbackCheckpoint = shouldUseNext ? baseCheckpoint : nextCheckpoint;
+
+  return {
+    ...fallbackCheckpoint,
+    ...preferredCheckpoint,
+    id: preferredCheckpoint.id || fallbackCheckpoint.id,
+    name: preferredCheckpoint.name || fallbackCheckpoint.name,
+  };
+}
+
+function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) {
+  const merged = new Map();
+
+  [...baseCheckpoints, ...nextCheckpoints].forEach((checkpoint) => {
+    const mergeKey = getCheckpointMergeKey(checkpoint);
+    if (!mergeKey) return;
+    const existingCheckpoint = merged.get(mergeKey);
+    merged.set(mergeKey, mergeCheckpointRecord(existingCheckpoint, checkpoint));
+  });
+
+  return Array.from(merged.values());
+}
+
+function getNotificationMergeKey(notification) {
+  return String(notification?.dedupeKey || notification?.id || '');
+}
+
+function getNotificationTimestamp(notification) {
+  const timestamp = new Date(notification?.createdAt || '').getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function mergeNotificationRecord(baseNotification, nextNotification) {
+  if (!baseNotification) return nextNotification;
+  if (!nextNotification) return baseNotification;
+
+  const shouldUseNext = getNotificationTimestamp(nextNotification) >= getNotificationTimestamp(baseNotification);
+  const preferredNotification = shouldUseNext ? nextNotification : baseNotification;
+  const fallbackNotification = shouldUseNext ? baseNotification : nextNotification;
+  const mergedTargetUserIds = Array.from(new Set([
+    ...(Array.isArray(baseNotification?.targetUserIds) ? baseNotification.targetUserIds : []),
+    ...(Array.isArray(nextNotification?.targetUserIds) ? nextNotification.targetUserIds : []),
+  ]));
+
+  return {
+    ...fallbackNotification,
+    ...preferredNotification,
+    id: preferredNotification.id || fallbackNotification.id || createNotificationId(),
+    dedupeKey: preferredNotification.dedupeKey || fallbackNotification.dedupeKey || '',
+    targetUserIds: mergedTargetUserIds,
+    readByUserIds: Array.from(new Set([
+      ...(Array.isArray(baseNotification?.readByUserIds) ? baseNotification.readByUserIds : []),
+      ...(Array.isArray(nextNotification?.readByUserIds) ? nextNotification.readByUserIds : []),
+    ])).filter(userId => mergedTargetUserIds.includes(userId)),
+  };
+}
+
+function mergeNotificationsCollection(baseNotifications = [], nextNotifications = []) {
+  const merged = new Map();
+
+  [...baseNotifications, ...nextNotifications].forEach((notification) => {
+    const mergeKey = getNotificationMergeKey(notification);
+    if (!mergeKey) return;
+    const existingNotification = merged.get(mergeKey);
+    merged.set(mergeKey, mergeNotificationRecord(existingNotification, notification));
+  });
+
+  return sortNotifications(Array.from(merged.values()));
+}
+
+function mergeEntitiesById(baseItems = [], nextItems = [], options = {}) {
+  const {
+    getId = (item) => item?.id,
+    merge = (baseItem, nextItem) => ({ ...baseItem, ...nextItem }),
+  } = options;
+  const merged = new Map();
+
+  [...baseItems, ...nextItems].forEach((item) => {
+    const itemId = getId(item);
+    if (!itemId) return;
+    const existingItem = merged.get(itemId);
+    merged.set(itemId, existingItem ? merge(existingItem, item) : item);
+  });
+
+  return Array.from(merged.values());
+}
+
+function mergeProgressItems(baseProgress = [], nextProgress = []) {
+  return mergeEntitiesById(baseProgress, nextProgress, {
+    getId: (item) => item?.id || item?.createdAt || item?.comment,
+    merge: (baseItem, nextItem) => {
+      const baseTimestamp = new Date(baseItem?.createdAt || '').getTime();
+      const nextTimestamp = new Date(nextItem?.createdAt || '').getTime();
+      return nextTimestamp >= baseTimestamp
+        ? { ...baseItem, ...nextItem }
+        : { ...nextItem, ...baseItem };
+    },
+  });
+}
+
+function mergeIncidentMetaCollection(baseMeta = {}, nextMeta = {}) {
+  const mergedMeta = { ...(baseMeta || {}) };
+
+  Object.entries(nextMeta || {}).forEach(([incidentId, nextValue]) => {
+    const baseValue = mergedMeta[incidentId] || {};
+    mergedMeta[incidentId] = {
+      ...baseValue,
+      ...nextValue,
+      progress: mergeProgressItems(baseValue.progress || [], nextValue?.progress || []),
+    };
+  });
+
+  return mergedMeta;
+}
+
+function mergeIncidentsCollection(baseIncidents = [], nextIncidents = []) {
+  return mergeEntitiesById(baseIncidents, nextIncidents, {
+    merge: (baseIncident, nextIncident) => (
+      getIncidentSortTimestamp(nextIncident) >= getIncidentSortTimestamp(baseIncident)
+        ? { ...baseIncident, ...nextIncident }
+        : { ...nextIncident, ...baseIncident }
+    ),
+  }).sort((left, right) => getIncidentSortTimestamp(right) - getIncidentSortTimestamp(left));
+}
+
+function createDeletedRecordsState(deletedRecords = {}) {
+  const sourceRecords = deletedRecords && typeof deletedRecords === 'object' ? deletedRecords : {};
+  return {
+    historyEntries: { ...(sourceRecords.historyEntries || {}) },
+    incidents: { ...(sourceRecords.incidents || {}) },
+    ships: { ...(sourceRecords.ships || {}) },
+    users: { ...(sourceRecords.users || {}) },
+  };
+}
+
+function markDeletedRecord(previousDeletedRecords, groupKey, recordId, deletedAt = new Date().toISOString()) {
+  const nextDeletedRecords = createDeletedRecordsState(previousDeletedRecords);
+  if (!recordId || !Object.prototype.hasOwnProperty.call(nextDeletedRecords, groupKey)) {
+    return nextDeletedRecords;
+  }
+
+  nextDeletedRecords[groupKey][recordId] = deletedAt;
+  return nextDeletedRecords;
+}
+
+function mergeDeletedRecordGroup(baseGroup = {}, nextGroup = {}) {
+  const mergedGroup = { ...(baseGroup || {}) };
+
+  Object.entries(nextGroup || {}).forEach(([recordId, deletedAt]) => {
+    if (!recordId || !deletedAt) return;
+
+    const baseTimestamp = new Date(mergedGroup[recordId] || '').getTime();
+    const nextTimestamp = new Date(deletedAt || '').getTime();
+
+    if (Number.isNaN(baseTimestamp) || nextTimestamp >= baseTimestamp) {
+      mergedGroup[recordId] = deletedAt;
+    }
+  });
+
+  return mergedGroup;
+}
+
+function mergeDeletedRecords(baseDeletedRecords = {}, nextDeletedRecords = {}) {
+  const baseState = createDeletedRecordsState(baseDeletedRecords);
+  const nextState = createDeletedRecordsState(nextDeletedRecords);
+
+  return {
+    historyEntries: mergeDeletedRecordGroup(baseState.historyEntries, nextState.historyEntries),
+    incidents: mergeDeletedRecordGroup(baseState.incidents, nextState.incidents),
+    ships: mergeDeletedRecordGroup(baseState.ships, nextState.ships),
+    users: mergeDeletedRecordGroup(baseState.users, nextState.users),
+  };
+}
+
+function omitDeletedEntities(items = [], deletedRecords = {}) {
+  return items.filter((item) => !deletedRecords[item?.id]);
+}
+
+function pruneShipPersonnelAssignments(ships = [], users = []) {
+  const activeUserIds = new Set(users.map(user => user.id).filter(Boolean));
+  return ships.map((ship) => ({
+    ...ship,
+    personnel: Array.isArray(ship?.personnel)
+      ? ship.personnel.filter(userId => activeUserIds.has(userId))
+      : [],
+    personnelNextMonth: Array.isArray(ship?.personnelNextMonth)
+      ? ship.personnelNextMonth.filter(userId => activeUserIds.has(userId))
+      : [],
+  }));
+}
+
+function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
+  const deletedRecords = mergeDeletedRecords(baseState.deletedRecords || {}, nextState.deletedRecords || {});
+  const baseUsers = applyAdminCredentialReset(normalizeUsersCollection(baseState.usersData || []));
+  const nextUsers = applyAdminCredentialReset(normalizeUsersCollection(nextState.usersData || []));
+  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers), deletedRecords.users);
+  const baseShips = normalizeShipsCollection(baseState.shipsData || []);
+  const nextShips = normalizeShipsCollection(nextState.shipsData || []);
+  const mergedShips = pruneShipPersonnelAssignments(
+    omitDeletedEntities(mergeEntitiesById(baseShips, nextShips), deletedRecords.ships),
+    mergedUsers,
+  );
+  const shipIds = Array.from(new Set([
+    ...Object.keys(baseState.checkpointsByShip || {}),
+    ...Object.keys(nextState.checkpointsByShip || {}),
+    ...mergedShips.map(ship => ship.id).filter(Boolean),
+  ])).filter(shipId => !deletedRecords.ships[shipId]);
+
+  const checkpointsByShip = shipIds.reduce((collection, shipId) => {
+    const baseCheckpoints = Array.isArray(baseState.checkpointsByShip?.[shipId]) ? baseState.checkpointsByShip[shipId] : [];
+    const nextCheckpoints = Array.isArray(nextState.checkpointsByShip?.[shipId]) ? nextState.checkpointsByShip[shipId] : [];
+    collection[shipId] = mergeCheckpointsCollection(baseCheckpoints, nextCheckpoints);
+    return collection;
+  }, {});
+
+  return createSharedStateSnapshot({
+    activeShiftKey: nextState.activeShiftKey || baseState.activeShiftKey,
+    checkpointsByShip,
+    deletedRecords,
+    historyEntries: omitDeletedEntities(
+      mergeHistoryEntries(baseState.historyEntries || [], nextState.historyEntries || []),
+      deletedRecords.historyEntries,
+    ),
+    incidentMeta: mergeIncidentMetaCollection(baseState.incidentMeta || {}, nextState.incidentMeta || {}),
+    incidentsData: omitDeletedEntities(
+      mergeIncidentsCollection(baseState.incidentsData || [], nextState.incidentsData || []),
+      deletedRecords.incidents,
+    ),
+    notifications: mergeNotificationsCollection(baseState.notifications || [], nextState.notifications || []),
+    shipsData: mergedShips,
+    usersData: mergedUsers,
+  });
 }
 
 function createNotificationId() {
@@ -735,6 +1154,7 @@ function createCloudAssetPath(...segments) {
 function createSharedStateSnapshot({
   activeShiftKey,
   checkpointsByShip,
+  deletedRecords,
   historyEntries,
   incidentMeta,
   incidentsData,
@@ -749,6 +1169,7 @@ function createSharedStateSnapshot({
     incidentsData,
     incidentMeta,
     historyEntries,
+    deletedRecords: createDeletedRecordsState(deletedRecords),
     activeShiftKey,
     notifications,
   };
@@ -878,14 +1299,14 @@ function createSeedHistoryEntries() {
 
   return sortHistoryEntries([
     buildHistoryEntry({
-      shiftMeta: shiftMetaFromParts('2026-04-02', 'shift-1'),
+      shiftMeta: shiftMetaFromParts('2026-04-02', 'shift-pagi'),
       checkpoints: firstShiftCheckpoints,
       ship,
       users: mockUsersList,
       weatherInfo: { temperature: 30, windspeed: 12, weathercode: 1 },
     }),
     buildHistoryEntry({
-      shiftMeta: shiftMetaFromParts('2026-04-01', 'shift-4'),
+      shiftMeta: shiftMetaFromParts('2026-04-01', 'shift-malam'),
       checkpoints: secondShiftCheckpoints,
       ship,
       users: mockUsersList,
@@ -1010,6 +1431,7 @@ export function AppProvider({ children }) {
   const [weatherLoading, setWeatherLoading] = useState(() => !loadWeatherCache());
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [incidentMeta, setIncidentMeta] = useState(() => persistedState?.incidentMeta || {});
+  const [deletedRecords, setDeletedRecords] = useState(() => createDeletedRecordsState(persistedState?.deletedRecords));
   const [newProgress, setNewProgress] = useState({ comment: '', photoUrl: null });
   const [showUserForm, setShowUserForm] = useState(false);
   const [userFormData, setUserFormData] = useState(() => createUserFormState());
@@ -1021,6 +1443,7 @@ export function AppProvider({ children }) {
   const [cloudSyncBootstrapped, setCloudSyncBootstrapped] = useState(() => !isCloudSyncEnabled);
   const previousUsersDataRef = useRef(usersData);
   const lastSharedStateRef = useRef('');
+  const latestCloudSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
 
@@ -1106,6 +1529,7 @@ export function AppProvider({ children }) {
   const sharedState = useMemo(() => createSharedStateSnapshot({
     activeShiftKey,
     checkpointsByShip,
+    deletedRecords,
     historyEntries,
     incidentMeta,
     incidentsData,
@@ -1115,6 +1539,7 @@ export function AppProvider({ children }) {
   }), [
     activeShiftKey,
     checkpointsByShip,
+    deletedRecords,
     historyEntries,
     incidentMeta,
     incidentsData,
@@ -1222,6 +1647,7 @@ export function AppProvider({ children }) {
     return createSharedStateSnapshot({
       activeShiftKey: stateSnapshot.activeShiftKey,
       checkpointsByShip: preparedCheckpointsByShip,
+      deletedRecords: stateSnapshot.deletedRecords,
       historyEntries: preparedHistoryEntries,
       incidentMeta: preparedIncidentMeta,
       incidentsData: preparedIncidentsData,
@@ -1231,7 +1657,7 @@ export function AppProvider({ children }) {
     });
   }, [prepareCloudPhotoUrl]);
   const applyCloudSharedState = useCallback((nextState) => {
-    if (!nextState || typeof nextState !== 'object') return;
+    if (!nextState || typeof nextState !== 'object') return null;
 
     const nextShips = normalizeShipsCollection(nextState.shipsData || initialShipsData);
     const nextUsers = applyAdminCredentialReset(
@@ -1242,9 +1668,10 @@ export function AppProvider({ children }) {
       nextState.checkpointsByShip,
       nextState.checkpoints,
     );
-    const normalizedState = createSharedStateSnapshot({
-      activeShiftKey: nextState.activeShiftKey || getShiftMeta().key,
+    const incomingState = createSharedStateSnapshot({
+      activeShiftKey: normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
       checkpointsByShip: nextCheckpointsByShip,
+      deletedRecords: nextState.deletedRecords,
       historyEntries: sortHistoryEntries(nextState.historyEntries || createSeedHistoryEntries()),
       incidentMeta: nextState.incidentMeta && typeof nextState.incidentMeta === 'object' ? nextState.incidentMeta : {},
       incidentsData: Array.isArray(nextState.incidentsData) ? nextState.incidentsData : [],
@@ -1252,12 +1679,18 @@ export function AppProvider({ children }) {
       shipsData: nextShips,
       usersData: nextUsers,
     });
+    const normalizedState = mergeSharedStateSnapshots({}, incomingState);
     const serializedState = serializeSharedStateSnapshot(normalizedState);
+    latestCloudSharedStateRef.current = normalizedState;
 
-    if (serializedState === lastSharedStateRef.current) return;
+    if (serializedState === lastSharedStateRef.current) return normalizedState;
 
     logCloudSyncDebug('apply-shared-state', {
       activeShiftKey: normalizedState.activeShiftKey,
+      deletedHistory: Object.keys(normalizedState.deletedRecords?.historyEntries || {}).length,
+      deletedIncidents: Object.keys(normalizedState.deletedRecords?.incidents || {}).length,
+      deletedShips: Object.keys(normalizedState.deletedRecords?.ships || {}).length,
+      deletedUsers: Object.keys(normalizedState.deletedRecords?.users || {}).length,
       notifications: normalizedState.notifications.length,
       historyEntries: normalizedState.historyEntries.length,
       ships: normalizedState.shipsData.length,
@@ -1272,8 +1705,10 @@ export function AppProvider({ children }) {
     setUsersData(normalizedState.usersData);
     setIncidentsData(normalizedState.incidentsData);
     setIncidentMeta(normalizedState.incidentMeta);
+    setDeletedRecords(normalizedState.deletedRecords);
     setHistoryEntries(normalizedState.historyEntries);
     setNotifications(normalizedState.notifications);
+    return normalizedState;
   }, []);
   const getUsersByRole = useCallback((roles) => (
     usersData.filter(user => roles.includes(user.role)).map(user => user.id)
@@ -1452,6 +1887,8 @@ export function AppProvider({ children }) {
       confirmText: 'YA, HAPUS',
       cancelText: 'BATAL',
       onConfirm: () => {
+        const deletedAt = new Date().toISOString();
+        setDeletedRecords(previousDeletedRecords => markDeletedRecord(previousDeletedRecords, 'historyEntries', historyId, deletedAt));
         setHistoryEntries(previousEntries => previousEntries.filter(entry => entry.id !== historyId));
         appendNotifications([{
           type: 'history_deleted',
@@ -1667,6 +2104,19 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
     if (!persistedShiftMeta || persistedShiftMeta.key === currentShiftMeta.key) return;
+
+    const persistedShiftDefinition = getShiftDefinition(persistedShiftMeta.id);
+
+    if (isLegacyShiftDefinition(persistedShiftDefinition)) {
+      logCloudSyncDebug('skip-legacy-shift-history', {
+        persistedShiftKey: persistedShiftMeta.key,
+        currentShiftKey: currentShiftMeta.key,
+      });
+      setActiveShiftKey(previousKey => (
+        previousKey === currentShiftMeta.key ? previousKey : currentShiftMeta.key
+      ));
+      return;
+    }
 
     const persistedShiftStartAt = getShiftScheduleTimes(persistedShiftMeta).startAt.getTime();
     const currentShiftStartAt = getShiftScheduleTimes(currentShiftMeta).startAt.getTime();
@@ -2080,6 +2530,8 @@ export function AppProvider({ children }) {
       confirmText: 'YA, HAPUS',
       cancelText: 'BATAL',
       onConfirm: () => {
+        const deletedAt = new Date().toISOString();
+        setDeletedRecords(previousDeletedRecords => markDeletedRecord(previousDeletedRecords, 'ships', id, deletedAt));
         setShipsData(prev => prev.filter(s => s.id !== id));
         if (activeShipId === id) setActiveShipId(null);
         closeShipDocForm();
@@ -2291,6 +2743,8 @@ export function AppProvider({ children }) {
       confirmText: 'YA, HAPUS',
       cancelText: 'BATAL',
       onConfirm: () => {
+        const deletedAt = new Date().toISOString();
+        setDeletedRecords(previousDeletedRecords => markDeletedRecord(previousDeletedRecords, 'users', id, deletedAt));
         setUsersData(prev => prev.filter(u => u.id !== id)); 
         setShipsData(prev => prev.map(ship => ({ ...ship, personnel: ship.personnel.filter(userId => userId !== id), personnelNextMonth: ship.personnelNextMonth.filter(userId => userId !== id) }))); 
         if (sessionUserId === id) { setSessionUserId(null); setAuthMode('login'); setAuthNotice('Akun sedang dipakai telah dihapus. Silakan login ulang.'); } 
@@ -2394,6 +2848,8 @@ export function AppProvider({ children }) {
             });
           }
         } else {
+          const deletedAt = new Date().toISOString();
+          setDeletedRecords((previousDeletedRecords) => markDeletedRecord(previousDeletedRecords, 'incidents', incidentId, deletedAt));
           setIncidentsData((previousIncidents) => previousIncidents.filter((entry) => entry.id !== incidentId));
           setIncidentMeta((previousMeta) => {
             if (!previousMeta[incidentId]) return previousMeta;
@@ -2697,7 +3153,10 @@ export function AppProvider({ children }) {
         historyEntries: Array.isArray(cloudPayload?.state?.historyEntries) ? cloudPayload.state.historyEntries.length : 0,
       });
 
-      if (!cloudPayload?.state) return;
+      if (!cloudPayload?.state) {
+        latestCloudSharedStateRef.current = null;
+        return;
+      }
       applyCloudSharedState(cloudPayload.state);
     }, (error) => {
       setCloudSyncBootstrapped(true);
@@ -2707,27 +3166,58 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!isCloudSyncEnabled || !isCloudWriteEnabled || isOffline || !cloudSyncBootstrapped) return;
 
-    const serializedState = serializeSharedStateSnapshot(sharedState);
+    const cloudReadyState = mergeSharedStateSnapshots(
+      latestCloudSharedStateRef.current || {},
+      createSharedStateSnapshot({
+        ...sharedState,
+        activeShiftKey: currentShiftMeta.key,
+      }),
+    );
+    const serializedState = serializeSharedStateSnapshot(cloudReadyState);
     if (!serializedState || serializedState === lastSharedStateRef.current) return;
 
     cloudSaveQueueRef.current = cloudSaveQueueRef.current
       .catch(() => {})
       .then(async () => {
-        const latestSerializedState = serializeSharedStateSnapshot(sharedState);
+        const latestStateForWrite = mergeSharedStateSnapshots(
+          latestCloudSharedStateRef.current || {},
+          createSharedStateSnapshot({
+            ...sharedState,
+            activeShiftKey: currentShiftMeta.key,
+          }),
+        );
+        const latestSerializedState = serializeSharedStateSnapshot(latestStateForWrite);
         if (!latestSerializedState || latestSerializedState === lastSharedStateRef.current) return;
 
-        const preparedState = await prepareSharedStateForCloudSync(sharedState);
-        const preparedSerializedState = serializeSharedStateSnapshot(preparedState);
+        logCloudSyncDebug('save-shared-state', {
+          activeShiftKey: latestStateForWrite.activeShiftKey,
+          deletedHistory: Object.keys(latestStateForWrite.deletedRecords?.historyEntries || {}).length,
+          deletedIncidents: Object.keys(latestStateForWrite.deletedRecords?.incidents || {}).length,
+          deletedShips: Object.keys(latestStateForWrite.deletedRecords?.ships || {}).length,
+          deletedUsers: Object.keys(latestStateForWrite.deletedRecords?.users || {}).length,
+          historyEntries: latestStateForWrite.historyEntries.length,
+          incidents: latestStateForWrite.incidentsData.length,
+          notifications: latestStateForWrite.notifications.length,
+          ships: latestStateForWrite.shipsData.length,
+          users: latestStateForWrite.usersData.length,
+        });
 
-        if (!preparedSerializedState || preparedSerializedState === lastSharedStateRef.current) return;
+        const preparedState = await prepareSharedStateForCloudSync(latestStateForWrite);
+        const savedState = await saveCloudAppState(preparedState, {
+          mergeState: (cloudState, pendingState) => mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
+        });
+        const committedState = mergeSharedStateSnapshots({}, savedState || preparedState);
+        const committedSerializedState = serializeSharedStateSnapshot(committedState);
 
-        await saveCloudAppState(preparedState);
-        lastSharedStateRef.current = preparedSerializedState;
+        if (!committedSerializedState) return;
+
+        latestCloudSharedStateRef.current = committedState;
+        lastSharedStateRef.current = committedSerializedState;
       })
       .catch((error) => {
         console.error('Gagal mengirim laporan patroli ke cloud', error);
       });
-  }, [cloudSyncBootstrapped, isOffline, prepareSharedStateForCloudSync, sharedState]);
+  }, [cloudSyncBootstrapped, currentShiftMeta.key, isOffline, prepareSharedStateForCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
