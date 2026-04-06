@@ -33,10 +33,12 @@ const ACCESS_ROLES = {
 const ACCESS_ROLE_VALUES = Object.values(ACCESS_ROLES);
 const AUTH_SESSION_KEY = 'smartpatrol.auth.local.v1';
 const APP_TIME_ZONE = 'Asia/Jakarta';
+const APP_TIME_ZONE_UTC_OFFSET_HOURS = 7;
 const SHIFT_NOTIFICATION_DEBUG_KEY = 'smartpatrol.debug.shiftNotifications';
 const ADMIN_RESET_EMAIL = 'admin@smartpatrol.local';
 const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
 const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
+const MINUTE_IN_MS = 60 * 1000;
 const SHIFT_SEQUENCE = [
   { id: 'shift-4', label: 'Shift 4', startHour: 0, endHour: 6, timeRange: '00:00 - 06:00' },
   { id: 'shift-1', label: 'Shift 1', startHour: 6, endHour: 12, timeRange: '06:00 - 12:00' },
@@ -178,6 +180,53 @@ function formatDateLabel(dateKey) {
   const { year, month, day } = parseDateKey(dateKey);
   const safeDate = new Date(Date.UTC(year, Math.max(month - 1, 0), day, 12, 0, 0));
   return safeDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: APP_TIME_ZONE });
+}
+
+function formatAppDate(value = new Date()) {
+  const safeDate = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(safeDate.getTime())) return '';
+  return safeDate.toLocaleDateString('id-ID', { timeZone: APP_TIME_ZONE });
+}
+
+function formatAppTime(value = new Date()) {
+  const safeDate = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(safeDate.getTime())) return '';
+  return safeDate.toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: APP_TIME_ZONE,
+  });
+}
+
+function createJakartaDate(dateKey, hour = 0, minute = 0) {
+  const { year, month, day } = parseDateKey(dateKey);
+  return new Date(Date.UTC(
+    year,
+    Math.max(month - 1, 0),
+    day,
+    hour - APP_TIME_ZONE_UTC_OFFSET_HOURS,
+    minute,
+    0,
+  ));
+}
+
+function getShiftDefinition(shiftId) {
+  return SHIFT_SEQUENCE.find(shift => shift.id === shiftId) || SHIFT_SEQUENCE[0];
+}
+
+function getShiftScheduleTimes(meta) {
+  const safeMeta = meta || getShiftMeta();
+  const definition = getShiftDefinition(safeMeta.id);
+  const startAt = createJakartaDate(safeMeta.dateKey, definition.startHour, 0);
+  const endAt = createJakartaDate(safeMeta.dateKey, definition.endHour, 0);
+
+  return {
+    definition,
+    startAt,
+    endAt,
+    checkpointPendingAt: new Date(endAt.getTime() - (60 * MINUTE_IN_MS)),
+    shiftEndingSoonAt: new Date(endAt.getTime() - (15 * MINUTE_IN_MS)),
+  };
 }
 
 function shiftMetaFromParts(dateKey, shiftId) {
@@ -343,10 +392,10 @@ function createPatrolIncidentId(checkpoint) {
 }
 
 function getIncidentDateLabel(value) {
-  if (!value) return new Date().toLocaleDateString('id-ID');
+  if (!value) return formatAppDate();
   const parsedDate = new Date(value);
   if (Number.isNaN(parsedDate.getTime())) return String(value);
-  return parsedDate.toLocaleDateString('id-ID');
+  return formatAppDate(parsedDate);
 }
 
 function getIncidentSortTimestamp(incident) {
@@ -467,6 +516,7 @@ function buildGuardShiftSnapshot(users, shipName, checkpoints = []) {
 function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo }) {
   const historyKey = createHistoryEntryKey(ship, shiftMeta);
   const historyId = `history-${historyKey}`;
+  const { endAt } = getShiftScheduleTimes(shiftMeta);
   const snapshotCheckpoints = checkpoints.map(checkpoint => (
     checkpoint.status === 'completed'
       ? { ...checkpoint, readOnly: true, historyId, date: shiftMeta.dateLabel }
@@ -492,7 +542,7 @@ function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo })
     points: summary.total,
     issue: summary.temuan,
     missed: summary.missed,
-    createdAt: new Date().toISOString(),
+    createdAt: endAt.toISOString(),
   };
 }
 
@@ -1494,6 +1544,9 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     if (!operationalShipName) return;
+    const { startAt, endAt } = getShiftScheduleTimes(currentShiftMeta);
+    const now = new Date(shiftClock);
+    if (now < startAt || now >= endAt) return;
     appendNotifications([{
       type: 'shift_started',
       title: 'Shift patroli dimulai',
@@ -1505,14 +1558,15 @@ export function AppProvider({ children }) {
       shipName: operationalShipName,
       shiftKey: currentShiftMeta.key,
       dedupeKey: `shift-started:${operationalShipName}:${currentShiftMeta.key}`,
+      createdAt: startAt.toISOString(),
     }]);
-  }, [appendNotifications, currentShiftMeta.key, currentShiftMeta.label, currentShiftMeta.timeRange, getShipRecipients, operationalShipName]);
+  }, [appendNotifications, currentShiftMeta, getShipRecipients, operationalShipName, shiftClock]);
 
   useEffect(() => {
-    const shiftDefinition = SHIFT_SEQUENCE.find(shift => shift.id === currentShiftMeta.id);
-    if (!shiftDefinition || !operationalShipName) return;
-    const parts = getJakartaDateParts(new Date(shiftClock));
-    const remainingMinutes = (shiftDefinition.endHour * 60) - ((parts.hour * 60) + parts.minute);
+    if (!operationalShipName) return;
+    const { endAt, checkpointPendingAt, shiftEndingSoonAt } = getShiftScheduleTimes(currentShiftMeta);
+    const now = new Date(shiftClock);
+    const remainingMinutes = Math.ceil((endAt.getTime() - now.getTime()) / MINUTE_IN_MS);
     const pendingCheckpoints = checkpoints.filter(checkpoint => checkpoint.status === 'pending').length;
     const targetUserIds = getShipRecipients(operationalShipName, { includePic: true, includePetugas: true });
 
@@ -1520,13 +1574,15 @@ export function AppProvider({ children }) {
       shipName: operationalShipName,
       shiftKey: currentShiftMeta.key,
       shiftLabel: currentShiftMeta.label,
-      now: new Date(shiftClock).toISOString(),
+      now: now.toISOString(),
       remainingMinutes,
       pendingCheckpoints,
       targetUserIds,
+      checkpointPendingAt: checkpointPendingAt.toISOString(),
+      shiftEndingSoonAt: shiftEndingSoonAt.toISOString(),
     });
 
-    if (remainingMinutes > 30 || remainingMinutes <= 0) {
+    if (now >= endAt) {
       logShiftNotificationDebug('skip-window', {
         shipName: operationalShipName,
         shiftKey: currentShiftMeta.key,
@@ -1535,11 +1591,13 @@ export function AppProvider({ children }) {
       return;
     }
 
-    appendNotifications([
-      {
+    const scheduledNotifications = [];
+
+    if (now >= shiftEndingSoonAt) {
+      scheduledNotifications.push({
         type: 'shift_ending_soon',
         title: 'Shift akan berakhir',
-        message: `${currentShiftMeta.label} akan selesai dalam ${remainingMinutes} menit.`,
+        message: 'Shift akan berakhir 15 menit lagi silahkan cek kembali laporan patroli anda',
         senderName: 'Sistem',
         senderRole: 'SYSTEM',
         targetUserIds,
@@ -1547,8 +1605,12 @@ export function AppProvider({ children }) {
         shipName: operationalShipName,
         shiftKey: currentShiftMeta.key,
         dedupeKey: `shift-ending-soon:${operationalShipName}:${currentShiftMeta.key}`,
-      },
-      ...(pendingCheckpoints > 0 ? [{
+        createdAt: shiftEndingSoonAt.toISOString(),
+      });
+    }
+
+    if (pendingCheckpoints > 0 && now >= checkpointPendingAt) {
+      scheduledNotifications.push({
         type: 'checkpoint_pending',
         title: 'Masih ada checkpoint pending',
         message: `${pendingCheckpoints} checkpoint belum dipatroli pada ${currentShiftMeta.label}.`,
@@ -1559,9 +1621,12 @@ export function AppProvider({ children }) {
         shipName: operationalShipName,
         shiftKey: currentShiftMeta.key,
         dedupeKey: `checkpoint-pending:${operationalShipName}:${currentShiftMeta.key}`,
-      }] : []),
-    ]);
-  }, [appendNotifications, checkpoints, currentShiftMeta.id, currentShiftMeta.key, currentShiftMeta.label, getShipRecipients, operationalShipName, shiftClock]);
+        createdAt: checkpointPendingAt.toISOString(),
+      });
+    }
+
+    appendNotifications(scheduledNotifications);
+  }, [appendNotifications, checkpoints, currentShiftMeta, getShipRecipients, operationalShipName, shiftClock]);
 
   useEffect(() => {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
@@ -1602,6 +1667,7 @@ export function AppProvider({ children }) {
           shipName: entry.ship,
           shiftKey: entry.key,
           dedupeKey: `shift-history-created:${entry.key}`,
+          createdAt: entry.createdAt,
         },
       ];
 
@@ -1619,6 +1685,7 @@ export function AppProvider({ children }) {
           shipName: entry.ship,
           shiftKey: entry.key,
           dedupeKey: `checkpoint-missed:${entry.key}`,
+          createdAt: entry.createdAt,
         });
       }
 
@@ -1677,7 +1744,7 @@ export function AppProvider({ children }) {
   const handleSubmitPatrol = useCallback((id) => {
     if (!currentUserRecord || !operationalShip) return;
     const now = new Date();
-    const timeString = now.toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'});
+    const timeString = formatAppTime(now);
     const currentCheckpoint = checkpoints.find(checkpoint => String(checkpoint.id) === String(id));
     if (!currentCheckpoint) return;
     const formState = activeForms[id];
@@ -1721,6 +1788,7 @@ export function AppProvider({ children }) {
         routeParams: { incidentId: submittedItem.incidentId },
         incidentId: submittedItem.incidentId,
         shipName: operationalShipName,
+        createdAt: submittedItem.completedAt,
       }]);
     }
   }, [activeForms, appendNotifications, checkpoints, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, updateOperationalShipCheckpoints]);
@@ -1746,7 +1814,7 @@ export function AppProvider({ children }) {
       setSelectedReportDetail(null);
       setSelectedIncident({
         id: createPatrolIncidentId(item),
-        date: item.date || selectedHistoryEntry?.date || new Date().toLocaleDateString('id-ID'),
+        date: item.date || selectedHistoryEntry?.date || formatAppDate(),
         time: item.time,
         location: item.name,
         shipName: item.shipName || selectedHistoryEntry?.ship || operationalShipName,
@@ -1764,7 +1832,7 @@ export function AppProvider({ children }) {
     setSelectedReportDetail({
       ...item,
       shipName: item.shipName || selectedHistoryEntry?.ship || operationalShipName,
-      date: item.date || selectedHistoryEntry?.date || new Date().toLocaleDateString('id-ID'),
+      date: item.date || selectedHistoryEntry?.date || formatAppDate(),
       readOnly: isReadOnly,
     });
   }, [selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
@@ -1822,8 +1890,9 @@ export function AppProvider({ children }) {
     if (!currentUserRecord) return;
     const loc = incidentForm.locType === 'custom' ? sanitizeText(incidentForm.customLocation, 80) : sanitizeText(incidentForm.location, 80);
     if (!loc || !sanitizeMultilineText(incidentForm.deskripsi, 320)) return;
-    const createdAt = new Date().toISOString();
-    const newIncident = { ...incidentForm, id: Date.now(), createdAt, time: new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}), date: new Date().toLocaleDateString('id-ID'), reportedBy: currentUser, shipName: operationalShipName, location: loc, customLocation: incidentForm.locType === 'custom' ? loc : '', photoUrl: incidentForm.photoUrl, penyebab: sanitizeMultilineText(incidentForm.penyebab, 240), deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320), tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240) };
+    const now = new Date();
+    const createdAt = now.toISOString();
+    const newIncident = { ...incidentForm, id: Date.now(), createdAt, time: formatAppTime(now), date: formatAppDate(now), reportedBy: currentUser, shipName: operationalShipName, location: loc, customLocation: incidentForm.locType === 'custom' ? loc : '', photoUrl: incidentForm.photoUrl, penyebab: sanitizeMultilineText(incidentForm.penyebab, 240), deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320), tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240) };
     setIncidentsData(prev => [newIncident, ...prev]);
     appendNotifications([{
       type: 'incident_created',
@@ -1836,6 +1905,7 @@ export function AppProvider({ children }) {
       routeParams: { incidentId: newIncident.id },
       incidentId: newIncident.id,
       shipName: operationalShipName,
+      createdAt,
     }]);
     closeIncidentModal();
   }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShipName]);
@@ -2178,8 +2248,10 @@ export function AppProvider({ children }) {
   const handleAddProgress = useCallback((incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
-    const time = new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'});
-    const date = new Date().toLocaleDateString('id-ID');
+    const now = new Date();
+    const createdAt = now.toISOString();
+    const time = formatAppTime(now);
+    const date = formatAppDate(now);
     setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: newProgress.photoUrl, time, date, author: currentUser }] } }));
     appendNotifications([{
       type: 'incident_progress_updated',
@@ -2192,6 +2264,7 @@ export function AppProvider({ children }) {
       routeParams: { incidentId },
       incidentId,
       shipName: incident?.shipName || operationalShipName,
+      createdAt,
     }]);
     setNewProgress({ comment: '', photoUrl: null });
   }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, selectedIncident, usersData]);
@@ -2204,6 +2277,7 @@ export function AppProvider({ children }) {
       confirmText: 'YA, TUTUP',
       cancelText: 'BELUM',
       onConfirm: () => {
+        const createdAt = new Date().toISOString();
         setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...(prev[incidentId] || {}), status: 'closed' } }));
         appendNotifications([{
           type: 'incident_closed',
@@ -2216,6 +2290,7 @@ export function AppProvider({ children }) {
           routeParams: { incidentId },
           incidentId,
           shipName: incident?.shipName || operationalShipName,
+          createdAt,
         }]);
       } 
     }); 

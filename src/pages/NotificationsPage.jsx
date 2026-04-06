@@ -2,10 +2,13 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import { ArrowLeft, Bell, CheckCheck } from 'lucide-react';
 
+const APP_TIME_ZONE = 'Asia/Jakarta';
+
 function getNotificationToneClass(type) {
   if (type?.startsWith('incident')) return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200';
   if (type === 'checkpoint_missed') return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
-  if (type?.startsWith('shift') || type === 'checkpoint_pending') return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200';
+  if (type === 'checkpoint_pending') return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200';
+  if (type?.startsWith('shift')) return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200';
   if (type === 'assignment_changed') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
   return 'border-slate-700 bg-slate-900/70 text-slate-300';
 }
@@ -81,7 +84,7 @@ const NotificationsPage = React.memo(function NotificationsPage() {
               </div>
               <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-cyan-600">
                 <span>{notification.senderName}</span>
-                <span>{new Date(notification.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                <span>{new Date(notification.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: APP_TIME_ZONE })}</span>
               </div>
             </button>
           );
