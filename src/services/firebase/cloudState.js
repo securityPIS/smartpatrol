@@ -5,12 +5,13 @@ import { firebaseDb, firebaseStorage } from './app';
 const CLOUD_STATE_COLLECTION = 'smartpatrol';
 const CLOUD_STATE_DOCUMENT = 'shared-state';
 const CLOUD_STATE_SCHEMA_VERSION = 1;
+const isCloudSyncAllowedByEnv = import.meta.env.VITE_ENABLE_CLOUD_SYNC !== '0';
 
 const cloudStateRef = firebaseDb
   ? doc(firebaseDb, CLOUD_STATE_COLLECTION, CLOUD_STATE_DOCUMENT)
   : null;
 
-const isCloudSyncEnabled = Boolean(firebaseDb);
+const isCloudSyncEnabled = Boolean(firebaseDb) && isCloudSyncAllowedByEnv;
 
 export function subscribeToCloudAppState(callback, onError) {
   if (!cloudStateRef) return () => {};
