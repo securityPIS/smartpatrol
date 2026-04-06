@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft } from 'lucide-react';
+import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX } from 'lucide-react';
 import HistoryDetailView from '../components/views/HistoryDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
@@ -14,6 +14,24 @@ const HistoryPage = React.memo(function HistoryPage() {
     selectedIncident, setSelectedIncident, setPreviewPhoto
   } = useApp();
   const [summaryDetailType, setSummaryDetailType] = React.useState(null);
+  const [showFilters, setShowFilters] = React.useState(false);
+  const [shipFilter, setShipFilter] = React.useState('');
+  const [startDateFilter, setStartDateFilter] = React.useState('');
+  const [endDateFilter, setEndDateFilter] = React.useState('');
+
+  const shipOptions = React.useMemo(() => (
+    Array.from(new Set(historyEntries.map(entry => entry.ship).filter(Boolean))).sort((left, right) => left.localeCompare(right))
+  ), [historyEntries]);
+
+  const filteredHistoryEntries = React.useMemo(() => historyEntries.filter((entry) => {
+    const entryDateKey = String(entry.dateKey || '');
+    if (shipFilter && entry.ship !== shipFilter) return false;
+    if (startDateFilter && entryDateKey && entryDateKey < startDateFilter) return false;
+    if (endDateFilter && entryDateKey && entryDateKey > endDateFilter) return false;
+    return true;
+  }), [endDateFilter, historyEntries, shipFilter, startDateFilter]);
+
+  const hasActiveFilter = Boolean(shipFilter || startDateFilter || endDateFilter);
 
   const handleEntryClick = (id) => {
     // If we are on mobile (screen < 1024px), we navigate to the home page as before
@@ -30,6 +48,12 @@ const HistoryPage = React.memo(function HistoryPage() {
     setSelectedReportDetail(null);
     setSelectedIncident(null);
   }, [selectedHistoryEntry?.id, setSelectedIncident, setSelectedReportDetail]);
+
+  React.useEffect(() => {
+    if (!selectedHistoryEntry?.id) return;
+    if (filteredHistoryEntries.some(entry => entry.id === selectedHistoryEntry.id)) return;
+    setSelectedHistoryId(null);
+  }, [filteredHistoryEntries, selectedHistoryEntry?.id, setSelectedHistoryId]);
 
   const summaryDetailItems = React.useMemo(() => {
     if (!selectedHistoryEntry || !summaryDetailType) return [];
@@ -206,14 +230,71 @@ const HistoryPage = React.memo(function HistoryPage() {
     <div className="flex h-full overflow-hidden animate-in fade-in">
       {/* Left Pane: List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 lg:border-r lg:border-cyan-900/50">
-        <h2 className="text-xl font-bold text-cyan-50 mb-2">Riwayat Sistem</h2>
-        {historyEntries.length === 0 && (
-          <div className="p-8 text-center border border-dashed border-cyan-900/50 rounded-xl">
-            <FileText className="w-10 h-10 text-cyan-900 mx-auto mb-2" />
-            <p className="text-cyan-600 text-sm font-bold uppercase tracking-widest">Belum Ada Riwayat Shift</p>
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <h2 className="text-xl font-bold text-cyan-50">Riwayat Sistem</h2>
+          <button
+            type="button"
+            onClick={() => setShowFilters(previousValue => !previousValue)}
+            className={`px-3 py-2 rounded-xl border text-xs font-bold uppercase tracking-widest transition-colors flex items-center gap-2 ${
+              showFilters || hasActiveFilter
+                ? 'border-cyan-400/50 bg-cyan-500/10 text-cyan-200'
+                : 'border-cyan-800/60 text-cyan-400 hover:bg-cyan-900/30'
+            }`}
+          >
+            <Filter className="w-4 h-4" />
+            Filter
+          </button>
+        </div>
+        {showFilters && (
+          <div className="bg-[#0b1229] border border-cyan-800/50 rounded-xl p-4 space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_1fr_auto] gap-3">
+              <div>
+                <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Nama Kapal</label>
+                <div className="relative">
+                  <select value={shipFilter} onChange={(event) => setShipFilter(event.target.value)} className="w-full appearance-none bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 pl-10 text-sm text-cyan-50 focus:border-cyan-400 outline-none">
+                    <option value="">Semua Kapal</option>
+                    {shipOptions.map((shipName) => (
+                      <option key={shipName} value={shipName}>{shipName}</option>
+                    ))}
+                  </select>
+                  <Ship className="w-4 h-4 text-cyan-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Dari Tanggal</label>
+                <input type="date" value={startDateFilter} onChange={(event) => setStartDateFilter(event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Sampai Tanggal</label>
+                <input type="date" value={endDateFilter} onChange={(event) => setEndDateFilter(event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShipFilter('');
+                    setStartDateFilter('');
+                    setEndDateFilter('');
+                  }}
+                  className="w-full lg:w-auto px-4 py-3 rounded-xl border border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/30 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
+                >
+                  <FilterX className="w-4 h-4" />
+                  Reset
+                </button>
+              </div>
+            </div>
           </div>
         )}
-        {historyEntries.map((data) => (
+        {filteredHistoryEntries.length === 0 && (
+          <div className="p-8 text-center border border-dashed border-cyan-900/50 rounded-xl">
+            <FileText className="w-10 h-10 text-cyan-900 mx-auto mb-2" />
+            <p className="text-cyan-600 text-sm font-bold uppercase tracking-widest">{hasActiveFilter ? 'Riwayat Tidak Ditemukan' : 'Belum Ada Riwayat Shift'}</p>
+            {hasActiveFilter && (
+              <p className="text-xs text-cyan-700 mt-2">Ubah filter nama kapal atau rentang tanggal untuk melihat data lain.</p>
+            )}
+          </div>
+        )}
+        {filteredHistoryEntries.map((data) => (
           <div 
             key={data.id} 
             onClick={() => handleEntryClick(data.id)} 

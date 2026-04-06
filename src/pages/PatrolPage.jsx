@@ -2,7 +2,7 @@ import React from 'react';
 import { useApp, ACCESS_ROLES } from '../context/AppContext';
 import {
   CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft, Plus,
-  CalendarDays, User, Thermometer, Wind, FileText, CircleOff,
+  CalendarDays, User, Thermometer, Wind, FileText, CircleOff, TimerReset,
 } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 import HistoryDetailView from '../components/views/HistoryDetailView';
@@ -63,6 +63,19 @@ function getSummaryCardMeta(type) {
   };
 }
 
+function formatShiftCountdown(remainingMs) {
+  if (remainingMs <= 0) return '00:00:00';
+
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return [hours, minutes, seconds]
+    .map(value => String(value).padStart(2, '0'))
+    .join(':');
+}
+
 import PatrolFormView from '../components/views/PatrolFormView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
@@ -75,9 +88,10 @@ const PatrolPage = React.memo(function PatrolPage() {
     completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
     operationalShip, operationalShipName, checkpoints, activeShiftGuardSnapshot,
     weatherInfo, weatherLoading, getWeatherDetail, setPreviewPhoto,
-    currentShiftMeta, selectedHistoryEntry, closeHistoryEntry, canPatrolCurrentShip, canAddTemporaryPatrolNode,
+    currentShiftMeta, currentShiftSchedule, selectedHistoryEntry, closeHistoryEntry, canPatrolCurrentShip, canAddTemporaryPatrolNode,
     activeForms, selectedIncident, selectedReportDetail
   } = useApp();
+  const [countdownNow, setCountdownNow] = React.useState(() => Date.now());
 
   const isHistoryMode = Boolean(selectedHistoryEntry);
   const activeCheckpoints = isHistoryMode ? (selectedHistoryEntry?.checkpoints || []) : checkpoints;
@@ -139,6 +153,21 @@ const PatrolPage = React.memo(function PatrolPage() {
     patrolSummary,
     displayCrew,
   ]);
+
+  React.useEffect(() => {
+    if (isHistoryMode) return undefined;
+    const intervalId = window.setInterval(() => setCountdownNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [isHistoryMode]);
+
+  const shiftCountdown = React.useMemo(() => {
+    if (isHistoryMode || !currentShiftSchedule?.endAt) return null;
+
+    const endTimestamp = new Date(currentShiftSchedule.endAt).getTime();
+    if (Number.isNaN(endTimestamp)) return null;
+
+    return formatShiftCountdown(Math.max(0, endTimestamp - countdownNow));
+  }, [countdownNow, currentShiftSchedule, isHistoryMode]);
 
   React.useEffect(() => {
     setSummaryDetailType(null);
@@ -339,13 +368,26 @@ const PatrolPage = React.memo(function PatrolPage() {
                 )}
 
                 <div className="fixed lg:absolute bottom-[65px] lg:bottom-0 left-0 right-0 z-30 w-full sm:max-w-md lg:max-w-none sm:mx-auto lg:mx-0 bg-[#070b19]/95 backdrop-blur-md px-4 py-4 border-t border-cyan-900/50 shadow-[0_-5px_15px_rgba(0,0,0,0.3)]">
-                  <div className="flex justify-between text-xs mb-2">
-                    <span className="text-cyan-500 font-bold uppercase tracking-widest">Progress Patroli</span>
-                    <span className="text-cyan-300 font-black">{completedCount}/{totalCount} <span className="font-normal text-[9px]">SELESAI</span></span>
+                  <div className="flex items-stretch gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between text-xs mb-2">
+                        <span className="text-cyan-500 font-bold uppercase tracking-widest">Progress Patroli</span>
+                        <span className="text-cyan-300 font-black">{completedCount}/{totalCount} <span className="font-normal text-[9px]">SELESAI</span></span>
+                      </div>
+                      <div className="w-full bg-[#0b1229] rounded-full h-2.5 border border-cyan-900/50 overflow-hidden">
+                        <div className="bg-gradient-to-r from-cyan-600 via-emerald-500 to-emerald-400 h-full rounded-full transition-all duration-700 ease-out shadow-[0_0_12px_rgba(52,211,153,0.5)]" style={{ width: `${progressPercentage}%` }}></div>
+                      </div>
+                    </div>
+                    <div className="shrink-0 min-w-[108px] rounded-xl border border-cyan-500/20 bg-[#0b1229] px-3 py-2 flex flex-col justify-center shadow-[0_0_18px_rgba(8,145,178,0.12)]">
+                      <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.22em] text-cyan-500">
+                        <TimerReset className="w-3.5 h-3.5 text-cyan-400" />
+                        Sisa Shift
+                      </div>
+                      <div className="mt-1 text-right text-base font-black tabular-nums text-cyan-100">
+                        {shiftCountdown || '00:00:00'}
+                      </div>
+                    </div>
                   </div>
-                  <div className="w-full bg-[#0b1229] rounded-full h-2.5 border border-cyan-900/50 overflow-hidden">
-                    <div className="bg-gradient-to-r from-cyan-600 via-emerald-500 to-emerald-400 h-full rounded-full transition-all duration-700 ease-out shadow-[0_0_12px_rgba(52,211,153,0.5)]" style={{ width: `${progressPercentage}%` }}></div>
-                   </div>
                  </div>
                </div>
              )}

@@ -3,8 +3,34 @@ import { useApp } from '../../context/AppContext';
 import { X, Camera, Send, Lock } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
+function formatPatrolFormTimestamp(value = new Date()) {
+  const safeDate = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(safeDate.getTime())) return { date: '-', time: '-' };
+
+  return {
+    date: safeDate.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'Asia/Jakarta',
+    }),
+    time: safeDate.toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Jakarta',
+    }),
+  };
+}
+
 export default function PatrolFormView({ isInline = false }) {
   const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol, shouldForcePatrolCameraCapture } = useApp();
+  const [formClock, setFormClock] = React.useState(() => Date.now());
+
+  React.useEffect(() => {
+    if (activePatrolState?.type !== 'temuan') return undefined;
+    const timerId = window.setInterval(() => setFormClock(Date.now()), 1000);
+    return () => window.clearInterval(timerId);
+  }, [activePatrolState?.type]);
 
   if (!activePatrolItem || !activePatrolState) {
     if (isInline) return (
@@ -18,6 +44,8 @@ export default function PatrolFormView({ isInline = false }) {
     );
     return null;
   }
+
+  const formTimestamp = formatPatrolFormTimestamp(formClock);
 
   return (
     <div className={`flex flex-col h-full bg-[#0b1229] ${isInline ? 'border-l border-cyan-900/50' : 'max-w-md w-full border rounded-2xl shadow-2xl overflow-hidden' } transition-all ${activePatrolState.type === 'temuan' ? 'border-yellow-500/50 shadow-[0_0_50px_rgba(250,204,21,0.1)]' : 'border-emerald-500/50 shadow-[0_0_50px_rgba(16,185,129,0.1)]'}`}>
@@ -39,6 +67,10 @@ export default function PatrolFormView({ isInline = false }) {
       <div className="p-5 overflow-y-auto flex-1 space-y-4">
         {activePatrolState.type === 'temuan' ? (
           <>
+            <div className="bg-[#070b19] border border-yellow-500/20 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-[10px] uppercase tracking-widest text-yellow-500 font-bold">Waktu Temuan</p>
+              <p className="text-sm font-black text-yellow-200 tabular-nums text-right">{formTimestamp.date} · {formTimestamp.time}</p>
+            </div>
             {!activePatrolState.photoUrl ? (
               <button onClick={() => handlePhotoUpload(activePatrolId, false, { cameraOnly: shouldForcePatrolCameraCapture })} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40">
                 <Camera className="w-8 h-8" />

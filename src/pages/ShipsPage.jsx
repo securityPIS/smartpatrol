@@ -7,6 +7,18 @@ import {
 import AsyncImage from '../components/AsyncImage';
 import { detectDocumentType, getDocumentTypeLabel } from '../utils/documentFiles';
 
+function formatDocumentDate(value) {
+  if (!value) return '-';
+  const safeDate = new Date(value);
+  if (Number.isNaN(safeDate.getTime())) return value;
+  return safeDate.toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  });
+}
+
 function DocumentTypeIcon({ document }) {
   const type = detectDocumentType(document?.fileName, document?.mimeType);
   const badge = getDocumentTypeLabel(type);
@@ -135,6 +147,10 @@ const ShipsPage = React.memo(function ShipsPage() {
                       <p className="text-sm text-cyan-50 font-medium flex items-center gap-2"><Navigation className="w-4 h-4 text-cyan-400"/> {activeShip.route || 'Belum diatur'}</p>
                     </div>
                     <div>
+                      <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">IMO Number</p>
+                      <p className="text-sm text-fuchsia-300 font-bold flex items-center gap-2"><Ship className="w-4 h-4 text-fuchsia-400"/> {activeShip.imoNumber || '-'}</p>
+                    </div>
+                    <div>
                       <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">Kapasitas & Muatan</p>
                       <div className="flex gap-4">
                          <p className="text-sm text-emerald-400 font-bold flex items-center gap-2"><Package className="w-4 h-4"/> {activeShip.cargoType || '-'}</p>
@@ -161,6 +177,10 @@ const ShipsPage = React.memo(function ShipsPage() {
                     <div>
                       <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">{editShipInfoData.status === 'UPP' ? 'Lokasi Sandar' : 'Rute Pelayaran'}</label>
                       <input type="text" value={editShipInfoData.route} onChange={e => setEditShipInfoData({...editShipInfoData, route: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">IMO Number</label>
+                      <input type="text" value={editShipInfoData.imoNumber || ''} onChange={e => setEditShipInfoData({...editShipInfoData, imoNumber: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -292,6 +312,7 @@ const ShipsPage = React.memo(function ShipsPage() {
                           <DocumentTypeIcon document={doc} />
                           <div>
                              <p className="font-bold text-cyan-100">{doc.title}</p>
+                             <p className="text-[11px] text-cyan-400 mt-1">{formatDocumentDate(doc.docDate)}</p>
                              <p className="text-xs text-cyan-500 mt-1">{doc.desc}</p>
                              <p className="text-[11px] text-emerald-300 mt-2">{doc.fileName || 'Tanpa file digital'}</p>
                           </div>

@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, Trash2 } from 'lucide-react';
+import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, Trash2, Images } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function IncidentDetailView({ isInline = false }) {
   const { 
     selectedIncident, setSelectedIncident, incidentMeta, canManageIncident, 
     canCloseIncident, handleAddProgress, handleCloseIncident, handleDeleteIncident, isAdmin, newProgress, 
-    setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto, setPreviewPhoto 
+    setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto, handleAddIncidentDocumentation, setPreviewPhoto 
   } = useApp();
   
   const [activeTab, setActiveTab] = useState('update');
@@ -27,6 +27,9 @@ export default function IncidentDetailView({ isInline = false }) {
   }
 
   const isReadOnly = Boolean(selectedIncident.readOnly);
+  const incidentStatus = incidentMeta[selectedIncident.id]?.status || 'open';
+  const documentationItems = incidentMeta[selectedIncident.id]?.documentation || [];
+  const canUploadDocumentation = !isReadOnly && incidentStatus !== 'closed' && canManageIncident(selectedIncident);
 
   return (
     <div className={`flex flex-col h-full bg-[#070b19] ${isInline ? 'border-l border-cyan-900/50' : 'fixed inset-0 z-[100] sm:max-w-md sm:mx-auto sm:border-x sm:border-cyan-900/50'}`}>
@@ -64,6 +67,7 @@ export default function IncidentDetailView({ isInline = false }) {
 
        <div className="flex bg-[#0b1229] border-b border-cyan-900/50 shrink-0">
          <button onClick={() => setActiveTab('update')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2 ${activeTab === 'update' ? 'text-emerald-400 border-emerald-500 bg-emerald-500/5' : 'text-cyan-600 border-transparent hover:text-cyan-400'}`}>Update</button>
+         <button onClick={() => setActiveTab('documentation')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2 ${activeTab === 'documentation' ? 'text-fuchsia-400 border-fuchsia-500 bg-fuchsia-500/5' : 'text-cyan-600 border-transparent hover:text-cyan-400'}`}>Dokumentasi</button>
          <button onClick={() => setActiveTab('info')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2 ${activeTab === 'info' ? 'text-yellow-400 border-yellow-500 bg-yellow-500/5' : 'text-cyan-600 border-transparent hover:text-cyan-400'}`}>Info (5W1H)</button>
        </div>
 
@@ -96,11 +100,49 @@ export default function IncidentDetailView({ isInline = false }) {
                <p className="text-sm text-emerald-50/90 leading-relaxed">{selectedIncident.tindakLanjut || '-'}</p>
              </div>
            </div>
+         ) : activeTab === 'documentation' ? (
+           <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+             <div className="flex justify-between items-center bg-[#0b1229] p-3 rounded-xl border border-cyan-900/50 shadow-sm">
+               <div>
+                 <span className="text-xs font-bold text-cyan-400 uppercase tracking-widest">Galeri Dokumentasi</span>
+                 <p className="text-[11px] text-cyan-600 mt-1">{documentationItems.length} foto dokumentasi tersimpan</p>
+               </div>
+               {canUploadDocumentation && (
+                 <button onClick={() => handleAddIncidentDocumentation(selectedIncident.id)} className="px-3 py-2 bg-fuchsia-500/10 border border-fuchsia-500/30 text-fuchsia-300 rounded-xl text-[11px] font-black uppercase tracking-widest hover:bg-fuchsia-500 hover:text-white transition-all flex items-center gap-2">
+                   <Camera className="w-4 h-4" />
+                   Upload
+                 </button>
+               )}
+             </div>
+
+             {documentationItems.length === 0 ? (
+               <div className="border border-dashed border-cyan-900/50 rounded-2xl p-8 text-center bg-[#0b1229]/30">
+                 <Images className="w-10 h-10 text-cyan-800 mx-auto mb-3" />
+                 <p className="text-sm font-bold text-cyan-500 uppercase tracking-widest">Belum Ada Dokumentasi</p>
+                 <p className="text-xs text-cyan-700 mt-2">Upload foto dokumentasi temuan untuk melengkapi bukti lapangan.</p>
+               </div>
+             ) : (
+               <div className="grid grid-cols-3 gap-3">
+                 {documentationItems.map((item) => (
+                   <button
+                     key={item.id || item.createdAt}
+                     type="button"
+                     onClick={() => setPreviewPhoto({ url: item.photoUrl, author: item.author, time: `${item.date || '-'} ${item.time || '-'}` })}
+                     className="group overflow-hidden rounded-2xl border border-cyan-800/50 bg-[#0b1229] text-left hover:border-fuchsia-500/40 transition-all"
+                   >
+                     <div className="aspect-square bg-[#070b19] overflow-hidden">
+                       <AsyncImage src={item.photoUrl} className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300" alt="Dokumentasi temuan" />
+                     </div>
+                   </button>
+                 ))}
+               </div>
+             )}
+           </div>
          ) : (
            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
              <div className="flex justify-between items-center bg-[#0b1229] p-3 rounded-xl border border-cyan-900/50 shadow-sm">
                <span className="text-xs font-bold text-cyan-400 uppercase tracking-widest">Status Terkini</span>
-               {incidentMeta[selectedIncident.id]?.status === 'closed' ? 
+               {incidentStatus === 'closed' ? 
                  <span className="text-[10px] px-3 py-1.5 border rounded font-black bg-slate-800 border-slate-600 text-slate-400 tracking-widest">CLOSED</span> : 
                  <span className="text-[10px] px-3 py-1.5 border rounded font-black bg-yellow-500/10 border-yellow-500 text-yellow-400 tracking-widest">OPEN</span>
                }
@@ -125,7 +167,7 @@ export default function IncidentDetailView({ isInline = false }) {
                </div>
              </div>
 
-             {!isReadOnly && (!incidentMeta[selectedIncident.id] || incidentMeta[selectedIncident.id].status !== 'closed') && (
+             {!isReadOnly && incidentStatus !== 'closed' && (
                canManageIncident(selectedIncident) ? (
                  <div className="pt-2">
                    <button onClick={() => setShowUpdateForm(true)} className="w-full py-4 bg-emerald-600/10 border border-emerald-500/30 text-emerald-400 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-600 hover:text-white transition-all shadow-lg active:scale-[0.98]">
@@ -147,7 +189,7 @@ export default function IncidentDetailView({ isInline = false }) {
          )}
        </div>
 
-      {!isReadOnly && (!incidentMeta[selectedIncident.id] || incidentMeta[selectedIncident.id].status !== 'closed') && canCloseIncident(selectedIncident) && (
+      {!isReadOnly && incidentStatus !== 'closed' && canCloseIncident(selectedIncident) && (
          <div className="p-4 bg-[#0b1229] border-t border-cyan-900/50 shrink-0 pb-safe">
             <button onClick={() => handleCloseIncident(selectedIncident.id)} className="w-full py-4 rounded-xl font-black uppercase tracking-widest text-xs border border-rose-500 text-rose-400 hover:bg-rose-500 hover:text-white transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(244,63,94,0.15)]"><CheckCircle2 className="w-5 h-5"/> Tutup Temuan (Selesai)</button>
          </div>

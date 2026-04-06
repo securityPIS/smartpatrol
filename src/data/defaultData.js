@@ -259,6 +259,7 @@ function createDefaultShips() {
       lat: "-6.1021",
       lng: "106.8833",
       status: "UPP",
+      imoNumber: "9387421",
       route: "Jakarta - Singapore",
       cargoType: "Crude Oil",
       cargoAmount: "50,000 MT",
@@ -270,8 +271,8 @@ function createDefaultShips() {
         { id: "scp-2", name: "Ruang Mesin", desc: "Pastikan suhu generator normal." },
       ],
       documents: [
-        { id: "doc-1", title: "Sertifikat Keselamatan", desc: "Berlaku hingga 2027" },
-        { id: "doc-2", title: "Izin Berlayar", desc: "Dikeluarkan Syahbandar" },
+        { id: "doc-1", title: "Sertifikat Keselamatan", docDate: "2026-01-12", desc: "Berlaku hingga 2027" },
+        { id: "doc-2", title: "Izin Berlayar", docDate: "2026-02-03", desc: "Dikeluarkan Syahbandar" },
       ],
     },
     {
@@ -281,6 +282,7 @@ function createDefaultShips() {
       lat: "-5.9123",
       lng: "105.8122",
       status: "NON UPP",
+      imoNumber: "9471208",
       route: "Merak - Bakauheni",
       cargoType: "Methanol",
       cargoAmount: "12,000 MT",

@@ -67,6 +67,10 @@ export default function ShipDocumentFormView({ isInline = false }) {
             <label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Keterangan</label>
             <input type="text" value={newShipDoc.desc} onChange={e => setNewShipDoc({ ...newShipDoc, desc: e.target.value })} placeholder="Contoh: Berlaku hingga 2027" className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
           </div>
+          <div>
+            <label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Tanggal Dokumen</label>
+            <input type="date" value={newShipDoc.docDate} onChange={e => setNewShipDoc({ ...newShipDoc, docDate: e.target.value })} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
+          </div>
           <div className="space-y-3">
             <label className="text-[10px] font-mono text-cyan-400 block uppercase tracking-widest pl-1">File Dokumen</label>
             <button onClick={handleShipDocUpload} className="w-full rounded-2xl border border-dashed border-emerald-700/70 bg-emerald-950/10 px-4 py-5 text-left hover:border-emerald-400 hover:bg-emerald-900/20 transition-colors">

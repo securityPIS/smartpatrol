@@ -170,6 +170,13 @@ function initializeShipCheckpointDefinitions(checkpoints = []) {
 function normalizeShipsCollection(ships = []) {
   return (Array.isArray(ships) ? ships : []).map((ship) => ({
     ...ship,
+    imoNumber: sanitizeText(ship?.imoNumber || '', 20),
+    documents: Array.isArray(ship?.documents)
+      ? ship.documents.map(document => ({
+        ...document,
+        docDate: sanitizeText(document?.docDate || '', 20),
+      }))
+      : [],
     defaultCheckpointsInitialized: true,
     customCheckpoints: ship?.defaultCheckpointsInitialized
       ? normalizeShipCheckpointDefinitions(ship?.customCheckpoints)
@@ -179,8 +186,8 @@ function normalizeShipsCollection(ships = []) {
 
 const defaultAuthForm = { name: '', email: '', password: '', confirmPassword: '', phone: '', type: 'BUJP' };
 const defaultUserForm = { name: '', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', dob: '', email: '', password: '', phone: '', address: '', emergencyName: '', emergencyContact: '', emergencyRelation: 'Orang Tua', officeAddress: '', photoUrl: null };
-const defaultShipForm = { name: '', type: 'Oil Tanker', route: '', cargoType: '', cargoAmount: '', status: 'UPP', customCheckpoints: createDefaultShipCheckpoints(), photoUrl: null };
-const defaultShipDocumentForm = { title: '', desc: '', fileUrl: null, fileName: '', mimeType: '' };
+const defaultShipForm = { name: '', type: 'Oil Tanker', imoNumber: '', route: '', cargoType: '', cargoAmount: '', status: 'UPP', customCheckpoints: createDefaultShipCheckpoints(), photoUrl: null };
+const defaultShipDocumentForm = { title: '', docDate: '', desc: '', fileUrl: null, fileName: '', mimeType: '' };
 const defaultIncidentForm = { locType: 'default', location: defaultLocationOptions[0], customLocation: '', penyebab: '', deskripsi: '', tindakLanjut: '', photoUrl: null };
 
 const createAuthFormState = (overrides = {}) => ({ ...defaultAuthForm, ...overrides });
@@ -214,8 +221,8 @@ const seedUsersByEmail = {};
 mockUsersList.forEach(u => { seedUsersById[u.id] = u; if (u.email) seedUsersByEmail[u.email.toLowerCase()] = u; });
 
 const initialShipsData = [
-  { id: 's1', name: 'MT MENGGALA', type: 'Oil Tanker', lat: '-6.1021', lng: '106.8833', status: 'UPP', route: 'Jakarta - Singapore', cargoType: 'Crude Oil', cargoAmount: '50,000 MT', photoUrl: createPosterDataUrl('MT MENGGALA', 'Operasi patroli aktif', 0, false), personnel: ['u1', 'u2', 'u3'], personnelNextMonth: ['u1', 'u4', 'u5'], customCheckpoints: [{name: 'Cuaca', desc: 'Cek visibilitas dan gelombang.'}, {name: 'Ruang Mesin', desc: 'Pastikan suhu generator normal.'}], documents: [{title: 'Sertifikat Keselamatan', desc: 'Berlaku hingga 2027'}, {title: 'Izin Berlayar', desc: 'Dikeluarkan Syahbandar'}] },
-  { id: 's2', name: 'MT SRIWIJAYA', type: 'Chemical Tanker', lat: '-5.9123', lng: '105.8122', status: 'NON UPP', route: 'Merak - Bakauheni', cargoType: 'Methanol', cargoAmount: '12,000 MT', photoUrl: createPosterDataUrl('MT SRIWIJAYA', 'Armada Cadangan', 1, false), personnel: [], personnelNextMonth: [], customCheckpoints: [{name: 'Pompa Kimia', desc: 'Pastikan tidak ada kebocoran'}], documents: [] },
+  { id: 's1', name: 'MT MENGGALA', type: 'Oil Tanker', imoNumber: '9387421', lat: '-6.1021', lng: '106.8833', status: 'UPP', route: 'Jakarta - Singapore', cargoType: 'Crude Oil', cargoAmount: '50,000 MT', photoUrl: createPosterDataUrl('MT MENGGALA', 'Operasi patroli aktif', 0, false), personnel: ['u1', 'u2', 'u3'], personnelNextMonth: ['u1', 'u4', 'u5'], customCheckpoints: [{name: 'Cuaca', desc: 'Cek visibilitas dan gelombang.'}, {name: 'Ruang Mesin', desc: 'Pastikan suhu generator normal.'}], documents: [{title: 'Sertifikat Keselamatan', docDate: '2026-01-12', desc: 'Berlaku hingga 2027'}, {title: 'Izin Berlayar', docDate: '2026-02-03', desc: 'Dikeluarkan Syahbandar'}] },
+  { id: 's2', name: 'MT SRIWIJAYA', type: 'Chemical Tanker', imoNumber: '9471208', lat: '-5.9123', lng: '105.8122', status: 'NON UPP', route: 'Merak - Bakauheni', cargoType: 'Methanol', cargoAmount: '12,000 MT', photoUrl: createPosterDataUrl('MT SRIWIJAYA', 'Armada Cadangan', 1, false), personnel: [], personnelNextMonth: [], customCheckpoints: [{name: 'Pompa Kimia', desc: 'Pastikan tidak ada kebocoran'}], documents: [] },
 ];
 
 const APP_STORAGE_KEY = 'smartpatrol.legacy.local.v1';
@@ -880,6 +887,23 @@ function mergeProgressItems(baseProgress = [], nextProgress = []) {
   });
 }
 
+function mergeDocumentationItems(baseDocumentation = [], nextDocumentation = []) {
+  return mergeEntitiesById(baseDocumentation, nextDocumentation, {
+    getId: (item) => item?.id || item?.createdAt || item?.photoUrl,
+    merge: (baseItem, nextItem) => {
+      const baseTimestamp = new Date(baseItem?.createdAt || '').getTime();
+      const nextTimestamp = new Date(nextItem?.createdAt || '').getTime();
+      return nextTimestamp >= baseTimestamp
+        ? { ...baseItem, ...nextItem }
+        : { ...nextItem, ...baseItem };
+    },
+  }).sort((left, right) => {
+    const leftTimestamp = new Date(left?.createdAt || '').getTime();
+    const rightTimestamp = new Date(right?.createdAt || '').getTime();
+    return rightTimestamp - leftTimestamp;
+  });
+}
+
 function mergeIncidentMetaCollection(baseMeta = {}, nextMeta = {}) {
   const mergedMeta = { ...(baseMeta || {}) };
 
@@ -888,6 +912,7 @@ function mergeIncidentMetaCollection(baseMeta = {}, nextMeta = {}) {
     mergedMeta[incidentId] = {
       ...baseValue,
       ...nextValue,
+      documentation: mergeDocumentationItems(baseValue.documentation || [], nextValue?.documentation || []),
       progress: mergeProgressItems(baseValue.progress || [], nextValue?.progress || []),
     };
   });
@@ -1483,6 +1508,7 @@ export function AppProvider({ children }) {
   // Computed values
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const currentShiftMeta = useMemo(() => getShiftMeta(new Date(shiftClock)), [shiftClock]);
+  const currentShiftSchedule = useMemo(() => getShiftScheduleTimes(currentShiftMeta), [currentShiftMeta]);
   const sessionUserRecord = useMemo(() => usersData.find(user => user.id === sessionUserId) || null, [usersData, sessionUserId]);
   const firebaseAuthEmail = sanitizeEmail(firebaseAuthUser?.email || '');
   const currentUserRecord = useMemo(() => {
@@ -1648,6 +1674,13 @@ export function AppProvider({ children }) {
         incidentId,
         {
           ...meta,
+          documentation: await Promise.all((meta?.documentation || []).map(async (documentationItem, documentationIndex) => ({
+            ...documentationItem,
+            photoUrl: await prepareCloudPhotoUrl(
+              documentationItem.photoUrl,
+              ['incident-documentation', incidentId, documentationItem.id || documentationIndex, documentationItem.photoUrl],
+            ),
+          }))),
           progress: await Promise.all((meta?.progress || []).map(async (progressItem, progressIndex) => ({
             ...progressItem,
             photoUrl: await prepareCloudPhotoUrl(
@@ -2051,7 +2084,7 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     if (!operationalShipName) return;
-    const { startAt, endAt } = getShiftScheduleTimes(currentShiftMeta);
+    const { startAt, endAt } = currentShiftSchedule;
     const now = new Date(shiftClock);
     if (now < startAt || now >= endAt) return;
     appendNotifications([{
@@ -2067,11 +2100,11 @@ export function AppProvider({ children }) {
       dedupeKey: `shift-started:${operationalShipName}:${currentShiftMeta.key}`,
       createdAt: startAt.toISOString(),
     }]);
-  }, [appendNotifications, currentShiftMeta, getShipRecipients, operationalShipName, shiftClock]);
+  }, [appendNotifications, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
 
   useEffect(() => {
     if (!operationalShipName) return;
-    const { endAt, checkpointPendingAt, shiftEndingSoonAt } = getShiftScheduleTimes(currentShiftMeta);
+    const { endAt, checkpointPendingAt, shiftEndingSoonAt } = currentShiftSchedule;
     const now = new Date(shiftClock);
     const remainingMinutes = Math.ceil((endAt.getTime() - now.getTime()) / MINUTE_IN_MS);
     const pendingCheckpoints = checkpoints.filter(checkpoint => checkpoint.status === 'pending').length;
@@ -2133,7 +2166,7 @@ export function AppProvider({ children }) {
     }
 
     appendNotifications(scheduledNotifications);
-  }, [appendNotifications, checkpoints, currentShiftMeta, getShipRecipients, operationalShipName, shiftClock]);
+  }, [appendNotifications, checkpoints, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
 
   useEffect(() => {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
@@ -2526,6 +2559,7 @@ export function AppProvider({ children }) {
         ...activeShip.documents,
         {
           title: safeTitle,
+          docDate: sanitizeText(newShipDoc.docDate, 20),
           desc: sanitizeMultilineText(newShipDoc.desc, 140),
           fileUrl: newShipDoc.fileUrl,
           fileName: sanitizeText(newShipDoc.fileName, 120),
@@ -2818,6 +2852,38 @@ export function AppProvider({ children }) {
     }]);
     setNewProgress({ comment: '', photoUrl: null });
   }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, selectedIncident, usersData]);
+  const handleAddIncidentDocumentation = useCallback(async (incidentId) => {
+    const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
+    if (!canManageIncident(incident)) return;
+    const dataUrl = await pickLocalImage();
+    if (!dataUrl) return;
+    const photoUrl = await saveImageToDB(dataUrl);
+    if (!photoUrl) return;
+
+    const now = new Date();
+    const createdAt = now.toISOString();
+    const time = formatAppTime(now);
+    const date = formatAppDate(now);
+
+    setIncidentMeta((previousMeta) => ({
+      ...previousMeta,
+      [incidentId]: {
+        ...previousMeta[incidentId],
+        status: previousMeta[incidentId]?.status || 'open',
+        documentation: [
+          {
+            id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            photoUrl,
+            createdAt,
+            date,
+            time,
+            author: currentUser,
+          },
+          ...(previousMeta[incidentId]?.documentation || []),
+        ],
+      },
+    }));
+  }, [allIncidents, canManageIncident, currentUser, selectedIncident]);
   const handleCloseIncident = useCallback((incidentId) => { 
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident; 
     if (!canCloseIncident(incident)) return; 
@@ -2938,6 +3004,7 @@ export function AppProvider({ children }) {
       id: 's' + Date.now(),
       ...shipFormData,
       name: safeName,
+      imoNumber: sanitizeText(shipFormData.imoNumber, 20),
       route: sanitizeText(shipFormData.route, 100),
       cargoType: sanitizeText(shipFormData.cargoType, 80),
       cargoAmount: sanitizeText(shipFormData.cargoAmount, 40),
@@ -3376,7 +3443,7 @@ export function AppProvider({ children }) {
     // User role
     currentUserRecord, currentUser, currentUserRole, isAdmin, isPic, isPetugas,
     // Core data
-    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey, activeShiftGuardSnapshot,
+    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, currentShiftSchedule, activeShiftKey, activeShiftGuardSnapshot,
     // Patrol
     filteredCheckpoints, searchQuery, setSearchQuery, patrolTab, setPatrolTab, activeForms, setActiveForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
@@ -3385,7 +3452,7 @@ export function AppProvider({ children }) {
     showShipForm, setShowShipForm, shipFormData, setShipFormData, newCheckpoint, setNewCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     // Incidents
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, setIncidentForm, incidentLocationOptions, selectedIncident, setSelectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
-    handleAddProgress, handleCloseIncident, handleDeleteIncident, newProgress, setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
+    handleAddProgress, handleAddIncidentDocumentation, handleCloseIncident, handleDeleteIncident, newProgress, setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
     // Users
     showUserForm, setShowUserForm, userFormData, setUserFormData, userFormError, userFormNotice, clearUserManagementFeedback, selectedUser, setSelectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     // Reports
@@ -3400,13 +3467,13 @@ export function AppProvider({ children }) {
     currentPage, theme, isOffline, showSettingsDropdown, showNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog,
     sessionUserId, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout,
     currentUserRecord, currentUser, currentUserRole, isAdmin, isPic, isPetugas,
-    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, activeShiftKey, activeShiftGuardSnapshot,
+    checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, currentShiftSchedule, activeShiftKey, activeShiftGuardSnapshot,
     filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
     operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
     showShipForm, shipFormData, newCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, incidentLocationOptions, selectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
-    handleAddProgress, handleCloseIncident, handleDeleteIncident, newProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
+    handleAddProgress, handleAddIncidentDocumentation, handleCloseIncident, handleDeleteIncident, newProgress, handlePhotoProgress, handleUpdateIncidentPhoto,
     showUserForm, userFormData, userFormError, userFormNotice, clearUserManagementFeedback, selectedUser, handleSaveUser, handleUpdateUser, handleDeleteUser, handleUserPhotoUpload, handleEditUserPhotoUpload,
     selectedReportDetail, previewPhoto,
     weatherInfo, weatherLoading, getWeatherDetail,
