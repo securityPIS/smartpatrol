@@ -18,6 +18,7 @@ import {
 } from '../services/firebase/auth';
 import {
   isCloudSyncEnabled,
+  isCloudWriteEnabled,
   saveCloudAppState,
   subscribeToCloudAppState,
   uploadCloudDataUrlAsset,
@@ -35,6 +36,7 @@ const AUTH_SESSION_KEY = 'smartpatrol.auth.local.v1';
 const APP_TIME_ZONE = 'Asia/Jakarta';
 const APP_TIME_ZONE_UTC_OFFSET_HOURS = 7;
 const SHIFT_NOTIFICATION_DEBUG_KEY = 'smartpatrol.debug.shiftNotifications';
+const CLOUD_SYNC_DEBUG_KEY = 'smartpatrol.debug.cloudSync';
 const ADMIN_RESET_EMAIL = 'admin@smartpatrol.local';
 const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
 const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
@@ -605,6 +607,25 @@ function isShiftNotificationType(type) {
 function logShiftNotificationDebug(event, payload) {
   if (!isShiftNotificationDebugEnabled()) return;
   console.info(`[SmartPatrol][shift-notif] ${event}`, payload);
+}
+
+function isCloudSyncDebugEnabled() {
+  try {
+    return window.localStorage.getItem(CLOUD_SYNC_DEBUG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function logCloudSyncDebug(event, payload) {
+  if (!isCloudSyncDebugEnabled()) return;
+  let serializedPayload = '';
+  try {
+    serializedPayload = payload ? ` ${JSON.stringify(payload)}` : '';
+  } catch {
+    serializedPayload = ' [unserializable]';
+  }
+  console.info(`[SmartPatrol][cloud-sync] ${event}${serializedPayload}`);
 }
 
 function loadAuthSession() { try { const raw = window.localStorage.getItem(AUTH_SESSION_KEY); if (!raw) return null; const parsed = JSON.parse(raw); return typeof parsed?.userId === 'string' ? parsed.userId : null; } catch { return null; } }
@@ -1235,6 +1256,15 @@ export function AppProvider({ children }) {
 
     if (serializedState === lastSharedStateRef.current) return;
 
+    logCloudSyncDebug('apply-shared-state', {
+      activeShiftKey: normalizedState.activeShiftKey,
+      notifications: normalizedState.notifications.length,
+      historyEntries: normalizedState.historyEntries.length,
+      ships: normalizedState.shipsData.length,
+      users: normalizedState.usersData.length,
+      checkpointShips: Object.keys(normalizedState.checkpointsByShip || {}).length,
+    });
+
     lastSharedStateRef.current = serializedState;
     setActiveShiftKey(normalizedState.activeShiftKey);
     setCheckpointsByShip(normalizedState.checkpointsByShip);
@@ -1352,6 +1382,12 @@ export function AppProvider({ children }) {
       });
 
       if (!didChange) return previousNotifications;
+      logCloudSyncDebug('notifications-updated', {
+        previousCount: previousNotifications.length,
+        nextCount: workingNotifications.length,
+        dedupeKeys: nextNotifications.map(notification => notification?.dedupeKey).filter(Boolean),
+        types: nextNotifications.map(notification => notification?.type).filter(Boolean),
+      });
       return sortNotifications(workingNotifications);
     });
   }, []);
@@ -1631,6 +1667,26 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
     if (!persistedShiftMeta || persistedShiftMeta.key === currentShiftMeta.key) return;
+
+    const persistedShiftStartAt = getShiftScheduleTimes(persistedShiftMeta).startAt.getTime();
+    const currentShiftStartAt = getShiftScheduleTimes(currentShiftMeta).startAt.getTime();
+
+    if (persistedShiftStartAt >= currentShiftStartAt) {
+      logCloudSyncDebug('skip-future-shift-history', {
+        persistedShiftKey: persistedShiftMeta.key,
+        currentShiftKey: currentShiftMeta.key,
+      });
+      setActiveShiftKey(previousKey => (
+        previousKey === currentShiftMeta.key ? previousKey : currentShiftMeta.key
+      ));
+      return;
+    }
+
+    logCloudSyncDebug('reconcile-shift-history', {
+      persistedShiftKey: persistedShiftMeta.key,
+      currentShiftKey: currentShiftMeta.key,
+      shipCount: shipsData.length,
+    });
 
     const nextHistoryBatch = [];
     let workingShiftMeta = persistedShiftMeta;
@@ -2634,6 +2690,13 @@ export function AppProvider({ children }) {
     return subscribeToCloudAppState((cloudPayload) => {
       setCloudSyncBootstrapped(true);
 
+      logCloudSyncDebug('snapshot-received', {
+        hasState: Boolean(cloudPayload?.state),
+        activeShiftKey: cloudPayload?.state?.activeShiftKey || null,
+        notifications: Array.isArray(cloudPayload?.state?.notifications) ? cloudPayload.state.notifications.length : 0,
+        historyEntries: Array.isArray(cloudPayload?.state?.historyEntries) ? cloudPayload.state.historyEntries.length : 0,
+      });
+
       if (!cloudPayload?.state) return;
       applyCloudSharedState(cloudPayload.state);
     }, (error) => {
@@ -2642,7 +2705,7 @@ export function AppProvider({ children }) {
     });
   }, [applyCloudSharedState]);
   useEffect(() => {
-    if (!isCloudSyncEnabled || isOffline || !cloudSyncBootstrapped) return;
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || isOffline || !cloudSyncBootstrapped) return;
 
     const serializedState = serializeSharedStateSnapshot(sharedState);
     if (!serializedState || serializedState === lastSharedStateRef.current) return;
