@@ -5,5 +5,3 @@ npm-debug.log*
 *.local
 .firebase/
 firebase-debug.log*
-playwright-report/
-test-results/
