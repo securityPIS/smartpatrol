@@ -19,11 +19,11 @@ export default function LoginPage() {
               <Ship className="w-8 h-8 text-cyan-300 relative z-10 drop-shadow-[0_0_15px_rgba(34,211,238,0.4)]" />
             </div>
             <div>
-              <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-[0.35em]">SmartPatrol Hybrid</p>
+              <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-[0.35em]">SMARTPATROL BY ANTISLEK</p>
               <h1 className="text-3xl font-black text-white leading-none mt-1">Akses Sistem</h1>
+              <p className="text-sm text-cyan-500 leading-relaxed mt-2">Aplikasi Pintar Untuk membantu Petugas Patroli</p>
             </div>
           </div>
-          <p className="text-sm text-cyan-500 leading-relaxed">Masuk menggunakan akun patroli Anda. Registrasi baru akan terhubung ke Firebase Auth, sementara akun demo lama tetap didukung selama masa transisi.</p>
         </div>
 
         {authNotice && <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 font-medium">{authNotice}</div>}
@@ -79,7 +79,8 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-8 text-center">
-          <p className="text-[10px] text-cyan-700">SmartPatrol Hybrid v0.2 | Hosting + Firebase Auth Staging</p>
+          <p className="text-[10px] text-cyan-700">SmartPatrol By HSSE - Security III</p>
+          <p className="text-[10px] text-cyan-700">PT Pertamina Patra Niaga</p>
         </div>
       </div>
     </div>

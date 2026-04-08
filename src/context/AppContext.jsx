@@ -1477,6 +1477,8 @@ export function AppProvider({ children }) {
   const [activeShipId, setActiveShipId] = useState(null);
   const [shipDetailTab, setShipDetailTab] = useState('info');
   const [scheduleMonth, setScheduleMonth] = useState('current');
+  const [showAssignPopup, setShowAssignPopup] = useState(false);
+  const [assignPopupData, setAssignPopupData] = useState(null);
   const [isEditingShipInfo, setIsEditingShipInfo] = useState(false);
   const [editShipInfoData, setEditShipInfoData] = useState({});
   const [showShipForm, setShowShipForm] = useState(false);
@@ -2512,7 +2514,44 @@ export function AppProvider({ children }) {
     setShowShipDocForm(false);
     setNewShipDoc(createShipDocumentState());
   }, []);
-  const handleTogglePersonnel = useCallback((userId) => { if (!isAdmin || !activeShip) return; const targetArray = scheduleMonth === 'current' ? activeShip.personnel : activeShip.personnelNextMonth; const isAssigned = targetArray.includes(userId); if (isAssigned) { updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) }); if(scheduleMonth === 'current') setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: null, status: 'off-duty'} : u)); } else { updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: [...targetArray, userId] }); if(scheduleMonth === 'current') setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: activeShip.name, status: 'active'} : u)); } }, [isAdmin, activeShip, scheduleMonth, updateActiveShip]);
+  const handleTogglePersonnel = useCallback((userId) => { 
+    if (!isAdmin || !activeShip) return; 
+    const targetArray = scheduleMonth === 'current' ? activeShip.personnel : activeShip.personnelNextMonth; 
+    const isAssigned = targetArray.includes(userId); 
+    if (isAssigned) { 
+      updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) }); 
+      if(scheduleMonth === 'current') setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: null, status: 'off-duty'} : u)); 
+    } else { 
+      if (scheduleMonth === 'current') {
+        const user = usersData.find(u => u.id === userId);
+        setAssignPopupData({ userId, name: user?.name, role: user?.role });
+        setShowAssignPopup(true);
+      } else {
+        updateActiveShip({ personnelNextMonth: [...targetArray, userId] }); 
+      }
+    } 
+  }, [isAdmin, activeShip, scheduleMonth, updateActiveShip, usersData]);
+
+  const handleConfirmAssign = useCallback((userId, endDate, isTBC) => {
+    if (!isAdmin || !activeShip) return;
+    const targetArray = activeShip.personnel;
+    if (!targetArray.includes(userId)) {
+      updateActiveShip({ 
+        personnel: [...targetArray, userId],
+        personnelSchedules: {
+          ...(activeShip.personnelSchedules || {}),
+          [userId]: {
+            ...(activeShip.personnelSchedules?.[userId] || {}),
+            endDate: endDate,
+            isTBC: isTBC
+          }
+        }
+      });
+      setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: activeShip.name, status: 'active'} : u));
+    }
+    setShowAssignPopup(false);
+    setAssignPopupData(null);
+  }, [isAdmin, activeShip, updateActiveShip]);
   const handleAddShipCp = useCallback(() => {
     if (!isAdmin || !activeShip) return;
     const safeName = sanitizeText(newShipCp.name, 80);
@@ -3448,7 +3487,7 @@ export function AppProvider({ children }) {
     filteredCheckpoints, searchQuery, setSearchQuery, patrolTab, setPatrolTab, activeForms, setActiveForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
     // Ship
-    operationalShip, operationalShipName, activeShipId, setActiveShipId, activeShip, shipDetailTab, setShipDetailTab, scheduleMonth, setScheduleMonth, isEditingShipInfo, setIsEditingShipInfo, editShipInfoData, setEditShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, setNewShipCp, newShipDoc, setNewShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
+    operationalShip, operationalShipName, activeShipId, setActiveShipId, activeShip, shipDetailTab, setShipDetailTab, scheduleMonth, setScheduleMonth, showAssignPopup, setShowAssignPopup, assignPopupData, setAssignPopupData, handleConfirmAssign, isEditingShipInfo, setIsEditingShipInfo, editShipInfoData, setEditShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, setNewShipCp, newShipDoc, setNewShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
     showShipForm, setShowShipForm, shipFormData, setShipFormData, newCheckpoint, setNewCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     // Incidents
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, setIncidentForm, incidentLocationOptions, selectedIncident, setSelectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
@@ -3470,7 +3509,7 @@ export function AppProvider({ children }) {
     checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, currentShiftSchedule, activeShiftKey, activeShiftGuardSnapshot,
     filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
-    operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
+    operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, showAssignPopup, assignPopupData, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
     showShipForm, shipFormData, newCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
     allIncidents, visibleIncidents, showIncidentModal, incidentForm, incidentLocationOptions, selectedIncident, openIncidentModal, closeIncidentModal, handleSubmitIncident, canManageIncident, canCloseIncident,
     handleAddProgress, handleAddIncidentDocumentation, handleCloseIncident, handleDeleteIncident, newProgress, handlePhotoProgress, handleUpdateIncidentPhoto,

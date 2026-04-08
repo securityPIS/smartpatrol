@@ -19,6 +19,7 @@ import IncidentDetailModal from './src/components/modals/IncidentDetailModal';
 import { ShipDocumentFormModal, ShipFormModal, UserFormModal } from './src/components/modals/FormModals';
 import { UserDetailModal, ReportDetailModal, PhotoPreviewModal } from './src/components/modals/DetailModals';
 import ConfirmModal from './src/components/modals/ConfirmModal';
+import AssignDueDatePopup from './src/components/modals/AssignDueDatePopup';
 
 import SideNav from './src/components/SideNav';
 
@@ -77,6 +78,7 @@ function AppShell() {
         cancelText={confirmDialog?.cancelText}
         isAlert={confirmDialog?.isAlert}
       />
+      <AssignDueDatePopup />
     </div>
   );
 }

@@ -201,14 +201,14 @@ const ShipsPage = React.memo(function ShipsPage() {
         {shipDetailTab === 'personil' && (
           <div className="space-y-4 animate-in fade-in">
              <div className="flex gap-2 bg-[#070b19] p-1.5 rounded-full border border-cyan-900/50">
-                <button onClick={() => setScheduleMonth('current')} className={`flex-1 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-colors ${scheduleMonth === 'current' ? 'bg-cyan-600 text-white' : 'text-cyan-600'}`}>Bulan Ini</button>
+                <button onClick={() => setScheduleMonth('current')} className={`flex-1 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-colors ${scheduleMonth === 'current' ? 'bg-cyan-600 text-white' : 'text-cyan-600'}`}>Assigned</button>
                 <button onClick={() => setScheduleMonth('next')} className={`flex-1 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-1 ${scheduleMonth === 'next' ? 'bg-fuchsia-600 text-white' : 'text-cyan-600'}`}>
-                  <CalendarClock className="w-3.5 h-3.5"/> Bulan Depan
+                  <CalendarClock className="w-3.5 h-3.5"/> Next Assignment
                 </button>
              </div>
 
              <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-800/50 text-left">
-                <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3 border-b border-cyan-900/50 pb-2">Ditugaskan ({scheduleMonth === 'current' ? 'Sekarang' : 'Depan'})</h4>
+                <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3 border-b border-cyan-900/50 pb-2">{scheduleMonth === 'current' ? 'Assigned (On Duty)' : 'Next Assignment'}</h4>
                 <div className="space-y-2 mb-6">
                    {activeShip[scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth'].length === 0 ? (
                      <p className="text-xs text-rose-400 text-center py-3 italic border border-dashed border-rose-900/50 rounded-xl">Kosong</p>
@@ -237,11 +237,24 @@ const ShipsPage = React.memo(function ShipsPage() {
                                </div>
                              </div>
                            ) : (
-                             (schedule.startDate || schedule.endDate) && (
-                               <div className="text-[10px] text-emerald-400 bg-emerald-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start">
-                                  Priode Aktif: {schedule.startDate || 'Sekarang'} s/d {schedule.endDate || '-'}
+                             schedule.isTBC ? (
+                               <div className="text-[10px] text-amber-400 bg-amber-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-amber-500/30">
+                                  TBC — On duty tanpa batas
                                </div>
-                             )
+                             ) : schedule.endDate ? (
+                               (() => {
+                                 const isExpired = new Date(schedule.endDate) < new Date(new Date().toISOString().split('T')[0]);
+                                 return isExpired ? (
+                                    <div className="text-[10px] text-rose-400 bg-rose-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-rose-500/30">
+                                      Expired (Harap ganti / perpanjang)
+                                    </div>
+                                 ) : (
+                                    <div className="text-[10px] text-emerald-400 bg-emerald-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-emerald-500/30">
+                                      s/d {formatDocumentDate(schedule.endDate)}
+                                    </div>
+                                 );
+                               })()
+                             ) : null
                            )}
                          </div>
                        );
