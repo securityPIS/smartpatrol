@@ -1448,21 +1448,37 @@ export function AppProvider({ children }) {
       let newNextMonth = [...(ship.personnelNextMonth || [])];
       let newSchedules = { ...(ship.personnelSchedules || {}) };
       let shipModified = false;
+      
       newNextMonth.forEach(uId => {
         const schedule = newSchedules[uId];
         if (schedule && schedule.startDate && schedule.startDate <= todayStr) {
           if (!newPersonnel.includes(uId)) newPersonnel.push(uId);
           newNextMonth = newNextMonth.filter(id => id !== uId);
-          usersToUpdate.push({ userId: uId, shipAssigned: ship.name });
+          usersToUpdate.push({ userId: uId, shipAssigned: ship.name, status: 'active' });
           shipModified = true; shipsChanged = true;
         }
       });
+
+      [...newPersonnel].forEach(uId => {
+        const schedule = newSchedules[uId];
+        if (schedule && schedule.startDate && schedule.startDate > todayStr) {
+          if (!newNextMonth.includes(uId)) newNextMonth.push(uId);
+          newPersonnel = newPersonnel.filter(id => id !== uId);
+          usersToUpdate.push({ userId: uId, shipAssigned: null, status: 'off-duty' });
+          shipModified = true; shipsChanged = true;
+        }
+      });
+
       if (shipModified) return { ...ship, personnel: newPersonnel, personnelNextMonth: newNextMonth, personnelSchedules: newSchedules };
       return ship;
     });
     if (shipsChanged) {
       setShipsData(updatedShips);
-      setUsersData(prev => prev.map(u => { const update = usersToUpdate.find(x => x.userId === u.id); if (update) return { ...u, shipAssigned: update.shipAssigned, status: 'active' }; return u; }));
+      setUsersData(prev => prev.map(u => { 
+        const update = usersToUpdate.find(x => x.userId === u.id); 
+        if (update) return { ...u, shipAssigned: update.shipAssigned, status: update.status }; 
+        return u; 
+      }));
     }
   }, []);
 
@@ -2522,36 +2538,60 @@ export function AppProvider({ children }) {
       updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) }); 
       if(scheduleMonth === 'current') setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: null, status: 'off-duty'} : u)); 
     } else { 
-      if (scheduleMonth === 'current') {
-        const user = usersData.find(u => u.id === userId);
-        setAssignPopupData({ userId, name: user?.name, role: user?.role });
-        setShowAssignPopup(true);
-      } else {
-        updateActiveShip({ personnelNextMonth: [...targetArray, userId] }); 
-      }
+      const user = usersData.find(u => u.id === userId);
+      setAssignPopupData({ userId, name: user?.name, role: user?.role, scheduleType: scheduleMonth });
+      setShowAssignPopup(true);
     } 
   }, [isAdmin, activeShip, scheduleMonth, updateActiveShip, usersData]);
 
-  const handleConfirmAssign = useCallback((userId, endDate, isTBC) => {
-    if (!isAdmin || !activeShip) return;
-    const targetArray = activeShip.personnel;
-    if (!targetArray.includes(userId)) {
-      updateActiveShip({ 
-        personnel: [...targetArray, userId],
-        personnelSchedules: {
-          ...(activeShip.personnelSchedules || {}),
-          [userId]: {
-            ...(activeShip.personnelSchedules?.[userId] || {}),
-            endDate: endDate,
-            isTBC: isTBC
-          }
-        }
-      });
-      setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: activeShip.name, status: 'active'} : u));
+  const handleConfirmAssign = useCallback((userId, startDate, endDate, isTBC) => {
+    if (!isAdmin || !activeShip || !assignPopupData) return;
+    
+    const scheduleType = assignPopupData.scheduleType || 'current';
+    
+    // Automatically route to 'next assignment' or 'current' based on the date,
+    // falling back to the tab they initiated it from if no start date is provided.
+    const todayStr = new Date().toISOString().split('T')[0];
+    let finalScheduleType = scheduleType;
+    
+    if (startDate && startDate > todayStr) {
+      finalScheduleType = 'next';
+    } else if (startDate && startDate <= todayStr) {
+      finalScheduleType = 'current';
     }
+    
+    let newPersonnel = activeShip.personnel.filter(id => id !== userId);
+    let newNextMonth = activeShip.personnelNextMonth.filter(id => id !== userId);
+    
+    if (finalScheduleType === 'current') {
+      newPersonnel.push(userId);
+    } else {
+      newNextMonth.push(userId);
+    }
+    
+    updateActiveShip({ 
+      personnel: newPersonnel,
+      personnelNextMonth: newNextMonth,
+      personnelSchedules: {
+        ...(activeShip.personnelSchedules || {}),
+        [userId]: {
+          ...(activeShip.personnelSchedules?.[userId] || {}),
+          startDate: startDate,
+          endDate: endDate,
+          isTBC: isTBC
+        }
+      }
+    });
+
+    if (finalScheduleType === 'current') {
+      setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: activeShip.name, status: 'active'} : u));
+    } else {
+      setUsersData(prev => prev.map(u => u.id === userId && u.status !== 'active' ? {...u, shipAssigned: null, status: 'off-duty'} : u));
+    }
+    
     setShowAssignPopup(false);
     setAssignPopupData(null);
-  }, [isAdmin, activeShip, updateActiveShip]);
+  }, [isAdmin, activeShip, updateActiveShip, assignPopupData]);
   const handleAddShipCp = useCallback(() => {
     if (!isAdmin || !activeShip) return;
     const safeName = sanitizeText(newShipCp.name, 80);

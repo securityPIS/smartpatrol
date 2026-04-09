@@ -225,37 +225,24 @@ const ShipsPage = React.memo(function ShipsPage() {
                              </div>
                              <button onClick={() => handleTogglePersonnel(uid)} className="p-1.5 bg-rose-500/10 text-rose-400 rounded" aria-label="Hapus kru dari penugasan"><UserMinus className="w-4 h-4"/></button>
                            </div>
-                           {scheduleMonth === 'next' ? (
-                             <div className="flex gap-2 mt-1">
-                               <div className="flex-1">
-                                 <label className="text-[9px] text-cyan-600 font-bold uppercase block mb-1">Mulai Tgl</label>
-                                 <input type="date" value={schedule.startDate || ''} onChange={e => handleChangeSchedule(uid, 'startDate', e.target.value)} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-lg p-1.5 text-[10px] text-cyan-300 focus:border-cyan-400 outline-none" />
-                               </div>
-                               <div className="flex-1">
-                                 <label className="text-[9px] text-cyan-600 font-bold uppercase block mb-1">Berakhir Tgl</label>
-                                 <input type="date" value={schedule.endDate || ''} onChange={e => handleChangeSchedule(uid, 'endDate', e.target.value)} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-lg p-1.5 text-[10px] text-cyan-300 focus:border-cyan-400 outline-none" />
-                               </div>
+                           {schedule.isTBC ? (
+                             <div className="text-[10px] text-amber-400 bg-amber-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-amber-500/30">
+                                {schedule.startDate ? `${formatDocumentDate(schedule.startDate)} - TBC` : 'TBC'}
                              </div>
-                           ) : (
-                             schedule.isTBC ? (
-                               <div className="text-[10px] text-amber-400 bg-amber-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-amber-500/30">
-                                  TBC — On duty tanpa batas
-                               </div>
-                             ) : schedule.endDate ? (
-                               (() => {
-                                 const isExpired = new Date(schedule.endDate) < new Date(new Date().toISOString().split('T')[0]);
-                                 return isExpired ? (
-                                    <div className="text-[10px] text-rose-400 bg-rose-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-rose-500/30">
-                                      Expired (Harap ganti / perpanjang)
-                                    </div>
-                                 ) : (
-                                    <div className="text-[10px] text-emerald-400 bg-emerald-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-emerald-500/30">
-                                      s/d {formatDocumentDate(schedule.endDate)}
-                                    </div>
-                                 );
-                               })()
-                             ) : null
-                           )}
+                           ) : schedule.endDate ? (
+                             (() => {
+                               const isExpired = new Date(schedule.endDate) < new Date(new Date().toISOString().split('T')[0]);
+                               return isExpired ? (
+                                  <div className="text-[10px] text-rose-400 bg-rose-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-rose-500/30">
+                                    Expired (Harap ganti / perpanjang)
+                                  </div>
+                               ) : (
+                                  <div className="text-[10px] text-emerald-400 bg-emerald-900/20 px-2 py-1 rounded inline-block font-medium mt-0.5 self-start border border-emerald-500/30">
+                                    {schedule.startDate ? `${scheduleMonth === 'next' ? 'Mulai ' : ''}${formatDocumentDate(schedule.startDate)} s/d ${formatDocumentDate(schedule.endDate)}` : `s/d ${formatDocumentDate(schedule.endDate)}`}
+                                  </div>
+                               );
+                             })()
+                           ) : null}
                          </div>
                        );
                      })

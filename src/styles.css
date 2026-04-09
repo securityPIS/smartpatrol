@@ -99,11 +99,7 @@ textarea {
   background-color: #ffffff !important;
 }
 
-/* Background Gradients */
-.pertamina-light.bg-gradient-to-b,
-.pertamina-light .bg-gradient-to-b {
-  background-image: linear-gradient(to bottom, #e5e7eb, #f3f4f6, #ffffff) !important;
-}
+/* Gradient overrides removed to fix image overlays */
 
 /* Text Colors - General */
 .pertamina-light .text-cyan-50,
@@ -113,11 +109,7 @@ textarea {
 }
 .pertamina-light .text-cyan-100, 
 .pertamina-light .text-cyan-200,
-.pertamina-light .text-slate-200,
-.pertamina-light .text-yellow-100,
-.pertamina-light .text-yellow-100\/70,
-.pertamina-light .text-emerald-100,
-.pertamina-light .text-emerald-100\/70 {
+.pertamina-light .text-slate-200 {
   color: #2d3748 !important;
   opacity: 1 !important;
 }
@@ -125,12 +117,12 @@ textarea {
 /* Cyan Text -> Pertamina Blues */
 .pertamina-light .text-cyan-300, 
 .pertamina-light .text-cyan-400 {
-  color: #00AEEF !important; /* Pertamina Light Blue */
+  color: #2563eb !important; /* Standard Blue */
   opacity: 1 !important;
 }
 .pertamina-light .text-cyan-500, 
 .pertamina-light .text-cyan-600 {
-  color: #00529C !important; /* Pertamina Deep Blue */
+  color: #1d4ed8 !important; /* Deep Blue */
   opacity: 1 !important;
 }
 .pertamina-light .text-cyan-700,
@@ -140,16 +132,20 @@ textarea {
   opacity: 1 !important;
 }
 
-/* Yellow Text -> High Contrast */
+/* Yellow/Amber Text -> Orange High Contrast */
+.pertamina-light .text-yellow-100,
+.pertamina-light .text-yellow-100\/70,
 .pertamina-light .text-yellow-400,
 .pertamina-light .text-yellow-500,
-.pertamina-light .text-yellow-600 {
-  color: #854d0e !important; /* Darker Gold for readability */
+.pertamina-light .text-yellow-600,
+.pertamina-light .text-amber-400,
+.pertamina-light .text-amber-500 {
+  color: #ea580c !important; /* Orange 600 */
   opacity: 1 !important;
 }
 .pertamina-light .font-bold.text-yellow-400,
 .pertamina-light .font-black.text-yellow-400 {
-  color: #00529C !important; /* Headings use Pertamina Blue */
+  color: #ea580c !important;
 }
 
 /* Subtext & Time - Force Readability */
@@ -159,6 +155,9 @@ textarea {
 .pertamina-light .text-cyan-400\/70 {
   color: #4b5563 !important; /* Medium Dark Gray */
   opacity: 1 !important;
+}
+.pertamina-light .text-slate-400 {
+  color: #374151 !important; /* Darker gray for notification descriptions */
 }
 
 /* Borders */
@@ -199,10 +198,13 @@ textarea {
 }
 
 /* Emerald (Green) Overrides */
+.pertamina-light .text-emerald-100,
+.pertamina-light .text-emerald-100\/70,
+.pertamina-light .text-emerald-300,
 .pertamina-light .text-emerald-400, 
 .pertamina-light .text-emerald-500,
 .pertamina-light .text-emerald-600 {
-  color: #166534 !important; /* Darker Green */
+  color: #15803d !important; /* Green 700 */
 }
 .pertamina-light .bg-emerald-500\/10,
 .pertamina-light .bg-emerald-950\/20 {
@@ -228,6 +230,11 @@ textarea {
 .pertamina-light .shadow-xl,
 .pertamina-light .shadow-lg {
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Thicker Fonts for Tabs */
+.pertamina-light .flex-1.min-w-\[80px\] span {
+  font-weight: 900 !important;
 }
 
 /* Form Elements */
