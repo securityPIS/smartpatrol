@@ -1863,7 +1863,7 @@ export function AppProvider({ children }) {
     if (!isPetugas) return false;
     return Boolean(assignedShipForCurrentUser && incident.shipName === assignedShipForCurrentUser.name);
   }, [assignedShipForCurrentUser, currentUserRecord, isAdmin, isPic, isPetugas]);
-  const canCloseIncident = useCallback((incident) => Boolean(currentUserRecord && incident && isPic), [currentUserRecord, isPic]);
+  const canCloseIncident = useCallback((incident) => Boolean(currentUserRecord && incident && (isAdmin || isPic)), [currentUserRecord, isAdmin, isPic]);
   const sharedState = useMemo(() => createSharedStateSnapshot({
     activeShiftKey,
     checkpointsByShip,
