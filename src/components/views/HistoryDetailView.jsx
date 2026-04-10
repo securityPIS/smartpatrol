@@ -33,6 +33,15 @@ function buildGuardScoreMaps(checkpoints = []) {
   }, { byId: new Map(), byName: new Map() });
 }
 
+function getCompletionPercentage(summary = {}) {
+  const completed = Number(summary.completed) || 0;
+  const total = Number(summary.total) || 0;
+
+  if (total <= 0) return 0;
+
+  return Math.round((completed / total) * 100);
+}
+
 export default function HistoryDetailView({ isInline = false, entryData = null, onSummaryCardClick = null }) {
   const { 
     selectedHistoryEntry, operationalShip, operationalShipName,
@@ -69,6 +78,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
     { type: 'temuan', count: entry.issue || 0 },
     { type: 'missed', count: entry.missed || 0 },
   ];
+  const completionPercentage = getCompletionPercentage(entry.summary);
 
   const displayCrew = React.useMemo(() => {
     const scoreMaps = buildGuardScoreMaps(entry.checkpoints || checkpoints);
@@ -161,7 +171,8 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
             </div>
             <div className="text-right bg-[#0b1229] px-3 py-2 rounded-xl border border-cyan-800/50 shadow-sm">
               <p className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold">Selesai</p>
-              <p className="text-lg font-black text-cyan-50">{entry.summary?.completed || 0}</p>
+              <p className="text-lg font-black text-cyan-50">{completionPercentage}%</p>
+              <p className="text-[10px] text-cyan-600">{entry.summary?.completed || 0}/{entry.summary?.total || 0} titik</p>
             </div>
           </div>
 
@@ -208,7 +219,6 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold">Skor</p>
                   <p className="text-lg font-black text-cyan-200">{user.score || 0}</p>
                 </div>
               </div>

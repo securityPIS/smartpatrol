@@ -40,11 +40,18 @@ export default function IncidentDetailView({ isInline = false }) {
            {!isInline && (
              <button onClick={(e) => { e.stopPropagation(); setSelectedIncident(null); }} className="absolute top-4 left-4 p-2 bg-black/50 text-white rounded-full backdrop-blur-md border border-white/20 hover:bg-black/70 transition-colors z-10" aria-label="Tutup detail"><ChevronDown className="w-6 h-6 rotate-90"/></button>
            )}
-           {!isReadOnly && canManageIncident(selectedIncident) && (
-              <button onClick={(e) => { e.stopPropagation(); handleUpdateIncidentPhoto(selectedIncident.id); }} className="absolute top-4 right-4 p-2 bg-emerald-500/80 text-white rounded-full backdrop-blur-md border border-emerald-400/50 hover:bg-emerald-500 transition-all z-20 shadow-lg" title="Ganti Foto Bukti">
-                <Camera className="w-5 h-5"/>
+          {isAdmin && (
+            <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+              {!isReadOnly && (
+                <button onClick={(e) => { e.stopPropagation(); handleUpdateIncidentPhoto(selectedIncident.id); }} className="p-2 bg-emerald-500/80 text-white rounded-full backdrop-blur-md border border-emerald-400/50 hover:bg-emerald-500 transition-all shadow-lg" title="Ganti Foto Bukti" aria-label="Ganti Foto Bukti">
+                  <Camera className="w-5 h-5"/>
+                </button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); handleDeleteIncident(selectedIncident.id); }} className="p-2 bg-rose-500/80 text-white rounded-full backdrop-blur-md border border-rose-400/50 hover:bg-rose-500 transition-all shadow-lg" title="Hapus Temuan" aria-label="Hapus Temuan">
+                <Trash2 className="w-5 h-5"/>
               </button>
-            )}
+            </div>
+          )}
            <div className="absolute bottom-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs text-white/90 text-right border border-yellow-900/50 z-10 shadow-lg"><p className="font-bold text-yellow-400">{selectedIncident.reportedBy}</p><p className="text-[10px] text-yellow-100/70">{selectedIncident.date} {selectedIncident.time}</p></div>
            <div className="absolute bottom-4 left-4 right-36 z-10"><span className="text-[10px] px-2 py-1 border rounded font-bold bg-yellow-500/10 border-yellow-500 text-yellow-400 mb-2 inline-block shadow-sm">TEMUAN</span><h2 className="text-2xl font-black text-white drop-shadow-md leading-tight line-clamp-2">{selectedIncident.location}</h2></div>
         </div>
@@ -57,11 +64,18 @@ export default function IncidentDetailView({ isInline = false }) {
              <span className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold">Detail Temuan</span>
              <h3 className="font-bold text-xl text-yellow-400 line-clamp-1">{selectedIncident.location}</h3>
            </div>
-           {!isReadOnly && canManageIncident(selectedIncident) && (
-             <button onClick={() => handleUpdateIncidentPhoto(selectedIncident.id)} className="p-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg hover:bg-emerald-500/20 transition-all flex items-center gap-2 text-[10px] font-bold" title="Tambah Foto">
-               <Camera className="w-4 h-4"/> FOTO
-             </button>
-           )}
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              {!isReadOnly && (
+                <button onClick={() => handleUpdateIncidentPhoto(selectedIncident.id)} className="p-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg hover:bg-emerald-500/20 transition-all" title="Ganti Foto Bukti" aria-label="Ganti Foto Bukti">
+                  <Camera className="w-4 h-4"/>
+                </button>
+              )}
+              <button onClick={() => handleDeleteIncident(selectedIncident.id)} className="p-2 bg-rose-500/10 border border-rose-500/30 text-rose-400 rounded-lg hover:bg-rose-500/20 transition-all" title="Hapus Temuan" aria-label="Hapus Temuan">
+                <Trash2 className="w-4 h-4"/>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -178,13 +192,6 @@ export default function IncidentDetailView({ isInline = false }) {
                  <div className="bg-[#0b1229] p-4 rounded-xl border border-amber-900/50 mt-6"><p className="text-xs text-amber-300 leading-relaxed">Update terbatas.</p></div>
                )
              )}
-            {isAdmin ? (
-              <div className="pt-1">
-                <button onClick={() => handleDeleteIncident(selectedIncident.id)} className="w-full py-4 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-300 text-xs font-black uppercase tracking-widest transition-all hover:bg-rose-500 hover:text-white flex items-center justify-center gap-2">
-                  <Trash2 className="w-4 h-4"/> Hapus Temuan
-                </button>
-              </div>
-            ) : null}
            </div>
          )}
        </div>
