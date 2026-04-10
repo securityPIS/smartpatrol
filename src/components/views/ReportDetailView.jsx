@@ -1,10 +1,16 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { ChevronDown, Trash2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, Trash2, AlertTriangle, CheckCircle2, MapPin, ExternalLink, Thermometer, Wind } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function ReportDetailView({ isInline = false }) {
-  const { selectedReportDetail, setSelectedReportDetail, setPreviewPhoto, handleDeleteReport } = useApp();
+  const {
+    selectedReportDetail,
+    setSelectedReportDetail,
+    setPreviewPhoto,
+    handleDeleteReport,
+    getWeatherDetail,
+  } = useApp();
 
   if (!selectedReportDetail) {
     if (isInline) return (
@@ -22,6 +28,14 @@ export default function ReportDetailView({ isInline = false }) {
   const isMissed = selectedReportDetail.resultType === 'missed' || selectedReportDetail.status === 'missed';
   const isReadOnly = Boolean(selectedReportDetail.readOnly);
   const headerToneClass = isMissed ? 'bg-rose-500/10 border-rose-500 text-rose-400' : selectedReportDetail.resultType === 'temuan' ? 'bg-yellow-500/10 border-yellow-500 text-yellow-400' : 'bg-emerald-500/10 border-emerald-500 text-emerald-400';
+  const gpsSnapshot = selectedReportDetail.gpsSnapshot || null;
+  const weatherSnapshot = selectedReportDetail.weatherSnapshot || null;
+  const latitude = gpsSnapshot?.lat;
+  const longitude = gpsSnapshot?.lng;
+  const hasGpsSnapshot = latitude != null && longitude != null;
+  const mapsQuery = hasGpsSnapshot ? `${latitude},${longitude}` : '';
+  const mapsHref = hasGpsSnapshot ? `https://www.google.com/maps?q=${mapsQuery}` : '#';
+  const gpsSourceLabel = gpsSnapshot?.source === 'device' ? 'GPS perangkat saat sync' : gpsSnapshot?.source === 'ship' ? 'Koordinat kapal saat sync' : 'Snapshot sync laporan';
 
   return (
     <div className={`flex flex-col h-full bg-[#070b19] ${isInline ? 'border-l border-cyan-900/50' : 'fixed inset-0 z-[100] sm:max-w-md sm:mx-auto sm:border-x sm:border-cyan-900/50'}`}>
@@ -86,9 +100,89 @@ export default function ReportDetailView({ isInline = false }) {
            </div>
          )}
          {selectedReportDetail.resultType === 'aman' && (
-           <div className="bg-emerald-950/20 p-4 rounded-xl border border-emerald-900/30">
-             <p className="text-[10px] text-emerald-600 font-bold mb-1.5 flex items-center gap-1.5 uppercase tracking-widest"><CheckCircle2 className="w-3 h-3" /> Catatan</p>
-             <p className="text-sm text-emerald-50/90 leading-relaxed">{selectedReportDetail.kejadian || 'Checkpoint dilaporkan dalam kondisi aman.'}</p>
+           <div className="space-y-3">
+             <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50 shadow-sm">
+               {hasGpsSnapshot ? (
+                 <>
+                   <div className="flex items-center justify-between gap-3 mb-3">
+                     <div>
+                       <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">GPS Lokasi</p>
+                       <p className="text-sm font-bold text-cyan-50 flex items-center gap-1.5">
+                         <MapPin className="w-4 h-4 text-cyan-400" />
+                         {latitude}, {longitude}
+                       </p>
+                       <p className="text-[10px] text-cyan-600 mt-1">{gpsSourceLabel}</p>
+                     </div>
+                     <a
+                       href={mapsHref}
+                       target="_blank"
+                       rel="noreferrer"
+                       className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-cyan-700/60 text-cyan-300 text-[10px] font-bold uppercase tracking-widest hover:bg-cyan-900/30 transition-colors"
+                     >
+                       Maps <ExternalLink className="w-3.5 h-3.5" />
+                     </a>
+                   </div>
+                   <div className="w-full h-36 rounded-xl overflow-hidden border border-cyan-800/50">
+                     <iframe
+                       width="100%"
+                       height="100%"
+                       frameBorder="0"
+                       scrolling="no"
+                       marginHeight="0"
+                       marginWidth="0"
+                       src={`https://maps.google.com/maps?q=${mapsQuery}&hl=id&z=14&output=embed`}
+                       title="GPS Lokasi Patroli"
+                     />
+                   </div>
+                 </>
+               ) : (
+                 <div className="rounded-xl border border-dashed border-cyan-800/50 p-4 text-center">
+                   <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">GPS Lokasi</p>
+                   <p className="text-sm text-cyan-200">Data GPS belum terekam saat sync laporan.</p>
+                 </div>
+               )}
+             </div>
+
+             <div className="bg-[#0b1229] rounded-xl p-4 border border-cyan-800/50 shadow-sm">
+               {weatherSnapshot ? (
+                 <div className="flex items-center justify-between gap-4">
+                   <div className="flex items-center gap-3 min-w-0">
+                     <div className="p-2 bg-cyan-900/20 rounded-xl shrink-0">
+                       {getWeatherDetail(weatherSnapshot.weathercode).icon}
+                     </div>
+                     <div className="min-w-0">
+                       <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest">Kondisi</p>
+                       <p className="text-sm font-bold text-cyan-50 truncate">{getWeatherDetail(weatherSnapshot.weathercode).text}</p>
+                       <p className="text-[10px] text-cyan-600 mt-1">Snapshot cuaca saat sync laporan</p>
+                     </div>
+                   </div>
+                   <div className="flex items-center gap-4 shrink-0">
+                     <div className="text-right">
+                       <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest flex items-center justify-end gap-1">
+                         <Thermometer className="w-3 h-3 text-rose-400" />
+                         Temp
+                       </p>
+                       <p className="text-sm font-bold text-cyan-50">{weatherSnapshot.temperature}°C</p>
+                     </div>
+                     <div className="w-px h-7 bg-cyan-800" />
+                     <div>
+                       <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest flex items-center gap-1">
+                         <Wind className="w-3 h-3 text-emerald-400" />
+                         Angin
+                       </p>
+                       <p className="text-sm font-bold text-cyan-50">{weatherSnapshot.windspeed} k/j</p>
+                     </div>
+                   </div>
+                 </div>
+               ) : (
+                 <p className="text-xs text-cyan-500 text-center">Info cuaca belum terekam saat sync laporan.</p>
+               )}
+             </div>
+
+             <div className="bg-emerald-950/20 p-4 rounded-xl border border-emerald-900/30">
+               <p className="text-[10px] text-emerald-600 font-bold mb-1.5 flex items-center gap-1.5 uppercase tracking-widest"><CheckCircle2 className="w-3 h-3" /> Catatan</p>
+               <p className="text-sm text-emerald-50/90 leading-relaxed">{selectedReportDetail.kejadian || 'Checkpoint dilaporkan dalam kondisi aman.'}</p>
+             </div>
            </div>
          )}
       </div>

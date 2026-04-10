@@ -1,18 +1,16 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Home, AlertOctagon, FileText, Users, Shield, Ship, Anchor, ChevronRight } from 'lucide-react';
+import { Home, AlertOctagon, FileText, Shield, Ship, Bell, ChevronRight } from 'lucide-react';
+import SOSButton from './SOSButton';
 
 const SideNav = React.memo(function SideNav() {
-  const { currentPage, setCurrentPage, setActiveShipId, isAdmin, activeShipId, closeHistoryEntry, selectedHistoryEntry } = useApp();
+  const { currentPage, setCurrentPage, setActiveShipId, activeShipId, closeHistoryEntry, selectedHistoryEntry, unreadNotificationCount } = useApp();
 
   const tabs = [
     {id: 'home', icon: <Home className="w-5 h-5"/>, label: 'Patroli'},
     {id: 'incidents', icon: <AlertOctagon className="w-5 h-5"/>, label: 'Temuan'},
     {id: 'history', icon: <FileText className="w-5 h-5"/>, label: 'Riwayat'},
-    ...(isAdmin ? [
-       {id: 'users', icon: <Users className="w-5 h-5"/>, label: 'Users'},
-       {id: 'ships', icon: <Anchor className="w-5 h-5"/>, label: 'Armada'}
-    ] : [])
+    {id: 'notifications', icon: <Bell className="w-5 h-5"/>, label: 'Notif'}
   ];
 
   return (
@@ -44,6 +42,11 @@ const SideNav = React.memo(function SideNav() {
                 <div className={`mb-1.5 transition-transform duration-300 group-hover:scale-110 ${isActive ? 'scale-110' : ''}`}>
                   {tab.icon}
                 </div>
+                {tab.id === 'notifications' && unreadNotificationCount > 0 && (
+                  <span className="absolute top-3 right-3 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[8px] font-black flex items-center justify-center border border-[#0b1229]">
+                    {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                  </span>
+                )}
                 
                 <span className="text-[10px] font-bold uppercase tracking-widest text-center px-1">
                   {tab.label}
@@ -60,7 +63,10 @@ const SideNav = React.memo(function SideNav() {
         </div>
       </div>
 
-      <div className="mt-auto px-4 pb-4">
+      <div className="mt-auto px-4 pb-4 space-y-4">
+        <div className="flex justify-center">
+          <SOSButton className="relative flex-col w-14 h-14 rounded-full !z-10 !fixed-none !shadow-none ring-4 ring-red-500/20" />
+        </div>
         <div className="p-3 rounded-xl border border-cyan-900/30 bg-cyan-950/10 flex flex-col items-center gap-1">
            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]"></div>
            <span className="text-[8px] font-black text-cyan-600 uppercase tracking-tighter">ONLINE</span>

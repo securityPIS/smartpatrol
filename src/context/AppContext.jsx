@@ -133,6 +133,7 @@ const defaultLocationOptions = [
   'Alat Navigasi', 'Solar Panel', 'Ruang Mesin', 'Ruang Pompa', 'Air Bersih',
   'Gudang Logistik', 'Gudang Spare Part', 'Alat Dapur', 'Fasilitas Pendukung'
 ];
+const SHIP_STATUS_OPTIONS = ['Non Operasional', 'Operasional', 'Situasional'];
 
 function createDefaultShipCheckpoints() {
   return defaultLocationOptions.map((name) => ({
@@ -167,9 +168,70 @@ function initializeShipCheckpointDefinitions(checkpoints = []) {
   ]);
 }
 
-function normalizeShipsCollection(ships = []) {
-  return (Array.isArray(ships) ? ships : []).map((ship) => ({
+function normalizeShipStatus(status) {
+  const safeStatus = sanitizeText(status || '', 40);
+  if (safeStatus === 'UPP') return 'Non Operasional';
+  if (safeStatus === 'NON UPP') return 'Operasional';
+  if (SHIP_STATUS_OPTIONS.includes(safeStatus)) return safeStatus;
+  return 'Non Operasional';
+}
+
+function splitLegacyShipRoute(route) {
+  const safeRoute = sanitizeText(route || '', 100);
+  if (!safeRoute) {
+    return { route: '', routeLoading: '', routeDischarge: '' };
+  }
+
+  const segments = safeRoute.split(/\s*-\s*/).map(part => sanitizeText(part, 100)).filter(Boolean);
+  if (segments.length >= 2) {
+    return {
+      route: safeRoute,
+      routeLoading: segments[0],
+      routeDischarge: segments.slice(1).join(' - '),
+    };
+  }
+
+  return {
+    route: safeRoute,
+    routeLoading: safeRoute,
+    routeDischarge: '',
+  };
+}
+
+function composeShipRoute(status, routeLoading, routeDischarge, fallbackRoute = '') {
+  const normalizedStatus = normalizeShipStatus(status);
+  const safeLoading = sanitizeText(routeLoading || '', 100);
+  const safeDischarge = sanitizeText(routeDischarge || '', 100);
+  const safeFallback = sanitizeText(fallbackRoute || '', 100);
+
+  if (normalizedStatus === 'Non Operasional') {
+    return safeLoading || safeFallback;
+  }
+
+  if (safeLoading && safeDischarge) return `${safeLoading} - ${safeDischarge}`;
+  return safeLoading || safeDischarge || safeFallback;
+}
+
+function normalizeShipRouteFields(ship = {}) {
+  const legacyRoute = splitLegacyShipRoute(ship?.route);
+  const routeLoading = sanitizeText(ship?.routeLoading || legacyRoute.routeLoading || '', 100);
+  const routeDischarge = sanitizeText(ship?.routeDischarge || legacyRoute.routeDischarge || '', 100);
+
+  return {
+    routeLoading,
+    routeDischarge,
+    route: composeShipRoute(ship?.status, routeLoading, routeDischarge, legacyRoute.route),
+  };
+}
+
+function normalizeShipRecord(ship = {}) {
+  const normalizedStatus = normalizeShipStatus(ship?.status);
+  const routeFields = normalizeShipRouteFields({ ...ship, status: normalizedStatus });
+
+  return {
     ...ship,
+    status: normalizedStatus,
+    ...routeFields,
     imoNumber: sanitizeText(ship?.imoNumber || '', 20),
     documents: Array.isArray(ship?.documents)
       ? ship.documents.map(document => ({
@@ -181,12 +243,31 @@ function normalizeShipsCollection(ships = []) {
     customCheckpoints: ship?.defaultCheckpointsInitialized
       ? normalizeShipCheckpointDefinitions(ship?.customCheckpoints)
       : initializeShipCheckpointDefinitions(ship?.customCheckpoints),
-  }));
+  };
 }
 
-const defaultAuthForm = { name: '', email: '', password: '', confirmPassword: '', phone: '', type: 'BUJP' };
-const defaultUserForm = { name: '', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', dob: '', email: '', password: '', phone: '', address: '', emergencyName: '', emergencyContact: '', emergencyRelation: 'Orang Tua', officeAddress: '', photoUrl: null };
-const defaultShipForm = { name: '', type: 'Oil Tanker', imoNumber: '', route: '', cargoType: '', cargoAmount: '', status: 'UPP', customCheckpoints: createDefaultShipCheckpoints(), photoUrl: null };
+function normalizeShipsCollection(ships = []) {
+  return (Array.isArray(ships) ? ships : []).map(ship => normalizeShipRecord(ship));
+}
+
+const defaultAuthForm = {
+  name: '',
+  email: '',
+  password: '',
+  confirmPassword: '',
+  type: 'BUJP',
+  workerNumber: '',
+  phone: '',
+  dob: '',
+  address: '',
+  officeAddress: '',
+  emergencyName: '',
+  emergencyContact: '',
+  emergencyRelation: 'Orang Tua',
+  photoUrl: null,
+};
+const defaultUserForm = { name: '', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', workerNumber: '', dob: '', email: '', password: '', phone: '', address: '', emergencyName: '', emergencyContact: '', emergencyRelation: 'Orang Tua', officeAddress: '', photoUrl: null };
+const defaultShipForm = { name: '', type: 'Oil Tanker', imoNumber: '', route: '', routeLoading: '', routeDischarge: '', cargoType: '', cargoAmount: '', status: 'Non Operasional', customCheckpoints: createDefaultShipCheckpoints(), photoUrl: null };
 const defaultShipDocumentForm = { title: '', docDate: '', desc: '', fileUrl: null, fileName: '', mimeType: '' };
 const defaultIncidentForm = { locType: 'default', location: defaultLocationOptions[0], customLocation: '', penyebab: '', deskripsi: '', tindakLanjut: '', photoUrl: null };
 
@@ -730,6 +811,111 @@ function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo })
   };
 }
 
+function normalizeSnapshotCoordinate(value, digits = 6) {
+  const numeric = typeof value === 'number'
+    ? value
+    : Number(String(value ?? '').replace(',', '.'));
+
+  if (!Number.isFinite(numeric)) return null;
+  return Number(numeric.toFixed(digits));
+}
+
+function createShipLocationSnapshot(ship) {
+  if (!ship) return null;
+
+  const lat = normalizeSnapshotCoordinate(ship.lat);
+  const lng = normalizeSnapshotCoordinate(ship.lng);
+
+  return {
+    id: ship.id || null,
+    name: ship.name || '',
+    lat,
+    lng,
+  };
+}
+
+function requestCurrentGeolocation() {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          lat: normalizeSnapshotCoordinate(position.coords.latitude),
+          lng: normalizeSnapshotCoordinate(position.coords.longitude),
+          accuracy: Number.isFinite(position.coords.accuracy)
+            ? Math.round(position.coords.accuracy)
+            : null,
+        });
+      },
+      (error) => {
+        console.warn('GPS patroli tidak tersedia saat sync laporan', error);
+        resolve(null);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 0,
+      },
+    );
+  });
+}
+
+async function fetchWeatherSnapshotForCoordinates(gpsSnapshot) {
+  if (gpsSnapshot?.lat == null || gpsSnapshot?.lng == null) return null;
+
+  try {
+    const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${gpsSnapshot.lat}&longitude=${gpsSnapshot.lng}&current_weather=true`);
+    if (!response.ok) return null;
+
+    const payload = await response.json();
+    if (!payload?.current_weather) return null;
+
+    return {
+      ...payload.current_weather,
+      capturedAt: gpsSnapshot.capturedAt,
+      source: gpsSnapshot.source,
+      lat: gpsSnapshot.lat,
+      lng: gpsSnapshot.lng,
+    };
+  } catch (error) {
+    console.error('Gagal mengambil snapshot cuaca patroli', error);
+    return null;
+  }
+}
+
+async function capturePatrolEnvironmentSnapshot(ship) {
+  const capturedAt = new Date().toISOString();
+  const shipSnapshot = createShipLocationSnapshot(ship);
+  const deviceLocation = await requestCurrentGeolocation();
+
+  const gpsSnapshot = deviceLocation
+    ? {
+        ...deviceLocation,
+        source: 'device',
+        capturedAt,
+      }
+    : (shipSnapshot?.lat != null && shipSnapshot?.lng != null)
+      ? {
+          lat: shipSnapshot.lat,
+          lng: shipSnapshot.lng,
+          accuracy: null,
+          source: 'ship',
+          capturedAt,
+        }
+      : null;
+
+  const weatherSnapshot = await fetchWeatherSnapshotForCoordinates(gpsSnapshot);
+
+  return {
+    shipSnapshot,
+    gpsSnapshot,
+    weatherSnapshot,
+  };
+}
+
 function sortHistoryEntries(entries) {
   return [...entries].sort((left, right) => {
     const leftTimestamp = new Date(left.createdAt || '').getTime();
@@ -1036,6 +1222,8 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
     notifications: mergeNotificationsCollection(baseState.notifications || [], nextState.notifications || []),
     shipsData: mergedShips,
     usersData: mergedUsers,
+    activeSOSAlert: nextState.activeSOSAlert || baseState.activeSOSAlert || null,
+    sosHistory: nextState.sosHistory || baseState.sosHistory || [],
   });
 }
 
@@ -1129,7 +1317,7 @@ function normalizeUserRecord(user, index = 0) {
     : sanitizeText(user?.authProvider || seedUser?.authProvider || (hasCredential ? 'legacy' : 'none'), 20).toLowerCase();
   const fallbackStatus = role === ACCESS_ROLES.PETUGAS ? (shipAssigned ? 'active' : 'off-duty') : 'active';
   const status = sanitizeText(user?.status || seedUser?.status || fallbackStatus, 20) || fallbackStatus;
-  return { ...seedUser, ...user, id: user?.id || seedUser?.id || `u${Date.now()}${index}`, name: safeName, role, type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP', status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status, shipAssigned, email: safeEmail, password: '', hasCredential, passwordSalt, passwordHash, authProvider, firebaseUid: firebaseUid || null, phone: sanitizePhone(user?.phone || seedUser?.phone || ''), address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180), emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80), emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''), emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua', officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180), photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index) };
+  return { ...seedUser, ...user, id: user?.id || seedUser?.id || `u${Date.now()}${index}`, name: safeName, role, type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP', workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40), status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status, shipAssigned, email: safeEmail, password: '', hasCredential, passwordSalt, passwordHash, authProvider, firebaseUid: firebaseUid || null, phone: sanitizePhone(user?.phone || seedUser?.phone || ''), address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180), emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80), emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''), emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua', officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180), photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index) };
 }
 
 function normalizeUsersCollection(users) {
@@ -1218,6 +1406,8 @@ function createSharedStateSnapshot({
   notifications,
   shipsData,
   usersData,
+  activeSOSAlert,
+  sosHistory,
 }) {
   return {
     checkpointsByShip,
@@ -1229,6 +1419,8 @@ function createSharedStateSnapshot({
     deletedRecords: createDeletedRecordsState(deletedRecords),
     activeShiftKey,
     notifications,
+    activeSOSAlert,
+    sosHistory,
   };
 }
 
@@ -1377,7 +1569,7 @@ const persistedState = loadPersistedState();
 // --- CONTEXT ---
 const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
-export { ACCESS_ROLES, defaultLocationOptions };
+export { ACCESS_ROLES, defaultLocationOptions, SHIP_STATUS_OPTIONS };
 
 export function AppProvider({ children }) {
   const initialShipsCollection = normalizeShipsCollection(persistedState?.shipsData || initialShipsData);
@@ -1436,6 +1628,8 @@ export function AppProvider({ children }) {
   const [notifications, setNotifications] = useState(() => sortNotifications(persistedState?.notifications || []));
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
   const [shiftClock, setShiftClock] = useState(() => Date.now());
+  const [activeSOSAlert, setActiveSOSAlert] = useState(() => persistedState?.activeSOSAlert || null);
+  const [sosHistory, setSosHistory] = useState(() => persistedState?.sosHistory || []);
 
   // Crew migration effect
   useEffect(() => {
@@ -1505,6 +1699,7 @@ export function AppProvider({ children }) {
   const [newShipDoc, setNewShipDoc] = useState(() => createShipDocumentState());
   const [weatherInfo, setWeatherInfo] = useState(() => loadWeatherCache());
   const [weatherLoading, setWeatherLoading] = useState(() => !loadWeatherCache());
+  const [submittingPatrolId, setSubmittingPatrolId] = useState(null);
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [incidentMeta, setIncidentMeta] = useState(() => persistedState?.incidentMeta || {});
   const [deletedRecords, setDeletedRecords] = useState(() => createDeletedRecordsState(persistedState?.deletedRecords));
@@ -1522,6 +1717,8 @@ export function AppProvider({ children }) {
   const latestCloudSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
+
+// SOS Hooks moved to resolve TDZ
 
   // Computed values
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -1544,6 +1741,70 @@ export function AppProvider({ children }) {
   const isPic = currentUserRole === ACCESS_ROLES.PIC;
   const isPetugas = currentUserRole === ACCESS_ROLES.PETUGAS;
   const currentUserId = currentUserRecord?.id || null;
+
+  const handleSOSTrigger = useCallback((lat, lng) => {
+    if (!currentUserRecord) return;
+    const rawSOS = {
+      id: `sos-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+      senderUserId: currentUserRecord.id || 'unknown',
+      senderName: currentUserRecord.name || 'Unknown',
+      senderRole: currentUserRecord.role || 'petugas',
+      shipName: currentUserRecord.shipAssigned || 'Tidak diketahui',
+      lat: lat !== undefined ? lat : null,
+      lng: lng !== undefined ? lng : null,
+      triggeredAt: new Date().toISOString(),
+      confirmedBy: [],
+      status: 'active'
+    };
+    
+    // Default broad notification implementation
+    const rawNotif = {
+      id: `notif-sos-${Date.now()}`,
+      type: 'sos',
+      title: '🚨 DARURAT SOS',
+      message: `Tanda darurat dikirim oleh ${currentUserRecord.name || 'Seseorang'} dari ${currentUserRecord.shipAssigned || 'lokasi tidak diketahui'}.`,
+      senderName: currentUserRecord.name || 'Unknown',
+      senderRole: currentUserRecord.role || 'petugas',
+      targetUserIds: (usersData || []).map(u => u.id || 'unknown'), // Send to all users
+      readByUserIds: [],
+      route: 'home',
+      createdAt: new Date().toISOString(),
+    };
+
+    const newSOS = JSON.parse(JSON.stringify(rawSOS));
+    const notification = JSON.parse(JSON.stringify(rawNotif));
+
+    setActiveSOSAlert(newSOS);
+    setSosHistory(prev => [newSOS, ...prev]);
+    setNotifications(prev => [notification, ...prev]); 
+  }, [currentUserRecord, usersData]);
+
+  const handleSOSConfirm = useCallback(() => {
+    if (!activeSOSAlert || !currentUserId) return;
+    
+    const updatedSOS = JSON.parse(JSON.stringify({
+      ...activeSOSAlert,
+      confirmedBy: [...new Set([...activeSOSAlert.confirmedBy, currentUserId])]
+    }));
+    
+    setActiveSOSAlert(updatedSOS);
+    setSosHistory(prev => prev.map(s => s.id === updatedSOS.id ? updatedSOS : s));
+  }, [activeSOSAlert, currentUserId]);
+
+  const handleSOSDismiss = useCallback(() => {
+    if (!activeSOSAlert) return;
+    
+    const updatedSOS = JSON.parse(JSON.stringify({
+      ...activeSOSAlert,
+      status: 'resolved',
+      resolvedAt: new Date().toISOString(),
+      resolvedBy: currentUserRecord?.name || 'Sistem'
+    }));
+    
+    setActiveSOSAlert(null); // Clear active alert
+    setSosHistory(prev => prev.map(s => s.id === updatedSOS.id ? updatedSOS : s));
+  }, [activeSOSAlert, currentUserRecord]);
+
   const assignedShipForCurrentUser = useMemo(() => {
     if (!currentUserRecord) return null;
     return shipsData.find((ship) => (
@@ -1613,6 +1874,8 @@ export function AppProvider({ children }) {
     notifications,
     shipsData,
     usersData,
+    activeSOSAlert,
+    sosHistory,
   }), [
     activeShiftKey,
     checkpointsByShip,
@@ -1623,6 +1886,8 @@ export function AppProvider({ children }) {
     notifications,
     shipsData,
     usersData,
+    activeSOSAlert,
+    sosHistory,
   ]);
   const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
@@ -1738,6 +2003,8 @@ export function AppProvider({ children }) {
       notifications: stateSnapshot.notifications || [],
       shipsData: preparedShipsData,
       usersData: preparedUsersData,
+      activeSOSAlert: stateSnapshot.activeSOSAlert || null,
+      sosHistory: stateSnapshot.sosHistory || [],
     });
   }, [prepareCloudPhotoUrl]);
   const applyCloudSharedState = useCallback((nextState) => {
@@ -1763,6 +2030,8 @@ export function AppProvider({ children }) {
       notifications: sortNotifications(nextState.notifications || []),
       shipsData: nextShips,
       usersData: nextUsers,
+      activeSOSAlert: nextState.activeSOSAlert || null,
+      sosHistory: nextState.sosHistory || [],
     });
     const normalizedState = mergeSharedStateSnapshots({}, incomingState);
     const serializedState = serializeSharedStateSnapshot(normalizedState);
@@ -1793,6 +2062,8 @@ export function AppProvider({ children }) {
     setDeletedRecords(normalizedState.deletedRecords);
     setHistoryEntries(normalizedState.historyEntries);
     setNotifications(normalizedState.notifications);
+    setActiveSOSAlert(normalizedState.activeSOSAlert);
+    setSosHistory(normalizedState.sosHistory);
     return normalizedState;
   }, []);
   const getUsersByRole = useCallback((roles) => (
@@ -2336,14 +2607,20 @@ export function AppProvider({ children }) {
     if(isIncident) setIncidentForm(prev => ({...prev, photoUrl: url}));
     else setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], photoUrl: url } }));
   }, [activeForms, shouldForcePatrolCameraCapture]);
-  const handleSubmitPatrol = useCallback((id) => {
+  const handleSubmitPatrol = useCallback(async (id) => {
     if (!currentUserRecord || !operationalShip) return;
-    const now = new Date();
-    const timeString = formatAppTime(now);
     const currentCheckpoint = checkpoints.find(checkpoint => String(checkpoint.id) === String(id));
     if (!currentCheckpoint) return;
     const formState = activeForms[id];
-    if (!formState) return;
+    if (!formState || submittingPatrolId === id) return;
+
+    setSubmittingPatrolId(id);
+
+    try {
+      const now = new Date();
+      const timeString = formatAppTime(now);
+      const environmentSnapshot = await capturePatrolEnvironmentSnapshot(operationalShip);
+
     const submittedItem = {
       ...currentCheckpoint,
       incidentId: formState.type === 'temuan'
@@ -2357,6 +2634,9 @@ export function AppProvider({ children }) {
       updatedAt: now.toISOString(),
       shiftKey: currentShiftMeta.key,
       shipName: operationalShipName,
+      shipSnapshot: environmentSnapshot.shipSnapshot,
+      gpsSnapshot: environmentSnapshot.gpsSnapshot,
+      weatherSnapshot: environmentSnapshot.weatherSnapshot,
       photoUrl: formState.photoUrl,
       resultType: formState.type,
       penyebab: sanitizeMultilineText(formState.penyebab, 240),
@@ -2388,7 +2668,10 @@ export function AppProvider({ children }) {
         createdAt: submittedItem.completedAt,
       }]);
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, updateOperationalShipCheckpoints]);
+    } finally {
+      setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
+    }
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, submittingPatrolId, updateOperationalShipCheckpoints]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -2430,6 +2713,9 @@ export function AppProvider({ children }) {
       ...item,
       shipName: item.shipName || selectedHistoryEntry?.ship || operationalShipName,
       date: item.date || selectedHistoryEntry?.date || formatAppDate(),
+      shipSnapshot: item.shipSnapshot || null,
+      gpsSnapshot: item.gpsSnapshot || null,
+      weatherSnapshot: item.weatherSnapshot || null,
       readOnly: isReadOnly,
     });
   }, [selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
@@ -2513,12 +2799,7 @@ export function AppProvider({ children }) {
     if (!isAdmin || !activeShipId) return;
     setShipsData(prev => prev.map((ship) => {
       if (ship.id !== activeShipId) return ship;
-      const nextShip = { ...ship, ...updates };
-      return {
-        ...nextShip,
-        defaultCheckpointsInitialized: true,
-        customCheckpoints: normalizeShipCheckpointDefinitions(nextShip.customCheckpoints),
-      };
+      return normalizeShipRecord({ ...ship, ...updates });
     }));
   }, [isAdmin, activeShipId]);
   const openShipDocForm = useCallback(() => {
@@ -2697,6 +2978,14 @@ export function AppProvider({ children }) {
     setUserFormError('');
     setUserFormNotice('');
   }, []);
+  const handleAuthPhotoUpload = useCallback(async () => {
+    const dataUrl = await pickLocalImage();
+    if (!dataUrl) return;
+    const url = await saveImageToDB(dataUrl);
+    if (url) {
+      setAuthForm(prev => ({ ...prev, photoUrl: url }));
+    }
+  }, []);
   const handleUserPhotoUpload = useCallback(async () => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setUserFormData(prev => ({...prev, photoUrl: url})); }, []);
   const handleSaveUser = useCallback(async () => {
     if (!isAdmin) return;
@@ -2768,6 +3057,7 @@ export function AppProvider({ children }) {
       ...userFormData,
       name: safeName,
       role,
+      workerNumber: sanitizeText(userFormData.workerNumber, 40),
       email: safeEmail,
       password: '',
       ...authPayload,
@@ -2867,6 +3157,7 @@ export function AppProvider({ children }) {
       firebaseUid: isFirebaseUser ? (currentRecord?.firebaseUid || selectedUser.firebaseUid || null) : (authPayload?.firebaseUid ?? currentRecord?.firebaseUid ?? null),
       shipAssigned: nextShipAssigned,
       status: nextRole === ACCESS_ROLES.PETUGAS ? (nextShipAssigned ? (selectedUser.status || currentRecord?.status || 'active') : 'off-duty') : (selectedUser.status || currentRecord?.status || 'active'),
+      workerNumber: sanitizeText(selectedUser.workerNumber || '', 40),
       phone: sanitizePhone(selectedUser.phone || ''),
       address: sanitizeMultilineText(selectedUser.address || '', 180),
       emergencyName: sanitizeText(selectedUser.emergencyName || '', 80),
@@ -3079,12 +3370,13 @@ export function AppProvider({ children }) {
     if (!isAdmin) return;
     const safeName = sanitizeText(shipFormData.name, 80);
     if (!safeName) return;
-    const newShip = {
+    const newShip = normalizeShipRecord({
       id: 's' + Date.now(),
       ...shipFormData,
       name: safeName,
       imoNumber: sanitizeText(shipFormData.imoNumber, 20),
-      route: sanitizeText(shipFormData.route, 100),
+      routeLoading: sanitizeText(shipFormData.routeLoading, 100),
+      routeDischarge: sanitizeText(shipFormData.routeDischarge, 100),
       cargoType: sanitizeText(shipFormData.cargoType, 80),
       cargoAmount: sanitizeText(shipFormData.cargoAmount, 40),
       defaultCheckpointsInitialized: true,
@@ -3095,7 +3387,7 @@ export function AppProvider({ children }) {
       personnelNextMonth: [],
       documents: [],
       photoUrl: shipFormData.photoUrl || createPosterDataUrl(safeName, 'Armada Lokal', 2, false),
-    };
+    });
     setShipsData(prev => [...prev, newShip]);
     setShowShipForm(false);
     setShipFormData(createShipFormState());
@@ -3247,6 +3539,15 @@ export function AppProvider({ children }) {
     const safeEmail = sanitizeEmail(authForm.email);
     const passwordInput = sanitizeText(authForm.password, 120);
     const confirmPassword = sanitizeText(authForm.confirmPassword, 120);
+    const safeType = sanitizeText(authForm.type, 20) || 'BUJP';
+    const safeWorkerNumber = sanitizeText(authForm.workerNumber, 40);
+    const safePhone = sanitizePhone(authForm.phone);
+    const safeDob = sanitizeText(authForm.dob, 20);
+    const safeAddress = sanitizeMultilineText(authForm.address, 180);
+    const safeOfficeAddress = sanitizeMultilineText(authForm.officeAddress, 180);
+    const safeEmergencyName = sanitizeText(authForm.emergencyName, 80);
+    const safeEmergencyContact = sanitizePhone(authForm.emergencyContact);
+    const safeEmergencyRelation = sanitizeText(authForm.emergencyRelation, 40) || 'Orang Tua';
     const existingUser = usersData.find(user => (user.email || '').toLowerCase() === safeEmail) || null;
 
     if (!safeName || !safeEmail || !passwordInput || !confirmPassword) {
@@ -3285,7 +3586,8 @@ export function AppProvider({ children }) {
         id: existingUser?.id || `u${Date.now()}`,
         name: existingUser?.name || safeName,
         role: existingUser?.role || ACCESS_ROLES.PETUGAS,
-        type: existingUser?.type || sanitizeText(authForm.type, 20) || 'BUJP',
+        type: existingUser?.type || safeType,
+        workerNumber: existingUser?.workerNumber || safeWorkerNumber,
         status: existingUser?.status || 'off-duty',
         shipAssigned: existingUser?.shipAssigned || null,
         email: safeEmail,
@@ -3295,9 +3597,14 @@ export function AppProvider({ children }) {
         passwordHash: '',
         authProvider: 'firebase',
         firebaseUid: credential.user.uid,
-        phone: existingUser?.phone || sanitizePhone(authForm.phone),
-        emergencyRelation: existingUser?.emergencyRelation || 'Orang Tua',
-        photoUrl: existingUser?.photoUrl || createUserAvatar(existingUser?.name || safeName, usersData.length),
+        phone: existingUser?.phone || safePhone,
+        dob: existingUser?.dob || safeDob,
+        address: existingUser?.address || safeAddress,
+        officeAddress: existingUser?.officeAddress || safeOfficeAddress,
+        emergencyName: existingUser?.emergencyName || safeEmergencyName,
+        emergencyContact: existingUser?.emergencyContact || safeEmergencyContact,
+        emergencyRelation: existingUser?.emergencyRelation || safeEmergencyRelation,
+        photoUrl: existingUser?.photoUrl || authForm.photoUrl || createUserAvatar(existingUser?.name || safeName, usersData.length),
       }, usersData.length);
 
       setUsersData(prev => (
@@ -3518,13 +3825,13 @@ export function AppProvider({ children }) {
     // Theme
     currentPage, setCurrentPage, theme, setTheme, isOffline, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog, setConfirmDialog,
     // Auth
-    sessionUserId, authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleLogout,
+    sessionUserId, authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
     // User role
-    currentUserRecord, currentUser, currentUserRole, isAdmin, isPic, isPetugas,
+    currentUserRecord, currentUser, currentUserId, currentUserRole, isAdmin, isPic, isPetugas,
     // Core data
     checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, currentShiftSchedule, activeShiftKey, activeShiftGuardSnapshot,
     // Patrol
-    filteredCheckpoints, searchQuery, setSearchQuery, patrolTab, setPatrolTab, activeForms, setActiveForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
+    filteredCheckpoints, searchQuery, setSearchQuery, patrolTab, setPatrolTab, activeForms, setActiveForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, submittingPatrolId, completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
     // Ship
     operationalShip, operationalShipName, activeShipId, setActiveShipId, activeShip, shipDetailTab, setShipDetailTab, scheduleMonth, setScheduleMonth, showAssignPopup, setShowAssignPopup, assignPopupData, setAssignPopupData, handleConfirmAssign, isEditingShipInfo, setIsEditingShipInfo, editShipInfoData, setEditShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, setNewShipCp, newShipDoc, setNewShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
@@ -3542,12 +3849,14 @@ export function AppProvider({ children }) {
     historyEntries: visibleHistoryEntries, selectedHistoryEntry, setSelectedHistoryId, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     // Notifications
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
+    // SOS
+    activeSOSAlert, sosHistory, handleSOSTrigger, handleSOSConfirm, handleSOSDismiss,
   }), [
     currentPage, theme, isOffline, showSettingsDropdown, showNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog,
-    sessionUserId, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout,
-    currentUserRecord, currentUser, currentUserRole, isAdmin, isPic, isPetugas,
+    sessionUserId, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
+    currentUserRecord, currentUser, currentUserId, currentUserRole, isAdmin, isPic, isPetugas,
     checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, currentShiftSchedule, activeShiftKey, activeShiftGuardSnapshot,
-    filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, completedCount, totalCount, progressPercentage, newCustomNode,
+    filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, submittingPatrolId, completedCount, totalCount, progressPercentage, newCustomNode,
     handleActionClick, handleFormChange, handlePhotoUpload, handleSubmitPatrol, handleDeleteReport, handleOpenPatrolResult, handleAddCustomPatrolNode, closePatrolCameraCapture, handlePatrolCameraCapture,
     operationalShip, operationalShipName, activeShipId, activeShip, shipDetailTab, scheduleMonth, showAssignPopup, assignPopupData, isEditingShipInfo, editShipInfoData, updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate, handleChangeSchedule, handleAddShipDoc, handleShipDocUpload, handleDownloadShipDoc, newShipCp, newShipDoc, showShipDocForm, openShipDocForm, closeShipDocForm,
     showShipForm, shipFormData, newCheckpoint, handleSaveShip, handleDeleteShip, handleAddCheckpointToForm, handleRemoveCheckpointFromForm, handleShipFormPhotoUpload,
@@ -3558,6 +3867,7 @@ export function AppProvider({ children }) {
     weatherInfo, weatherLoading, getWeatherDetail,
     visibleHistoryEntries, selectedHistoryEntry, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
+    activeSOSAlert, sosHistory, handleSOSTrigger, handleSOSConfirm, handleSOSDismiss,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

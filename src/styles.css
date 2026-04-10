@@ -250,3 +250,21 @@ textarea {
   color: #9ca3af !important;
 }
 
+/* SOS Animations */
+@keyframes sosFlash {
+  0%, 100% { background-color: rgba(69, 10, 10, 0.9); }
+  50% { background-color: rgba(127, 29, 29, 0.95); }
+}
+
+.animate-sos-flash {
+  animation: sosFlash 1s ease-in-out infinite;
+}
+
+@keyframes scaleUpCenter {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.scale-up-center {
+  animation: scaleUpCenter 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}

@@ -97,8 +97,14 @@ export default function UserDetailView({ isInline = false }) {
                 <option value="TNI">TNI</option>
                 <option value="POLRI">POLRI</option>
                 <option value="INTERNAL">INTERNAL</option>
+                <option value="Kru Kapal">Kru Kapal</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Nomor Pekerja</label>
+            <input type="text" value={selectedUser.workerNumber || ''} onChange={e => setSelectedUser({ ...selectedUser, workerNumber: e.target.value })} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
           </div>
 
           <div className="grid grid-cols-2 gap-3 pt-2 border-t border-cyan-900/30">

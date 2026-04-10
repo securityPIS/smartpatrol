@@ -23,7 +23,7 @@ function formatPatrolFormTimestamp(value = new Date()) {
 }
 
 export default function PatrolFormView({ isInline = false }) {
-  const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol, shouldForcePatrolCameraCapture } = useApp();
+  const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol, shouldForcePatrolCameraCapture, submittingPatrolId } = useApp();
   const [formClock, setFormClock] = React.useState(() => Date.now());
 
   React.useEffect(() => {
@@ -46,6 +46,7 @@ export default function PatrolFormView({ isInline = false }) {
   }
 
   const formTimestamp = formatPatrolFormTimestamp(formClock);
+  const isSubmitting = submittingPatrolId === activePatrolItem.id;
 
   return (
     <div className={`flex flex-col h-full bg-[#0b1229] ${isInline ? 'border-l border-cyan-900/50' : 'max-w-md w-full border rounded-2xl shadow-2xl overflow-hidden' } transition-all ${activePatrolState.type === 'temuan' ? 'border-yellow-500/50 shadow-[0_0_50px_rgba(250,204,21,0.1)]' : 'border-emerald-500/50 shadow-[0_0_50px_rgba(16,185,129,0.1)]'}`}>
@@ -112,12 +113,12 @@ export default function PatrolFormView({ isInline = false }) {
       
       <div className="p-4 bg-[#070b19] border-t border-cyan-900/50">
         <button 
-          disabled={!activePatrolState.photoUrl} 
+          disabled={!activePatrolState.photoUrl || isSubmitting} 
           onClick={() => handleSubmitPatrol(activePatrolItem.id)} 
-          className={`w-full py-4 rounded-xl font-black tracking-widest uppercase text-xs flex items-center justify-center gap-2 transition-all ${activePatrolState.photoUrl ? (activePatrolState.type === 'temuan' ? 'bg-yellow-600 hover:bg-yellow-500 text-black shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)]') : 'bg-[#0b1229] border border-cyan-900 text-cyan-700 cursor-not-allowed'}`}
+          className={`w-full py-4 rounded-xl font-black tracking-widest uppercase text-xs flex items-center justify-center gap-2 transition-all ${activePatrolState.photoUrl && !isSubmitting ? (activePatrolState.type === 'temuan' ? 'bg-yellow-600 hover:bg-yellow-500 text-black shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)]') : 'bg-[#0b1229] border border-cyan-900 text-cyan-700 cursor-not-allowed'}`}
         >
-          {activePatrolState.photoUrl ? <Send className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-          {activePatrolState.photoUrl ? 'Sync Laporan' : 'Butuh Visual'}
+          {activePatrolState.photoUrl && !isSubmitting ? <Send className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+          {isSubmitting ? 'Syncing...' : activePatrolState.photoUrl ? 'Sync Laporan' : 'Butuh Visual'}
         </button>
       </div>
     </div>

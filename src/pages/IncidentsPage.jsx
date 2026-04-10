@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { AlertOctagon, PlusCircle, User } from 'lucide-react';
+import { AlertOctagon, PlusCircle, User, Search, Ship, CalendarDays, Filter, FilterX } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 
 import IncidentDetailView from '../components/views/IncidentDetailView';
@@ -18,6 +18,11 @@ const IncidentsPage = React.memo(function IncidentsPage() {
     showIncidentModal,
   } = useApp();
   const [statusFilter, setStatusFilter] = React.useState('open');
+  const [showFilters, setShowFilters] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [shipFilter, setShipFilter] = React.useState('');
+  const [startDateFilter, setStartDateFilter] = React.useState('');
+  const [endDateFilter, setEndDateFilter] = React.useState('');
 
   const showRightPane = (selectedIncident && !selectedIncident.isPatrol) || showIncidentModal;
   const handleIncidentSelect = (incident) => {
@@ -42,7 +47,35 @@ const IncidentsPage = React.memo(function IncidentsPage() {
 
     return { open, closed };
   }, [incidentMeta, visibleIncidents]);
-  const filteredIncidents = statusFilter === 'closed' ? incidentGroups.closed : incidentGroups.open;
+  const shipOptions = React.useMemo(() => (
+    Array.from(new Set(visibleIncidents.map(incident => incident.shipName).filter(Boolean))).sort((left, right) => left.localeCompare(right))
+  ), [visibleIncidents]);
+  const filteredIncidentPool = React.useMemo(() => {
+    const lookup = searchQuery.trim().toLowerCase();
+
+    return visibleIncidents.filter((incident) => {
+      const incidentDateKey = String(incident.createdAt || '').slice(0, 10) || '';
+      const incidentShip = incident.shipName || operationalShipName || '';
+      const searchableText = [
+        incident.location,
+        incident.deskripsi,
+        incident.reportedBy,
+        incidentShip,
+      ].join(' ').toLowerCase();
+
+      if (lookup && !searchableText.includes(lookup)) return false;
+      if (shipFilter && incidentShip !== shipFilter) return false;
+      if (startDateFilter && incidentDateKey && incidentDateKey < startDateFilter) return false;
+      if (endDateFilter && incidentDateKey && incidentDateKey > endDateFilter) return false;
+      return true;
+    });
+  }, [endDateFilter, operationalShipName, searchQuery, shipFilter, startDateFilter, visibleIncidents]);
+  const hasActiveFilter = Boolean(searchQuery || shipFilter || startDateFilter || endDateFilter);
+  const filteredIncidentIds = React.useMemo(() => new Set(filteredIncidentPool.map(incident => incident.id)), [filteredIncidentPool]);
+  const filteredIncidents = React.useMemo(() => {
+    const source = statusFilter === 'closed' ? incidentGroups.closed : incidentGroups.open;
+    return source.filter(incident => filteredIncidentIds.has(incident.id));
+  }, [filteredIncidentIds, incidentGroups.closed, incidentGroups.open, statusFilter]);
 
   React.useEffect(() => {
     if (!selectedIncident) return;
@@ -58,9 +91,22 @@ const IncidentsPage = React.memo(function IncidentsPage() {
            <h2 className="text-xl font-bold text-yellow-400 flex items-center gap-2 drop-shadow-[0_0_5px_rgba(250,204,21,0.5)]">
              <AlertOctagon className="w-5 h-5" /> Pelaporan Temuan
            </h2>
-           <button onClick={openIncidentModal} className="px-3 py-1.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 text-xs font-bold rounded-lg flex items-center gap-1 shadow-[0_0_10px_rgba(250,204,21,0.2)] hover:bg-yellow-500/30 transition-all active:scale-95">
-             <PlusCircle className="w-3.5 h-3.5" /> Lapor Baru
-           </button>
+           <div className="flex items-center gap-2">
+             <button
+               type="button"
+               onClick={() => setShowFilters(previousValue => !previousValue)}
+               className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1 transition-all active:scale-95 ${
+                 showFilters || hasActiveFilter
+                   ? 'bg-cyan-500/10 text-cyan-200 border-cyan-400/50'
+                   : 'bg-cyan-900/20 text-cyan-400 border-cyan-800/60 hover:bg-cyan-900/30'
+               }`}
+             >
+               <Filter className="w-3.5 h-3.5" /> Filter
+             </button>
+             <button onClick={openIncidentModal} className="px-3 py-1.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 text-xs font-bold rounded-lg flex items-center gap-1 shadow-[0_0_10px_rgba(250,204,21,0.2)] hover:bg-yellow-500/30 transition-all active:scale-95">
+               <PlusCircle className="w-3.5 h-3.5" /> Lapor Baru
+             </button>
+           </div>
         </div>
         <div className="flex items-center gap-2 rounded-2xl border border-cyan-900/50 bg-[#0b1229] p-1.5">
           <button
@@ -84,12 +130,76 @@ const IncidentsPage = React.memo(function IncidentsPage() {
             </div>
           </button>
         </div>
+
+        {showFilters && (
+          <div className="bg-[#0b1229] border border-cyan-800/50 rounded-2xl p-4 space-y-3">
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Cari lokasi, kapal, pelapor, atau deskripsi..."
+                className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl py-3 pl-10 pr-4 text-sm text-cyan-50 focus:border-cyan-400 outline-none"
+              />
+              <Search className="w-4 h-4 text-cyan-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Nama Kapal</label>
+                <div className="relative">
+                  <select value={shipFilter} onChange={(event) => setShipFilter(event.target.value)} className="w-full appearance-none bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 pl-10 text-sm text-cyan-50 focus:border-cyan-400 outline-none">
+                    <option value="">Semua Kapal</option>
+                    {shipOptions.map((shipName) => (
+                      <option key={shipName} value={shipName}>{shipName}</option>
+                    ))}
+                  </select>
+                  <Ship className="w-4 h-4 text-cyan-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Dari Tanggal</label>
+                  <div className="relative">
+                    <input type="date" value={startDateFilter} onChange={(event) => setStartDateFilter(event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 pl-10 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+                    <CalendarDays className="w-4 h-4 text-cyan-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Sampai Tanggal</label>
+                  <div className="relative">
+                    <input type="date" value={endDateFilter} onChange={(event) => setEndDateFilter(event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 pl-10 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+                    <CalendarDays className="w-4 h-4 text-cyan-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {hasActiveFilter && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setShipFilter('');
+                    setStartDateFilter('');
+                    setEndDateFilter('');
+                  }}
+                  className="px-4 py-2 rounded-xl border border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/30 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
+                >
+                  <FilterX className="w-4 h-4" />
+                  Reset
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         
          {filteredIncidents.length === 0 ? (
             <div className="p-8 text-center border border-dashed border-cyan-900/50 rounded-xl">
               <AlertOctagon className="w-10 h-10 text-cyan-900 mx-auto mb-2" />
               <p className="text-cyan-600 text-sm font-bold uppercase tracking-widest">
-                {statusFilter === 'closed' ? 'Belum Ada Temuan Closed' : 'Belum Ada Temuan Open'}
+                {hasActiveFilter ? 'Temuan Tidak Ditemukan' : (statusFilter === 'closed' ? 'Belum Ada Temuan Closed' : 'Belum Ada Temuan Open')}
               </p>
             </div>
          ) : (

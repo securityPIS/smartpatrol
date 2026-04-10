@@ -20,6 +20,7 @@ import { ShipDocumentFormModal, ShipFormModal, UserFormModal } from './src/compo
 import { UserDetailModal, ReportDetailModal, PhotoPreviewModal } from './src/components/modals/DetailModals';
 import ConfirmModal from './src/components/modals/ConfirmModal';
 import AssignDueDatePopup from './src/components/modals/AssignDueDatePopup';
+import SOSAlertModal from './src/components/modals/SOSAlertModal';
 
 import SideNav from './src/components/SideNav';
 
@@ -79,6 +80,7 @@ function AppShell() {
         isAlert={confirmDialog?.isAlert}
       />
       <AssignDueDatePopup />
+      <SOSAlertModal />
     </div>
   );
 }

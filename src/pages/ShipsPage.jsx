@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp, SHIP_STATUS_OPTIONS } from '../context/AppContext';
 import {
   Anchor, PlusCircle, Users, ShieldAlert, Ship, ChevronDown, ImageIcon,
   Navigation, Package, Weight, CalendarClock, UserMinus, UserPlus, Trash2, FilePlus, FileText, Download
@@ -46,6 +46,10 @@ function DocumentTypeIcon({ document }) {
 
 import ShipFormView from '../components/views/ShipFormView';
 import ShipDocumentFormView from '../components/views/ShipDocumentFormView';
+
+function usesSplitVoyageRoute(status) {
+  return status === 'Operasional' || status === 'Situasional';
+}
 
 const ShipsPage = React.memo(function ShipsPage() {
   const {
@@ -143,8 +147,15 @@ const ShipsPage = React.memo(function ShipsPage() {
                   <>
                     <button onClick={() => { setEditShipInfoData(activeShip); setIsEditingShipInfo(true); }} className="absolute top-4 right-4 text-[10px] bg-cyan-900/50 text-cyan-300 px-2.5 py-1.5 rounded-lg border border-cyan-700 hover:bg-cyan-600 hover:text-white transition-colors shadow-sm font-bold tracking-widest uppercase">Edit Data</button>
                     <div>
-                      <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">{activeShip.status === 'UPP' ? 'Lokasi Sandar' : 'Rute Pelayaran'}</p>
-                      <p className="text-sm text-cyan-50 font-medium flex items-center gap-2"><Navigation className="w-4 h-4 text-cyan-400"/> {activeShip.route || 'Belum diatur'}</p>
+                      <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">{usesSplitVoyageRoute(activeShip.status) ? 'Rute Pelayaran' : 'Lokasi / Keterangan'}</p>
+                      {usesSplitVoyageRoute(activeShip.status) ? (
+                        <div className="space-y-1.5 text-sm text-cyan-50 font-medium">
+                          <p className="flex items-center gap-2"><Navigation className="w-4 h-4 text-cyan-400"/> Loading: {activeShip.routeLoading || '-'}</p>
+                          <p className="flex items-center gap-2"><Navigation className="w-4 h-4 text-cyan-400"/> Discharge: {activeShip.routeDischarge || '-'}</p>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-cyan-50 font-medium flex items-center gap-2"><Navigation className="w-4 h-4 text-cyan-400"/> {activeShip.routeLoading || activeShip.route || 'Belum diatur'}</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">IMO Number</p>
@@ -170,14 +181,28 @@ const ShipsPage = React.memo(function ShipsPage() {
                     <div>
                       <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">Status</label>
                       <select value={editShipInfoData.status} onChange={e => setEditShipInfoData({...editShipInfoData, status: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none appearance-none">
-                        <option value="UPP">UPP</option>
-                        <option value="NON UPP">NON UPP</option>
+                        {SHIP_STATUS_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
                       </select>
                     </div>
-                    <div>
-                      <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">{editShipInfoData.status === 'UPP' ? 'Lokasi Sandar' : 'Rute Pelayaran'}</label>
-                      <input type="text" value={editShipInfoData.route} onChange={e => setEditShipInfoData({...editShipInfoData, route: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
-                    </div>
+                    {usesSplitVoyageRoute(editShipInfoData.status) ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">Loading</label>
+                          <input type="text" value={editShipInfoData.routeLoading || ''} onChange={e => setEditShipInfoData({...editShipInfoData, routeLoading: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">Discharge</label>
+                          <input type="text" value={editShipInfoData.routeDischarge || ''} onChange={e => setEditShipInfoData({...editShipInfoData, routeDischarge: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">Lokasi / Keterangan</label>
+                        <input type="text" value={editShipInfoData.routeLoading || ''} onChange={e => setEditShipInfoData({...editShipInfoData, routeLoading: e.target.value, routeDischarge: ''})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
+                      </div>
+                    )}
                     <div>
                       <label className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1.5 block">IMO Number</label>
                       <input type="text" value={editShipInfoData.imoNumber || ''} onChange={e => setEditShipInfoData({...editShipInfoData, imoNumber: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />

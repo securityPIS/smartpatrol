@@ -1,16 +1,17 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Shield, Ship, Eye, EyeOff } from 'lucide-react';
+import { Shield, Ship, Eye, EyeOff, Camera } from 'lucide-react';
+import AsyncImage from '../components/AsyncImage';
 
 export default function LoginPage() {
-  const { authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister } = useApp();
+  const { authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleAuthPhotoUpload } = useApp();
 
   const [showPassword, setShowPassword] = React.useState(false);
 
   return (
     <div style={{ fontFamily: '"Chakra Petch", sans-serif' }} className="w-full min-h-screen bg-[#070b19] text-cyan-50 sm:max-w-md sm:mx-auto sm:border-x sm:border-cyan-900/50 sm:shadow-[0_0_40px_rgba(6,182,212,0.1)] relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_42%),radial-gradient(circle_at_bottom,_rgba(250,204,21,0.08),_transparent_35%)]"></div>
-      <div className="relative min-h-screen flex flex-col justify-center px-5 py-8">
+      <div className={`relative min-h-screen flex flex-col px-5 py-8 ${authMode === 'register' ? 'justify-start' : 'justify-center'}`}>
         <div className="mb-6">
           <div className="flex items-center gap-4 mb-6">
             <div className="relative w-16 h-16 flex items-center justify-center">
@@ -37,18 +38,43 @@ export default function LoginPage() {
 
           {authMode === 'register' && (
             <>
+              <div className="flex flex-col items-center mb-2">
+                {!authForm.photoUrl ? (
+                  <button onClick={handleAuthPhotoUpload} className="w-24 h-24 rounded-2xl border-2 border-dashed border-cyan-500/50 bg-[#070b19] flex flex-col items-center justify-center text-cyan-500 hover:text-cyan-300 hover:border-cyan-400 transition-colors shadow-sm">
+                    <Camera className="w-6 h-6 mb-1" />
+                    <span className="text-[9px] font-bold">FOTO</span>
+                  </button>
+                ) : (
+                  <div className="relative w-24 h-24 rounded-2xl overflow-hidden border-2 border-cyan-500 shadow-md">
+                    <AsyncImage src={authForm.photoUrl} alt="Foto profil registrasi" className="w-full h-full object-cover" />
+                    <button onClick={() => setAuthForm({ ...authForm, photoUrl: null })} className="absolute bottom-0 inset-x-0 bg-rose-500/90 py-1 text-[9px] text-white font-bold hover:bg-rose-600 transition-colors">
+                      HAPUS
+                    </button>
+                  </div>
+                )}
+              </div>
               <div>
                 <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Nama Lengkap</label>
                 <input type="text" value={authForm.name} onChange={e => setAuthForm({ ...authForm, name: e.target.value })} placeholder="Masukkan nama lengkap" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
               </div>
-              <div>
-                <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Instansi</label>
-                <select value={authForm.type} onChange={e => setAuthForm({ ...authForm, type: e.target.value })} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none appearance-none shadow-sm">
-                  <option value="BUJP">BUJP</option>
-                  <option value="TNI">TNI</option>
-                  <option value="POLRI">POLRI</option>
-                  <option value="INTERNAL">INTERNAL</option>
-                </select>
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                Role akun akan ditentukan admin setelah registrasi. Form ini hanya mengisi data profil user.
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Instansi</label>
+                  <select value={authForm.type} onChange={e => setAuthForm({ ...authForm, type: e.target.value })} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none appearance-none shadow-sm">
+                    <option value="BUJP">BUJP</option>
+                    <option value="TNI">TNI</option>
+                    <option value="POLRI">POLRI</option>
+                    <option value="INTERNAL">INTERNAL</option>
+                    <option value="Kru Kapal">Kru Kapal</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Nomor Pekerja</label>
+                  <input type="text" value={authForm.workerNumber} onChange={e => setAuthForm({ ...authForm, workerNumber: e.target.value })} placeholder="Contoh: PKJ-001245" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
+                </div>
               </div>
             </>
           )}
@@ -67,10 +93,57 @@ export default function LoginPage() {
           </div>
 
           {authMode === 'register' && (
-            <div>
-              <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Konfirmasi Password</label>
-              <input type="password" value={authForm.confirmPassword} onChange={e => setAuthForm({ ...authForm, confirmPassword: e.target.value })} placeholder="********" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
-            </div>
+            <>
+              <div>
+                <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Konfirmasi Password</label>
+                <input type="password" value={authForm.confirmPassword} onChange={e => setAuthForm({ ...authForm, confirmPassword: e.target.value })} placeholder="********" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">No Telpon</label>
+                  <input type="tel" value={authForm.phone} onChange={e => setAuthForm({ ...authForm, phone: e.target.value })} placeholder="0812..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Tgl Lahir</label>
+                  <input type="date" value={authForm.dob} onChange={e => setAuthForm({ ...authForm, dob: e.target.value })} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm [color-scheme:dark]" />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Alamat Rumah</label>
+                <textarea rows={2} value={authForm.address} onChange={e => setAuthForm({ ...authForm, address: e.target.value })} placeholder="Alamat domisili..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm resize-none" />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Alamat Kantor</label>
+                <textarea rows={2} value={authForm.officeAddress} onChange={e => setAuthForm({ ...authForm, officeAddress: e.target.value })} placeholder="Alamat kantor / posko..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm resize-none" />
+              </div>
+
+              <div className="p-4 border border-rose-900/50 bg-rose-950/10 rounded-xl space-y-4">
+                <p className="text-[10px] text-rose-500 font-bold uppercase tracking-widest border-b border-rose-900/30 pb-2">Kontak Darurat</p>
+                <div>
+                  <label className="text-[10px] font-mono text-rose-400 mb-1.5 block uppercase tracking-widest pl-1">Nama</label>
+                  <input type="text" value={authForm.emergencyName} onChange={e => setAuthForm({ ...authForm, emergencyName: e.target.value })} placeholder="Nama kontak darurat" className="w-full bg-[#070b19] border border-rose-900/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-rose-500 outline-none shadow-sm" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-mono text-rose-400 mb-1.5 block uppercase tracking-widest pl-1">No. HP</label>
+                    <input type="tel" value={authForm.emergencyContact} onChange={e => setAuthForm({ ...authForm, emergencyContact: e.target.value })} placeholder="08..." className="w-full bg-[#070b19] border border-rose-900/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-rose-500 outline-none shadow-sm" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-mono text-rose-400 mb-1.5 block uppercase tracking-widest pl-1">Hubungan</label>
+                    <select value={authForm.emergencyRelation} onChange={e => setAuthForm({ ...authForm, emergencyRelation: e.target.value })} className="w-full bg-[#070b19] border border-rose-900/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-rose-500 outline-none appearance-none shadow-sm">
+                      <option value="Orang Tua">Orang Tua</option>
+                      <option value="Suami/Istri">Suami/Istri</option>
+                      <option value="Anak">Anak</option>
+                      <option value="Saudara">Saudara</option>
+                      <option value="Rekan Kerja">Rekan Kerja</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </>
           )}
 
           <button onClick={authMode === 'login' ? handleLogin : handleRegister} disabled={authBusy} className="w-full py-4 bg-cyan-600 hover:bg-cyan-500 text-white font-black uppercase tracking-widest text-xs rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] disabled:opacity-50 flex items-center justify-center gap-2">

@@ -1,7 +1,11 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useApp, SHIP_STATUS_OPTIONS } from '../../context/AppContext';
 import { ChevronDown, Camera, Trash2, Save, Plus, Map, Package, Weight, Hash } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
+
+function usesSplitVoyageRoute(status) {
+  return status === 'Operasional' || status === 'Situasional';
+}
 
 export default function ShipFormView({ isInline = false }) {
   const { 
@@ -50,10 +54,17 @@ export default function ShipFormView({ isInline = false }) {
           <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Nama Kapal</label><input type="text" value={shipFormData.name} onChange={e => setShipFormData({...shipFormData, name: e.target.value})} placeholder="Contoh: MT GATOTKACA" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Tipe Kapal</label><select value={shipFormData.type} onChange={e => setShipFormData({...shipFormData, type: e.target.value})} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none appearance-none shadow-sm"><option>Oil Tanker</option><option>Chemical Tanker</option><option>Gas Carrier</option><option>Bulk Carrier</option></select></div>
-            <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Status</label><select value={shipFormData.status} onChange={e => setShipFormData({...shipFormData, status: e.target.value})} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none appearance-none shadow-sm"><option value="UPP">UPP</option><option value="NON UPP">NON UPP</option></select></div>
+            <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1">Status</label><select value={shipFormData.status} onChange={e => setShipFormData({...shipFormData, status: e.target.value, routeDischarge: e.target.value === 'Non Operasional' ? '' : shipFormData.routeDischarge})} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none appearance-none shadow-sm">{SHIP_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></div>
           </div>
           <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1 flex items-center gap-1"><Hash className="w-3 h-3"/> IMO Number</label><input type="text" value={shipFormData.imoNumber} onChange={e => setShipFormData({...shipFormData, imoNumber: e.target.value})} placeholder="Contoh: 9387421" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>
-          <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1 flex items-center gap-1"><Map className="w-3 h-3"/> {shipFormData.status === 'UPP' ? 'Lokasi Sandar' : 'Rute Pelayaran'}</label><input type="text" value={shipFormData.route} onChange={e => setShipFormData({...shipFormData, route: e.target.value})} placeholder={shipFormData.status === 'UPP' ? "Contoh: Pelabuhan Merak" : "Contoh: Jakarta - Dumai"} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>
+          {usesSplitVoyageRoute(shipFormData.status) ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1 flex items-center gap-1"><Map className="w-3 h-3"/> Loading</label><input type="text" value={shipFormData.routeLoading} onChange={e => setShipFormData({...shipFormData, routeLoading: e.target.value})} placeholder="Contoh: Jakarta" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>
+              <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1 flex items-center gap-1"><Map className="w-3 h-3"/> Discharge</label><input type="text" value={shipFormData.routeDischarge} onChange={e => setShipFormData({...shipFormData, routeDischarge: e.target.value})} placeholder="Contoh: Dumai" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>
+            </div>
+          ) : (
+            <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1 flex items-center gap-1"><Map className="w-3 h-3"/> Lokasi / Keterangan</label><input type="text" value={shipFormData.routeLoading} onChange={e => setShipFormData({...shipFormData, routeLoading: e.target.value, routeDischarge: ''})} placeholder="Contoh: Docking / Non Operasional" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1 flex items-center gap-1"><Package className="w-3 h-3"/> Jenis Muatan</label><input type="text" value={shipFormData.cargoType} onChange={e => setShipFormData({...shipFormData, cargoType: e.target.value})} placeholder="Crude Oil" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>
             <div><label className="text-[10px] font-mono text-cyan-400 mb-1.5 block uppercase tracking-widest pl-1 flex items-center gap-1"><Weight className="w-3 h-3"/> Jumlah</label><input type="text" value={shipFormData.cargoAmount} onChange={e => setShipFormData({...shipFormData, cargoAmount: e.target.value})} placeholder="30,000 MT" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" /></div>

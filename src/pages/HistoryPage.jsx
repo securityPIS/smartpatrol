@@ -16,22 +16,33 @@ const HistoryPage = React.memo(function HistoryPage() {
   const [summaryDetailType, setSummaryDetailType] = React.useState(null);
   const [showFilters, setShowFilters] = React.useState(false);
   const [shipFilter, setShipFilter] = React.useState('');
+  const [shiftFilter, setShiftFilter] = React.useState('');
   const [startDateFilter, setStartDateFilter] = React.useState('');
   const [endDateFilter, setEndDateFilter] = React.useState('');
 
   const shipOptions = React.useMemo(() => (
     Array.from(new Set(historyEntries.map(entry => entry.ship).filter(Boolean))).sort((left, right) => left.localeCompare(right))
   ), [historyEntries]);
+  const shiftOptions = React.useMemo(() => (
+    Array.from(
+      new Set(
+        historyEntries
+          .map(entry => entry.shift)
+          .filter(shift => shift && !/^Shift [1-4]$/i.test(String(shift)))
+      )
+    ).sort((left, right) => left.localeCompare(right))
+  ), [historyEntries]);
 
   const filteredHistoryEntries = React.useMemo(() => historyEntries.filter((entry) => {
     const entryDateKey = String(entry.dateKey || '');
     if (shipFilter && entry.ship !== shipFilter) return false;
+    if (shiftFilter && entry.shift !== shiftFilter) return false;
     if (startDateFilter && entryDateKey && entryDateKey < startDateFilter) return false;
     if (endDateFilter && entryDateKey && entryDateKey > endDateFilter) return false;
     return true;
-  }), [endDateFilter, historyEntries, shipFilter, startDateFilter]);
+  }), [endDateFilter, historyEntries, shipFilter, shiftFilter, startDateFilter]);
 
-  const hasActiveFilter = Boolean(shipFilter || startDateFilter || endDateFilter);
+  const hasActiveFilter = Boolean(shipFilter || shiftFilter || startDateFilter || endDateFilter);
 
   const handleEntryClick = (id) => {
     // If we are on mobile (screen < 1024px), we navigate to the home page as before
@@ -247,7 +258,7 @@ const HistoryPage = React.memo(function HistoryPage() {
         </div>
         {showFilters && (
           <div className="bg-[#0b1229] border border-cyan-800/50 rounded-xl p-4 space-y-3">
-            <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_1fr_auto] gap-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Nama Kapal</label>
                 <div className="relative">
@@ -261,6 +272,18 @@ const HistoryPage = React.memo(function HistoryPage() {
                 </div>
               </div>
               <div>
+                <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Shift</label>
+                <div className="relative">
+                  <select value={shiftFilter} onChange={(event) => setShiftFilter(event.target.value)} className="w-full appearance-none bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 pl-10 text-sm text-cyan-50 focus:border-cyan-400 outline-none">
+                    <option value="">Semua Shift</option>
+                    {shiftOptions.map((shiftName) => (
+                      <option key={shiftName} value={shiftName}>{shiftName}</option>
+                    ))}
+                  </select>
+                  <Clock className="w-4 h-4 text-cyan-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+              <div>
                 <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Dari Tanggal</label>
                 <input type="date" value={startDateFilter} onChange={(event) => setStartDateFilter(event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
               </div>
@@ -268,11 +291,12 @@ const HistoryPage = React.memo(function HistoryPage() {
                 <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Sampai Tanggal</label>
                 <input type="date" value={endDateFilter} onChange={(event) => setEndDateFilter(event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
               </div>
-              <div className="flex items-end">
+              <div className="flex items-end lg:col-span-2">
                 <button
                   type="button"
                   onClick={() => {
                     setShipFilter('');
+                    setShiftFilter('');
                     setStartDateFilter('');
                     setEndDateFilter('');
                   }}
@@ -310,24 +334,24 @@ const HistoryPage = React.memo(function HistoryPage() {
                     <p className="text-sm text-cyan-500/80 flex items-center gap-1 mt-0.5"><CalendarDays className="w-3 h-3" /> {data.date}</p>
                 </div>
               </div>
-              <div className="text-right flex items-start gap-2">
-                {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleDeleteHistoryEntry(data.id);
-                    }}
-                    className="p-2 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors"
-                    aria-label="Hapus riwayat patroli"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-                <div className="text-right">
-                <span className="inline-block px-2 py-1 bg-[#070b19] text-cyan-400 rounded text-xs font-bold border border-cyan-800">{data.shift}</span>
-                <p className="text-[10px] text-cyan-600 mt-1 flex items-center justify-end gap-1"><Clock className="w-3 h-3"/> {data.time}</p>
+              <div className="text-right">
+                <div className="flex items-center justify-end gap-2">
+                  <span className="inline-block px-2 py-1 bg-[#070b19] text-cyan-400 rounded text-xs font-bold border border-cyan-800">{data.shift}</span>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleDeleteHistoryEntry(data.id);
+                      }}
+                      className="p-2 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors"
+                      aria-label="Hapus riwayat patroli"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
+                <p className="text-[10px] text-cyan-600 mt-1 flex items-center justify-end gap-1"><Clock className="w-3 h-3"/> {data.time}</p>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2 border-t border-cyan-900/50 pt-3 opacity-80 group-hover:opacity-100">

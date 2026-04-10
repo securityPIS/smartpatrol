@@ -1,14 +1,14 @@
 import React from 'react';
-import { useApp, ACCESS_ROLES } from '../context/AppContext';
-import { Shield, Ship, UserCog, Moon, Sun, LogOut, Settings, Wifi, WifiOff, Bell } from 'lucide-react';
+import { useApp } from '../context/AppContext';
+import { Shield, Ship, UserCog, Moon, Sun, LogOut, Settings, Wifi, WifiOff, Users, Anchor } from 'lucide-react';
 
 const Header = React.memo(function Header() {
   const {
     currentUser, currentUserRecord, currentUserRole, isAdmin, isPic,
-    theme, setTheme, isOffline,
+    theme, setTheme, isOffline, setCurrentPage, setActiveShipId,
     showSettingsDropdown, setShowSettingsDropdown, setShowNotificationsDropdown,
-    unreadNotificationCount, openNotificationsPage,
-    clearUserManagementFeedback, setSelectedUser, setShowUserForm, handleLogout
+    clearUserManagementFeedback, setSelectedUser, setShowUserForm, handleLogout,
+    setShowShipForm, closeShipDocForm, setIsEditingShipInfo
   } = useApp();
 
   return (
@@ -36,16 +36,6 @@ const Header = React.memo(function Header() {
           )}
         </div>
         <div className="relative z-50">
-          <button onClick={openNotificationsPage} className="relative p-1.5 rounded-full border border-cyan-700 text-cyan-300 hover:bg-cyan-900/40 transition-colors flex items-center justify-center" aria-label="Notifikasi">
-            <Bell className="w-5 h-5" />
-            {unreadNotificationCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center border border-[#0b1229]">
-                {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-              </span>
-            )}
-          </button>
-        </div>
-        <div className="relative z-50">
           <button onClick={() => { setShowSettingsDropdown(!showSettingsDropdown); setShowNotificationsDropdown(false); }} className="p-1.5 rounded-full border border-cyan-700 text-cyan-300 hover:bg-cyan-900/40 transition-colors flex items-center justify-center" aria-label="Pengaturan">
             <Settings className="w-5 h-5" />
           </button>
@@ -65,6 +55,36 @@ const Header = React.memo(function Header() {
               >
                 <UserCog className="w-4 h-4" /> Edit Data Saya
               </button>
+              {isAdmin && (
+                <>
+                  <button
+                    onClick={() => {
+                      clearUserManagementFeedback();
+                      setShowUserForm(false);
+                      setSelectedUser(null);
+                      setActiveShipId(null);
+                      setCurrentPage('users');
+                      setShowSettingsDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50"
+                  >
+                    <Users className="w-4 h-4" /> Menu User
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowShipForm(false);
+                      closeShipDocForm();
+                      setIsEditingShipInfo(false);
+                      setActiveShipId(null);
+                      setCurrentPage('ships');
+                      setShowSettingsDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50"
+                  >
+                    <Anchor className="w-4 h-4" /> Menu Armada
+                  </button>
+                </>
+              )}
               <div className="border-t border-cyan-900/50 my-1"></div>
               <button onClick={() => { handleLogout('Anda berhasil logout dari SmartPatrol.'); setShowSettingsDropdown(false); }} className="w-full text-left px-4 py-2 text-xs font-bold text-rose-400 flex items-center gap-2 hover:bg-cyan-900/50">
                 <LogOut className="w-4 h-4" /> Logout
