@@ -42,6 +42,28 @@ function getCompletionPercentage(summary = {}) {
   return Math.round((completed / total) * 100);
 }
 
+function getCheckpointSortTimestamp(checkpoint) {
+  const timestamp = new Date(
+    checkpoint?.completedAt
+    || checkpoint?.updatedAt
+    || checkpoint?.createdAt
+    || 0,
+  ).getTime();
+
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function getLatestCompletedCheckpoint(checkpoints = []) {
+  return checkpoints.reduce((latestCheckpoint, checkpoint) => {
+    if (checkpoint?.status !== 'completed') return latestCheckpoint;
+    if (!latestCheckpoint) return checkpoint;
+
+    return getCheckpointSortTimestamp(checkpoint) >= getCheckpointSortTimestamp(latestCheckpoint)
+      ? checkpoint
+      : latestCheckpoint;
+  }, null);
+}
+
 export default function HistoryDetailView({ isInline = false, entryData = null, onSummaryCardClick = null }) {
   const { 
     selectedHistoryEntry, operationalShip, operationalShipName,
@@ -64,14 +86,22 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
   }
 
   // Derived values (Logic moved from PatrolPage)
+  const checkpointEntries = entry.checkpoints || checkpoints;
+  const latestCompletedCheckpoint = React.useMemo(
+    () => getLatestCompletedCheckpoint(checkpointEntries),
+    [checkpointEntries],
+  );
   const displayShip = entry.shipSnapshot || operationalShip;
   const displayShipName = entry.ship || operationalShipName;
   const displayDate = entry.date;
   const displayShiftLabel = entry.shift;
   const displayShiftTime = entry.time;
-  const displayWeather = entry.weatherSnapshot || weatherInfo;
-  const displayWeatherLoading = !entry.weatherSnapshot && weatherLoading;
   const isLiveEntry = Boolean(entry.isLive);
+  const displayMapLocation = latestCompletedCheckpoint?.gpsSnapshot
+    || latestCompletedCheckpoint?.shipSnapshot
+    || displayShip;
+  const displayWeather = latestCompletedCheckpoint?.weatherSnapshot || entry.weatherSnapshot || weatherInfo;
+  const displayWeatherLoading = isLiveEntry && !latestCompletedCheckpoint?.weatherSnapshot && !entry.weatherSnapshot && weatherLoading;
 
   const summaryCards = [
     { type: 'aman', count: entry.summary?.aman || 0 },
@@ -81,7 +111,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
   const completionPercentage = getCompletionPercentage(entry.summary);
 
   const displayCrew = React.useMemo(() => {
-    const scoreMaps = buildGuardScoreMaps(entry.checkpoints || checkpoints);
+    const scoreMaps = buildGuardScoreMaps(checkpointEntries);
     const baseCrew = entry.crewSnapshot || usersData.filter(u => u.shipAssigned === displayShipName && u.status === 'active');
 
     return baseCrew
@@ -92,7 +122,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
           ? user.score
           : (scoreMaps.byId.get(user.id) || scoreMaps.byName.get(createGuardNameKey(user.name)) || 0),
       }));
-  }, [displayShipName, entry.checkpoints, entry.crewSnapshot, checkpoints, usersData]);
+  }, [checkpointEntries, displayShipName, entry.crewSnapshot, usersData]);
 
   const getSummaryCardMeta = (type) => {
     switch(type) {
@@ -131,7 +161,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
         </div>
 
         <div className="w-full h-44 rounded-2xl overflow-hidden border border-cyan-800/50 relative shadow-lg">
-          <iframe width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight="0" marginWidth="0" src={`https://maps.google.com/maps?q=${displayShip?.lat || '-6.1021'},${displayShip?.lng || '106.8833'}&hl=id&z=14&output=embed`} title="Map Location"></iframe>
+          <iframe width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight="0" marginWidth="0" src={`https://maps.google.com/maps?q=${displayMapLocation?.lat || '-6.1021'},${displayMapLocation?.lng || '106.8833'}&hl=id&z=14&output=embed`} title="Map Location"></iframe>
         </div>
 
         <div className="bg-[#0b1229] rounded-2xl p-4 border border-cyan-800/50 flex items-center justify-between relative shadow-sm">
