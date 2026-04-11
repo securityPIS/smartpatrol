@@ -4310,7 +4310,7 @@ export function AppProvider({ children }) {
     // Theme
     currentPage, setCurrentPage, theme, setTheme, isOffline, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog, setConfirmDialog,
     // Auth
-    sessionUserId, authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
+    sessionUserId, firebaseAuthReady, authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
     // User role
     currentUserRecord, currentUser, currentUserId, currentUserRole, isAdmin, isPic, isPetugas,
     // Core data
@@ -4339,7 +4339,7 @@ export function AppProvider({ children }) {
     activeSOSAlert, sosHistory, handleSOSTrigger, handleSOSConfirm, handleSOSDismiss,
   }), [
     currentPage, theme, isOffline, showSettingsDropdown, showNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog,
-    sessionUserId, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
+    sessionUserId, firebaseAuthReady, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
     currentUserRecord, currentUser, currentUserId, currentUserRole, isAdmin, isPic, isPetugas,
     checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, currentShiftSchedule, activeShiftKey, activeShiftGuardSnapshot,
     filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, submittingPatrolId, completedCount, totalCount, progressPercentage, newCustomNode,

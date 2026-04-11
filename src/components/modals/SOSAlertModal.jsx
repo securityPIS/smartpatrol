@@ -4,11 +4,18 @@ import { useApp } from '../../context/AppContext';
 import { startSOSAlarm, stopSOSAlarm } from '../../utils/sosAudio';
 
 export default function SOSAlertModal() {
-  const { activeSOSAlert, handleSOSConfirm, currentUserId, setCurrentPage } = useApp();
+  const { activeSOSAlert, handleSOSConfirm, currentUserId, currentUserRecord, firebaseAuthReady, setCurrentPage } = useApp();
 
   const isConfirmedByMe = currentUserId && activeSOSAlert?.confirmedBy?.includes(currentUserId);
 
   useEffect(() => {
+    if (!firebaseAuthReady || !currentUserId || !currentUserRecord) {
+      stopSOSAlarm();
+      return () => {
+        stopSOSAlarm();
+      };
+    }
+
     if (activeSOSAlert && !isConfirmedByMe) {
       startSOSAlarm();
     } else {
@@ -18,9 +25,9 @@ export default function SOSAlertModal() {
     return () => {
       stopSOSAlarm();
     };
-  }, [activeSOSAlert, isConfirmedByMe]);
+  }, [activeSOSAlert, currentUserId, currentUserRecord, firebaseAuthReady, isConfirmedByMe]);
 
-  if (!activeSOSAlert || isConfirmedByMe) return null;
+  if (!firebaseAuthReady || !currentUserId || !currentUserRecord || !activeSOSAlert || isConfirmedByMe) return null;
 
   const onConfirm = () => {
     handleSOSConfirm();
