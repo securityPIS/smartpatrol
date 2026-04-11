@@ -23,6 +23,21 @@ import {
   subscribeToCloudAppState,
   uploadCloudDataUrlAsset,
 } from '../services/firebase/cloudState';
+import {
+  clearNotificationLaunchRequest,
+  ensurePushServiceWorkerRegistration,
+  getNotificationPermission,
+  getOrCreatePushDeviceId,
+  getStoredAssignedPushUserId,
+  getStoredPushToken,
+  isPushMessagingSupported,
+  readNotificationLaunchRequest,
+  registerDevicePushToken,
+  setStoredAssignedPushUserId,
+  setStoredPushToken,
+  showDeviceNotification,
+  subscribeToForegroundPushMessages,
+} from '../services/firebase/messaging';
 
 // --- DATA MOCKUP ---
 const ACCESS_ROLES = {
@@ -40,6 +55,10 @@ const CLOUD_SYNC_DEBUG_KEY = 'smartpatrol.debug.cloudSync';
 const ADMIN_RESET_EMAIL = 'admin@smartpatrol.local';
 const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
 const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
+const PUSH_SUBSCRIPTION_STATUS = {
+  ACTIVE: 'active',
+  REVOKED: 'revoked',
+};
 const MINUTE_IN_MS = 60 * 1000;
 const SHIFT_SEQUENCE = [
   {
@@ -1186,7 +1205,9 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const deletedRecords = mergeDeletedRecords(baseState.deletedRecords || {}, nextState.deletedRecords || {});
   const baseUsers = applyAdminCredentialReset(normalizeUsersCollection(baseState.usersData || []));
   const nextUsers = applyAdminCredentialReset(normalizeUsersCollection(nextState.usersData || []));
-  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers), deletedRecords.users);
+  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers, {
+    merge: (baseUser, nextUser) => mergeUserRecords(baseUser, nextUser),
+  }), deletedRecords.users);
   const baseShips = normalizeShipsCollection(baseState.shipsData || []);
   const nextShips = normalizeShipsCollection(nextState.shipsData || []);
   const mergedShips = pruneShipPersonnelAssignments(
@@ -1317,7 +1338,7 @@ function normalizeUserRecord(user, index = 0) {
     : sanitizeText(user?.authProvider || seedUser?.authProvider || (hasCredential ? 'legacy' : 'none'), 20).toLowerCase();
   const fallbackStatus = role === ACCESS_ROLES.PETUGAS ? (shipAssigned ? 'active' : 'off-duty') : 'active';
   const status = sanitizeText(user?.status || seedUser?.status || fallbackStatus, 20) || fallbackStatus;
-  return { ...seedUser, ...user, id: user?.id || seedUser?.id || `u${Date.now()}${index}`, name: safeName, role, type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP', workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40), status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status, shipAssigned, email: safeEmail, password: '', hasCredential, passwordSalt, passwordHash, authProvider, firebaseUid: firebaseUid || null, phone: sanitizePhone(user?.phone || seedUser?.phone || ''), address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180), emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80), emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''), emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua', officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180), photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index) };
+  return { ...seedUser, ...user, id: user?.id || seedUser?.id || `u${Date.now()}${index}`, name: safeName, role, type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP', workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40), status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status, shipAssigned, email: safeEmail, password: '', hasCredential, passwordSalt, passwordHash, authProvider, firebaseUid: firebaseUid || null, phone: sanitizePhone(user?.phone || seedUser?.phone || ''), address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180), emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80), emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''), emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua', officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180), photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index), pushSubscriptions: normalizePushSubscriptions(user?.pushSubscriptions || seedUser?.pushSubscriptions || []) };
 }
 
 function normalizeUsersCollection(users) {
@@ -1354,6 +1375,99 @@ function canUserAccessApplication(user) {
   if (!user) return false;
   if (user.role !== ACCESS_ROLES.PETUGAS) return true;
   return Boolean(user.shipAssigned && user.status === 'active');
+}
+
+function getPushSubscriptionMergeKey(subscription = {}, index = 0) {
+  return sanitizeText(subscription?.deviceId || subscription?.token || `push-${index + 1}`, 4096).trim();
+}
+
+function normalizePushSubscriptionRecord(subscription = {}, index = 0) {
+  const token = sanitizeText(subscription?.token || '', 4096).trim();
+  const deviceId = sanitizeText(subscription?.deviceId || '', 160).trim();
+  const mergeKey = getPushSubscriptionMergeKey({ token, deviceId }, index);
+  if (!mergeKey) return null;
+
+  const createdAt = subscription?.createdAt || subscription?.updatedAt || new Date().toISOString();
+  const updatedAt = subscription?.updatedAt || createdAt;
+  const status = sanitizeText(subscription?.status || PUSH_SUBSCRIPTION_STATUS.ACTIVE, 20).trim().toLowerCase();
+
+  return {
+    token,
+    deviceId: deviceId || null,
+    platform: sanitizeText(subscription?.platform || '', 80),
+    userAgent: sanitizeText(subscription?.userAgent || '', 260),
+    permission: sanitizeText(subscription?.permission || 'granted', 20).trim().toLowerCase() || 'granted',
+    status: status === PUSH_SUBSCRIPTION_STATUS.REVOKED
+      ? PUSH_SUBSCRIPTION_STATUS.REVOKED
+      : PUSH_SUBSCRIPTION_STATUS.ACTIVE,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function normalizePushSubscriptions(subscriptions = []) {
+  const merged = new Map();
+
+  (Array.isArray(subscriptions) ? subscriptions : []).forEach((subscription, index) => {
+    const normalizedRecord = normalizePushSubscriptionRecord(subscription, index);
+    if (!normalizedRecord) return;
+
+    const mergeKey = getPushSubscriptionMergeKey(normalizedRecord, index);
+    const existingRecord = merged.get(mergeKey);
+    if (!existingRecord) {
+      merged.set(mergeKey, normalizedRecord);
+      return;
+    }
+
+    const existingUpdatedAt = new Date(existingRecord.updatedAt || existingRecord.createdAt || '').getTime();
+    const nextUpdatedAt = new Date(normalizedRecord.updatedAt || normalizedRecord.createdAt || '').getTime();
+    merged.set(
+      mergeKey,
+      Number.isNaN(existingUpdatedAt) || nextUpdatedAt >= existingUpdatedAt
+        ? { ...existingRecord, ...normalizedRecord }
+        : { ...normalizedRecord, ...existingRecord },
+    );
+  });
+
+  return Array.from(merged.values());
+}
+
+function mergePushSubscriptions(baseSubscriptions = [], nextSubscriptions = []) {
+  return normalizePushSubscriptions([...(baseSubscriptions || []), ...(nextSubscriptions || [])]);
+}
+
+function upsertPushSubscription(subscriptions = [], nextSubscription = {}) {
+  return normalizePushSubscriptions([...(subscriptions || []), nextSubscription]);
+}
+
+function createRevokedPushSubscription(subscription = {}) {
+  const now = new Date().toISOString();
+  return normalizePushSubscriptionRecord({
+    ...subscription,
+    status: PUSH_SUBSCRIPTION_STATUS.REVOKED,
+    permission: subscription?.permission || 'denied',
+    updatedAt: now,
+    createdAt: subscription?.createdAt || now,
+  }) || null;
+}
+
+function mergeUserRecords(baseUser = {}, nextUser = {}) {
+  return {
+    ...baseUser,
+    ...nextUser,
+    pushSubscriptions: mergePushSubscriptions(baseUser?.pushSubscriptions || [], nextUser?.pushSubscriptions || []),
+  };
+}
+
+function getClientPlatformLabel() {
+  if (typeof navigator === 'undefined') return 'browser';
+  const userAgent = navigator.userAgent || '';
+  if (/android/i.test(userAgent)) return 'android';
+  if (/iphone|ipad|ipod/i.test(userAgent)) return 'ios';
+  if (/windows/i.test(userAgent)) return 'windows';
+  if (/macintosh|mac os x/i.test(userAgent)) return 'macos';
+  if (/linux/i.test(userAgent)) return 'linux';
+  return 'browser';
 }
 
 function createFirebaseBackedUserRecord(authUser, users = []) {
@@ -1617,6 +1731,14 @@ export function AppProvider({ children }) {
   const [authError, setAuthError] = useState('');
   const [authNotice, setAuthNotice] = useState('');
   const [authForm, setAuthForm] = useState(() => createAuthFormState());
+  const [deviceNotificationPermission, setDeviceNotificationPermission] = useState(() => getNotificationPermission());
+  const [isDeviceNotificationSupported, setIsDeviceNotificationSupported] = useState(false);
+  const [deviceNotificationsBusy, setDeviceNotificationsBusy] = useState(false);
+  const [deviceNotificationsError, setDeviceNotificationsError] = useState('');
+  const [pendingNotificationOpenId, setPendingNotificationOpenId] = useState(() => {
+    const launchRequest = readNotificationLaunchRequest();
+    return launchRequest.notificationId || (launchRequest.openNotifications ? '__open-notifications__' : '');
+  });
 
   // Core data
   const [activeShiftKey, setActiveShiftKey] = useState(() => persistedState?.activeShiftKey || getShiftMeta().key);
@@ -1717,6 +1839,10 @@ export function AppProvider({ children }) {
   const latestCloudSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
+  const devicePushTokenRef = useRef(getStoredPushToken());
+  const deviceServiceWorkerRegistrationRef = useRef(null);
+  const foregroundPushUnsubscribeRef = useRef(null);
+  const seenForegroundPushIdsRef = useRef(new Set());
 
 // SOS Hooks moved to resolve TDZ
 
@@ -1741,6 +1867,151 @@ export function AppProvider({ children }) {
   const isPic = currentUserRole === ACCESS_ROLES.PIC;
   const isPetugas = currentUserRole === ACCESS_ROLES.PETUGAS;
   const currentUserId = currentUserRecord?.id || null;
+  const upsertDevicePushSubscriptionForUser = useCallback((userId, subscriptionPatch = {}) => {
+    if (!userId) return;
+
+    setUsersData((previousUsers) => {
+      let didChange = false;
+      const nextUsers = previousUsers.map((user, index) => {
+        if (user.id !== userId) return user;
+
+        const nextSubscription = normalizePushSubscriptionRecord({
+          ...subscriptionPatch,
+          deviceId: subscriptionPatch.deviceId || getOrCreatePushDeviceId(),
+          platform: subscriptionPatch.platform || getClientPlatformLabel(),
+          userAgent: subscriptionPatch.userAgent || sanitizeText(globalThis.navigator?.userAgent || '', 260),
+          permission: subscriptionPatch.permission || deviceNotificationPermission,
+          updatedAt: subscriptionPatch.updatedAt || new Date().toISOString(),
+          createdAt: subscriptionPatch.createdAt || subscriptionPatch.updatedAt || new Date().toISOString(),
+        }, index);
+
+        if (!nextSubscription) return user;
+
+        const nextUser = normalizeUserRecord({
+          ...user,
+          pushSubscriptions: upsertPushSubscription(user.pushSubscriptions || [], nextSubscription),
+        }, index);
+
+        if (JSON.stringify(user.pushSubscriptions || []) === JSON.stringify(nextUser.pushSubscriptions || [])) {
+          return user;
+        }
+
+        didChange = true;
+        return nextUser;
+      });
+
+      return didChange ? nextUsers : previousUsers;
+    });
+  }, [deviceNotificationPermission]);
+  const revokeDevicePushSubscriptionForUser = useCallback((userId, subscriptionPatch = {}) => {
+    if (!userId) return;
+
+    setUsersData((previousUsers) => {
+      let didChange = false;
+      const nextUsers = previousUsers.map((user, index) => {
+        if (user.id !== userId) return user;
+
+        const nextSubscription = createRevokedPushSubscription({
+          ...subscriptionPatch,
+          deviceId: subscriptionPatch.deviceId || getOrCreatePushDeviceId(),
+          platform: subscriptionPatch.platform || getClientPlatformLabel(),
+          userAgent: subscriptionPatch.userAgent || sanitizeText(globalThis.navigator?.userAgent || '', 260),
+          permission: subscriptionPatch.permission || getNotificationPermission(),
+        });
+
+        if (!nextSubscription) return user;
+
+        const nextUser = normalizeUserRecord({
+          ...user,
+          pushSubscriptions: upsertPushSubscription(user.pushSubscriptions || [], nextSubscription),
+        }, index);
+
+        if (JSON.stringify(user.pushSubscriptions || []) === JSON.stringify(nextUser.pushSubscriptions || [])) {
+          return user;
+        }
+
+        didChange = true;
+        return nextUser;
+      });
+
+      return didChange ? nextUsers : previousUsers;
+    });
+  }, []);
+  const enableDeviceNotifications = useCallback(async ({ silent = false } = {}) => {
+    if (!currentUserId) {
+      if (!silent) setDeviceNotificationsError('Login petugas terlebih dulu untuk mengaktifkan notifikasi perangkat.');
+      return false;
+    }
+
+    setDeviceNotificationsBusy(true);
+    if (!silent) setDeviceNotificationsError('');
+
+    try {
+      const supported = await isPushMessagingSupported();
+      setIsDeviceNotificationSupported(supported);
+
+      if (!supported) {
+        if (!silent) setDeviceNotificationsError('Browser ini belum mendukung push notification.');
+        return false;
+      }
+
+      const registrationResult = await registerDevicePushToken();
+      setDeviceNotificationPermission(registrationResult.permission || getNotificationPermission());
+
+      if (!registrationResult.ok) {
+        if (registrationResult.reason === 'denied') {
+          const storedUserId = getStoredAssignedPushUserId();
+          const storedToken = devicePushTokenRef.current || getStoredPushToken();
+          if (storedUserId && storedToken) {
+            revokeDevicePushSubscriptionForUser(storedUserId, { token: storedToken });
+          }
+          setStoredAssignedPushUserId('');
+          setStoredPushToken('');
+          devicePushTokenRef.current = '';
+        }
+
+        if (!silent) {
+          if (registrationResult.reason === 'missing-vapid-key') {
+            setDeviceNotificationsError('VAPID key Firebase belum diisi. Lengkapi VITE_FIREBASE_VAPID_KEY.');
+          } else if (registrationResult.reason === 'firebase-not-configured') {
+            setDeviceNotificationsError('Konfigurasi Firebase Messaging belum lengkap.');
+          } else if (registrationResult.reason === 'denied') {
+            setDeviceNotificationsError('Izin notifikasi ditolak di browser ini.');
+          } else {
+            setDeviceNotificationsError('Token notifikasi perangkat belum berhasil dibuat.');
+          }
+        }
+        return false;
+      }
+
+      const { token, serviceWorkerRegistration } = registrationResult;
+      deviceServiceWorkerRegistrationRef.current = serviceWorkerRegistration || null;
+      devicePushTokenRef.current = token;
+      setStoredPushToken(token);
+
+      const previousAssignedUserId = getStoredAssignedPushUserId();
+      if (previousAssignedUserId && previousAssignedUserId !== currentUserId) {
+        revokeDevicePushSubscriptionForUser(previousAssignedUserId, { token });
+      }
+
+      upsertDevicePushSubscriptionForUser(currentUserId, {
+        token,
+        status: PUSH_SUBSCRIPTION_STATUS.ACTIVE,
+        permission: 'granted',
+      });
+      setStoredAssignedPushUserId(currentUserId);
+      setDeviceNotificationsError('');
+      return true;
+    } catch (error) {
+      console.error('[SmartPatrol][push] gagal mengaktifkan notifikasi perangkat', error);
+      if (!silent) {
+        setDeviceNotificationsError(error?.message || 'Gagal mengaktifkan notifikasi perangkat.');
+      }
+      return false;
+    } finally {
+      setDeviceNotificationsBusy(false);
+    }
+  }, [currentUserId, revokeDevicePushSubscriptionForUser, upsertDevicePushSubscriptionForUser]);
 
   const handleSOSTrigger = useCallback((lat, lng) => {
     if (!currentUserRecord) return;
@@ -1845,6 +2116,124 @@ export function AppProvider({ children }) {
     if (!currentUserId) return 0;
     return visibleNotifications.filter(notification => !notification.readByUserIds.includes(currentUserId)).length;
   }, [visibleNotifications, currentUserId]);
+  useEffect(() => {
+    clearNotificationLaunchRequest();
+  }, []);
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncPushSupport = async () => {
+      const supported = await isPushMessagingSupported();
+      if (!isMounted) return;
+
+      setIsDeviceNotificationSupported(supported);
+      setDeviceNotificationPermission(getNotificationPermission());
+
+      if (!supported) return;
+
+      try {
+        deviceServiceWorkerRegistrationRef.current = await ensurePushServiceWorkerRegistration();
+      } catch (error) {
+        console.error('[SmartPatrol][push] gagal registrasi service worker', error);
+      }
+    };
+
+    syncPushSupport();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) return undefined;
+
+    const handleServiceWorkerMessage = (event) => {
+      const payload = event.data || {};
+      if (payload.type !== 'SMARTPATROL_OPEN_NOTIFICATION') return;
+      setPendingNotificationOpenId(payload.notificationId || '__open-notifications__');
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+    };
+  }, []);
+  useEffect(() => {
+    if (deviceNotificationPermission !== 'granted' || !currentUserId) return;
+    enableDeviceNotifications({ silent: true });
+  }, [currentUserId, deviceNotificationPermission, enableDeviceNotifications]);
+  useEffect(() => {
+    if (currentUserId) return;
+
+    const assignedUserId = getStoredAssignedPushUserId();
+    const storedToken = devicePushTokenRef.current || getStoredPushToken();
+    if (!assignedUserId || !storedToken) return;
+
+    revokeDevicePushSubscriptionForUser(assignedUserId, { token: storedToken });
+    setStoredAssignedPushUserId('');
+    setStoredPushToken('');
+    devicePushTokenRef.current = '';
+  }, [currentUserId, revokeDevicePushSubscriptionForUser]);
+  useEffect(() => {
+    if (deviceNotificationPermission !== 'denied') return;
+
+    const assignedUserId = getStoredAssignedPushUserId();
+    const storedToken = devicePushTokenRef.current || getStoredPushToken();
+    if (assignedUserId && storedToken) {
+      revokeDevicePushSubscriptionForUser(assignedUserId, { token: storedToken });
+    }
+
+    setStoredAssignedPushUserId('');
+    setStoredPushToken('');
+    devicePushTokenRef.current = '';
+  }, [deviceNotificationPermission, revokeDevicePushSubscriptionForUser]);
+  useEffect(() => {
+    let isActive = true;
+
+    const subscribeForegroundPush = async () => {
+      const unsubscribe = await subscribeToForegroundPushMessages(async (message) => {
+        const messageKey = message.notificationId || `${message.notificationType}:${message.title}:${message.body}`;
+        if (!messageKey || seenForegroundPushIdsRef.current.has(messageKey)) return;
+
+        seenForegroundPushIdsRef.current.add(messageKey);
+        if (seenForegroundPushIdsRef.current.size > 50) {
+          const firstSeenKey = seenForegroundPushIdsRef.current.values().next().value;
+          seenForegroundPushIdsRef.current.delete(firstSeenKey);
+        }
+
+        if (getNotificationPermission() !== 'granted') return;
+        if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
+
+        try {
+          const registration = deviceServiceWorkerRegistrationRef.current || await ensurePushServiceWorkerRegistration();
+          deviceServiceWorkerRegistrationRef.current = registration;
+          await showDeviceNotification({
+            notificationId: message.notificationId,
+            title: message.title,
+            body: message.body,
+          }, {
+            serviceWorkerRegistration: registration,
+          });
+        } catch (error) {
+          console.error('[SmartPatrol][push] gagal menampilkan notifikasi foreground', error);
+        }
+      });
+
+      if (isActive) {
+        foregroundPushUnsubscribeRef.current = unsubscribe;
+      } else if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+
+    subscribeForegroundPush();
+    return () => {
+      isActive = false;
+      if (typeof foregroundPushUnsubscribeRef.current === 'function') {
+        foregroundPushUnsubscribeRef.current();
+      }
+      foregroundPushUnsubscribeRef.current = null;
+    };
+  }, []);
   const filteredCheckpoints = useMemo(() => checkpoints.filter(cp => cp.name.toLowerCase().includes(deferredSearchQuery.toLowerCase())), [checkpoints, deferredSearchQuery]);
   const incidentLocationOptions = useMemo(() => Array.from(new Set(checkpoints.map(cp => cp.name))), [checkpoints]);
   const completedCount = useMemo(() => checkpoints.filter(c => c.status === 'completed').length, [checkpoints]);
@@ -2345,6 +2734,31 @@ export function AppProvider({ children }) {
 
     closeHistoryEntry();
   }, [allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry]);
+  useEffect(() => {
+    if (!pendingNotificationOpenId || !currentUserId) return;
+
+    if (pendingNotificationOpenId === '__open-notifications__') {
+      openNotificationsPage();
+      setPendingNotificationOpenId('');
+      return;
+    }
+
+    const matchedNotification = notifications.find((notification) => (
+      notification.id === pendingNotificationOpenId
+      && notification.targetUserIds.includes(currentUserId)
+    ));
+
+    if (matchedNotification) {
+      handleNotificationClick(matchedNotification);
+      setPendingNotificationOpenId('');
+      return;
+    }
+
+    if (cloudSyncBootstrapped) {
+      openNotificationsPage();
+      setPendingNotificationOpenId('');
+    }
+  }, [cloudSyncBootstrapped, currentUserId, handleNotificationClick, notifications, openNotificationsPage, pendingNotificationOpenId]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => setShiftClock(Date.now()), 60 * 1000);
@@ -2372,90 +2786,108 @@ export function AppProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    if (!operationalShipName) return;
     const { startAt, endAt } = currentShiftSchedule;
     const now = new Date(shiftClock);
     if (now < startAt || now >= endAt) return;
-    appendNotifications([{
-      type: 'shift_started',
-      title: 'Shift patroli dimulai',
-      message: `${currentShiftMeta.label} ${currentShiftMeta.timeRange} untuk ${operationalShipName} telah dimulai.`,
-      senderName: 'Sistem',
-      senderRole: 'SYSTEM',
-      targetUserIds: getShipRecipients(operationalShipName, { includePic: true, includePetugas: true }),
-      route: 'patrol/checkpoint',
-      shipName: operationalShipName,
-      shiftKey: currentShiftMeta.key,
-      dedupeKey: `shift-started:${operationalShipName}:${currentShiftMeta.key}`,
-      createdAt: startAt.toISOString(),
-    }]);
-  }, [appendNotifications, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
 
-  useEffect(() => {
-    if (!operationalShipName) return;
-    const { endAt, checkpointPendingAt, shiftEndingSoonAt } = currentShiftSchedule;
-    const now = new Date(shiftClock);
-    const remainingMinutes = Math.ceil((endAt.getTime() - now.getTime()) / MINUTE_IN_MS);
-    const pendingCheckpoints = checkpoints.filter(checkpoint => checkpoint.status === 'pending').length;
-    const targetUserIds = getShipRecipients(operationalShipName, { includePic: true, includePetugas: true });
+    appendNotifications(shipsData.flatMap((ship) => {
+      const shipName = sanitizeText(ship?.name || '', 120);
+      if (!shipName) return [];
 
-    logShiftNotificationDebug('evaluate', {
-      shipName: operationalShipName,
-      shiftKey: currentShiftMeta.key,
-      shiftLabel: currentShiftMeta.label,
-      now: now.toISOString(),
-      remainingMinutes,
-      pendingCheckpoints,
-      targetUserIds,
-      checkpointPendingAt: checkpointPendingAt.toISOString(),
-      shiftEndingSoonAt: shiftEndingSoonAt.toISOString(),
-    });
+      const targetUserIds = getShipRecipients(shipName, { includePic: true, includePetugas: true });
+      if (targetUserIds.length === 0) return [];
 
-    if (now >= endAt) {
-      logShiftNotificationDebug('skip-window', {
-        shipName: operationalShipName,
-        shiftKey: currentShiftMeta.key,
-        remainingMinutes,
-      });
-      return;
-    }
-
-    const scheduledNotifications = [];
-
-    if (now >= shiftEndingSoonAt) {
-      scheduledNotifications.push({
-        type: 'shift_ending_soon',
-        title: 'Shift akan berakhir',
-        message: 'Shift akan berakhir 15 menit lagi silahkan cek kembali laporan patroli anda',
-        senderName: 'Sistem',
-        senderRole: 'SYSTEM',
-        targetUserIds,
-        route: 'patrol/info',
-        shipName: operationalShipName,
-        shiftKey: currentShiftMeta.key,
-        dedupeKey: `shift-ending-soon:${operationalShipName}:${currentShiftMeta.key}`,
-        createdAt: shiftEndingSoonAt.toISOString(),
-      });
-    }
-
-    if (pendingCheckpoints > 0 && now >= checkpointPendingAt) {
-      scheduledNotifications.push({
-        type: 'checkpoint_pending',
-        title: 'Masih ada checkpoint pending',
-        message: `${pendingCheckpoints} checkpoint belum dipatroli pada ${currentShiftMeta.label}.`,
+      return [{
+        type: 'shift_started',
+        title: 'Shift patroli dimulai',
+        message: `${currentShiftMeta.label} ${currentShiftMeta.timeRange} untuk ${shipName} telah dimulai.`,
         senderName: 'Sistem',
         senderRole: 'SYSTEM',
         targetUserIds,
         route: 'patrol/checkpoint',
-        shipName: operationalShipName,
+        shipName,
         shiftKey: currentShiftMeta.key,
-        dedupeKey: `checkpoint-pending:${operationalShipName}:${currentShiftMeta.key}`,
-        createdAt: checkpointPendingAt.toISOString(),
-      });
+        dedupeKey: `shift-started:${shipName}:${currentShiftMeta.key}`,
+        createdAt: startAt.toISOString(),
+      }];
+    }));
+  }, [appendNotifications, currentShiftMeta, currentShiftSchedule, getShipRecipients, shipsData, shiftClock]);
+
+  useEffect(() => {
+    const { endAt, checkpointPendingAt, shiftEndingSoonAt } = currentShiftSchedule;
+    const now = new Date(shiftClock);
+    if (now >= endAt) {
+      return;
     }
 
+    const remainingMinutes = Math.ceil((endAt.getTime() - now.getTime()) / MINUTE_IN_MS);
+    const scheduledNotifications = shipsData.flatMap((ship) => {
+      const shipName = sanitizeText(ship?.name || '', 120);
+      if (!shipName) return [];
+
+      const shipCheckpoints = checkpointsByShip[ship.id] || createShipCheckpointCollection(ship);
+      const pendingCheckpoints = shipCheckpoints.filter(checkpoint => checkpoint.status === 'pending').length;
+      const targetUserIds = getShipRecipients(shipName, { includePic: true, includePetugas: true });
+
+      logShiftNotificationDebug('evaluate', {
+        shipName,
+        shiftKey: currentShiftMeta.key,
+        shiftLabel: currentShiftMeta.label,
+        now: now.toISOString(),
+        remainingMinutes,
+        pendingCheckpoints,
+        targetUserIds,
+        checkpointPendingAt: checkpointPendingAt.toISOString(),
+        shiftEndingSoonAt: shiftEndingSoonAt.toISOString(),
+      });
+
+      if (targetUserIds.length === 0) {
+        logShiftNotificationDebug('skip-recipients', {
+          shipName,
+          shiftKey: currentShiftMeta.key,
+        });
+        return [];
+      }
+
+      const nextNotifications = [];
+
+      if (now >= shiftEndingSoonAt) {
+        nextNotifications.push({
+          type: 'shift_ending_soon',
+          title: 'Shift akan berakhir',
+          message: 'Shift akan berakhir 15 menit lagi silahkan cek kembali laporan patroli anda',
+          senderName: 'Sistem',
+          senderRole: 'SYSTEM',
+          targetUserIds,
+          route: 'patrol/info',
+          shipName,
+          shiftKey: currentShiftMeta.key,
+          dedupeKey: `shift-ending-soon:${shipName}:${currentShiftMeta.key}`,
+          createdAt: shiftEndingSoonAt.toISOString(),
+        });
+      }
+
+      if (pendingCheckpoints > 0 && now >= checkpointPendingAt) {
+        nextNotifications.push({
+          type: 'checkpoint_pending',
+          title: 'Masih ada checkpoint pending',
+          message: `${pendingCheckpoints} checkpoint belum dipatroli pada ${currentShiftMeta.label}.`,
+          senderName: 'Sistem',
+          senderRole: 'SYSTEM',
+          targetUserIds,
+          route: 'patrol/checkpoint',
+          shipName,
+          shiftKey: currentShiftMeta.key,
+          dedupeKey: `checkpoint-pending:${shipName}:${currentShiftMeta.key}`,
+          createdAt: checkpointPendingAt.toISOString(),
+        });
+      }
+
+      return nextNotifications;
+    });
+
     appendNotifications(scheduledNotifications);
-  }, [appendNotifications, checkpoints, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
+  }, [appendNotifications, checkpointsByShip, currentShiftMeta, currentShiftSchedule, getShipRecipients, shipsData, shiftClock]);
 
   useEffect(() => {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
@@ -2544,7 +2976,7 @@ export function AppProvider({ children }) {
           message: `${entry.missed} titik patroli missed pada ${entry.ship} ${entry.shift}.`,
           senderName: 'Sistem',
           senderRole: 'SYSTEM',
-          targetUserIds: getShipRecipients(entry.ship, { includeAdmins: true, includePic: true }),
+          targetUserIds: getShipRecipients(entry.ship, { includeAdmins: true, includePic: true, includePetugas: true }),
           route: 'history/detail',
           routeParams: { historyId: entry.id },
           historyId: entry.id,
@@ -3849,6 +4281,7 @@ export function AppProvider({ children }) {
     historyEntries: visibleHistoryEntries, selectedHistoryEntry, setSelectedHistoryId, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     // Notifications
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
+    deviceNotificationPermission, isDeviceNotificationSupported, deviceNotificationsBusy, deviceNotificationsError, enableDeviceNotifications,
     // SOS
     activeSOSAlert, sosHistory, handleSOSTrigger, handleSOSConfirm, handleSOSDismiss,
   }), [
@@ -3867,6 +4300,7 @@ export function AppProvider({ children }) {
     weatherInfo, weatherLoading, getWeatherDetail,
     visibleHistoryEntries, selectedHistoryEntry, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
+    deviceNotificationPermission, isDeviceNotificationSupported, deviceNotificationsBusy, deviceNotificationsError, enableDeviceNotifications,
     activeSOSAlert, sosHistory, handleSOSTrigger, handleSOSConfirm, handleSOSDismiss,
   ]);
 

@@ -21,6 +21,11 @@ const NotificationsPage = React.memo(function NotificationsPage() {
     markAllNotificationsAsRead,
     handleNotificationClick,
     closeNotificationsPage,
+    deviceNotificationPermission,
+    isDeviceNotificationSupported,
+    deviceNotificationsBusy,
+    deviceNotificationsError,
+    enableDeviceNotifications,
   } = useApp();
 
   return (
@@ -55,6 +60,38 @@ const NotificationsPage = React.memo(function NotificationsPage() {
         <p className="text-xs text-cyan-200">
           {unreadNotificationCount} belum dibaca
         </p>
+      </div>
+
+      <div className="bg-[#0b1229] rounded-2xl border border-cyan-800/50 p-4 shadow-sm space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-500">Perangkat</p>
+            <p className="text-sm font-bold text-cyan-50">Notifikasi browser & PWA</p>
+          </div>
+          <span className="text-[10px] uppercase tracking-widest text-cyan-300">
+            {isDeviceNotificationSupported ? deviceNotificationPermission : 'unsupported'}
+          </span>
+        </div>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          {isDeviceNotificationSupported
+            ? 'Aktifkan agar checkpoint missed, checkpoint pending, dan shift ending soon bisa muncul sebagai popup perangkat.'
+            : 'Browser ini belum mendukung push notification untuk SmartPatrol.'}
+        </p>
+        {deviceNotificationsError && (
+          <p className="text-xs text-rose-300">{deviceNotificationsError}</p>
+        )}
+        <button
+          type="button"
+          onClick={() => enableDeviceNotifications()}
+          disabled={!isDeviceNotificationSupported || deviceNotificationsBusy || deviceNotificationPermission === 'granted'}
+          className="px-3 py-2 rounded-lg border border-cyan-700/60 text-cyan-300 text-[10px] font-bold uppercase tracking-widest hover:bg-cyan-900/40 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+        >
+          {deviceNotificationPermission === 'granted'
+            ? 'Notifikasi Aktif'
+            : deviceNotificationsBusy
+              ? 'Memproses...'
+              : 'Aktifkan Notifikasi'}
+        </button>
       </div>
 
       <div className="space-y-3">

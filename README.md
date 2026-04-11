@@ -25,6 +25,14 @@ npm install
 npm run firebase:deploy
 ```
 
+Deploy di atas sekarang sekaligus mempublikasikan Cloud Function pengirim push notification.
+
+Jika hanya ingin deploy function FCM:
+
+```bash
+npm run firebase:deploy:functions
+```
+
 Jika ingin preview lokal dengan Firebase Hosting emulator:
 
 ```bash
@@ -43,3 +51,5 @@ npm run firebase:emulate
 - Deploy Firebase utama saat ini mempublikasikan aplikasi hybrid: Hosting + Firebase Auth + Firestore rules untuk sinkronisasi state patroli utama.
 - Script `npm run firebase:deploy:storage` baru bisa dipakai setelah Firebase Storage diaktifkan lewat Firebase Console.
 - Kredensial web app Firebase tersedia sebagai template di [.env.example](/C:/dev/SmartPatrol/.env.example). Untuk deploy lokal saya memakai `.env.local` yang tidak ikut masuk git.
+- Untuk mengaktifkan popup notifikasi browser/PWA, isi `VITE_FIREBASE_VAPID_KEY` di `.env.local` dengan Web Push certificate key pair dari Firebase Cloud Messaging.
+- Folder [functions](/C:/dev/SmartPatrol/functions) berisi Cloud Function yang membaca notifikasi baru dari shared state lalu mengirim FCM ke token device aktif milik user target.
