@@ -1843,6 +1843,8 @@ export function AppProvider({ children }) {
   const deviceServiceWorkerRegistrationRef = useRef(null);
   const foregroundPushUnsubscribeRef = useRef(null);
   const seenForegroundPushIdsRef = useRef(new Set());
+  const seenDeviceNotificationIdsRef = useRef(new Set());
+  const initializedVisibleNotificationIdsRef = useRef(new Set());
 
 // SOS Hooks moved to resolve TDZ
 
@@ -2201,11 +2203,13 @@ export function AppProvider({ children }) {
         }
 
         if (getNotificationPermission() !== 'granted') return;
-        if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
 
         try {
           const registration = deviceServiceWorkerRegistrationRef.current || await ensurePushServiceWorkerRegistration();
           deviceServiceWorkerRegistrationRef.current = registration;
+          if (message.notificationId) {
+            seenDeviceNotificationIdsRef.current.add(message.notificationId);
+          }
           await showDeviceNotification({
             notificationId: message.notificationId,
             title: message.title,
@@ -2234,6 +2238,55 @@ export function AppProvider({ children }) {
       foregroundPushUnsubscribeRef.current = null;
     };
   }, []);
+  useEffect(() => {
+    if (!currentUserId) {
+      initializedVisibleNotificationIdsRef.current = new Set();
+      return;
+    }
+
+    const currentNotificationIds = new Set(visibleNotifications.map((notification) => notification.id).filter(Boolean));
+    const initializedIds = initializedVisibleNotificationIdsRef.current;
+
+    if (initializedIds.size === 0) {
+      initializedVisibleNotificationIdsRef.current = currentNotificationIds;
+      return;
+    }
+
+    const newlyVisibleNotifications = visibleNotifications.filter((notification) => (
+      notification?.id
+      && !initializedIds.has(notification.id)
+      && !seenDeviceNotificationIdsRef.current.has(notification.id)
+    ));
+
+    initializedVisibleNotificationIdsRef.current = currentNotificationIds;
+
+    if (newlyVisibleNotifications.length === 0) return;
+    if (getNotificationPermission() !== 'granted') return;
+
+    const showNotifications = async () => {
+      try {
+        const registration = deviceServiceWorkerRegistrationRef.current || await ensurePushServiceWorkerRegistration();
+        deviceServiceWorkerRegistrationRef.current = registration;
+
+        for (const notification of newlyVisibleNotifications) {
+          if (!notification?.id || seenDeviceNotificationIdsRef.current.has(notification.id)) continue;
+          seenDeviceNotificationIdsRef.current.add(notification.id);
+          await showDeviceNotification({
+            notificationId: notification.id,
+            title: notification.title,
+            body: notification.message,
+            dedupeKey: notification.dedupeKey,
+          }, {
+            serviceWorkerRegistration: registration,
+          });
+        }
+      } catch (error) {
+        console.error('[SmartPatrol][push] gagal menampilkan popup notifikasi lokal', error);
+      }
+    };
+
+    showNotifications();
+  }, [currentUserId, visibleNotifications]);
   const filteredCheckpoints = useMemo(() => checkpoints.filter(cp => cp.name.toLowerCase().includes(deferredSearchQuery.toLowerCase())), [checkpoints, deferredSearchQuery]);
   const incidentLocationOptions = useMemo(() => Array.from(new Set(checkpoints.map(cp => cp.name))), [checkpoints]);
   const completedCount = useMemo(() => checkpoints.filter(c => c.status === 'completed').length, [checkpoints]);
