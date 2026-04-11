@@ -224,7 +224,7 @@ export async function showDeviceNotification(notification = {}, options = {}) {
   const serviceWorkerRegistration = options.serviceWorkerRegistration || await ensurePushServiceWorkerRegistration();
   const notificationOptions = {
     body,
-    icon: '/icon-192.png',
+    icon: '/smartpatrol-logo.png',
     badge: '/icon-192.png',
     tag: notificationId || notification.dedupeKey || `smartpatrol-${Date.now()}`,
     renotify: true,

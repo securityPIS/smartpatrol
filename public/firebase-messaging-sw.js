@@ -1,5 +1,5 @@
 /* eslint-disable no-undef */
-const APP_CACHE_NAME = 'smartpatrol-shell-v1';
+const APP_CACHE_NAME = 'smartpatrol-shell-v2';
 const APP_SHELL_ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ const APP_SHELL_ASSETS = [
   '/favicon-smartpatrol.svg',
   '/icon-192.png',
   '/icon-512.png',
+  '/smartpatrol-logo.png',
 ];
 
 function parseFirebaseConfig() {
@@ -144,7 +145,7 @@ try {
 
       self.registration.showNotification(title, {
         body,
-        icon: '/icon-192.png',
+        icon: '/smartpatrol-logo.png',
         badge: '/icon-192.png',
         tag: data.notificationId || data.dedupeKey || `smartpatrol-${Date.now()}`,
         renotify: true,
