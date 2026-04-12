@@ -25,35 +25,9 @@ import SOSAlertModal from './src/components/modals/SOSAlertModal';
 import SideNav from './src/components/SideNav';
 
 function AppShell() {
-  const {
-    sessionUserId,
-    firebaseAuthReady,
-    currentUserRecord,
-    currentPage,
-    isAdmin,
-    theme,
-    showSettingsDropdown,
-    setShowSettingsDropdown,
-    showNotificationsDropdown,
-    setShowNotificationsDropdown,
-    confirmDialog,
-    setConfirmDialog,
-  } = useApp();
+  const { sessionUserId, currentPage, isAdmin, theme, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, confirmDialog, setConfirmDialog } = useApp();
 
-  const isAuthBootstrapping = !firebaseAuthReady || (Boolean(sessionUserId) && !currentUserRecord);
-
-  if (isAuthBootstrapping) {
-    return (
-      <div
-        style={{ fontFamily: '"Chakra Petch", sans-serif' }}
-        className="w-full min-h-screen bg-[#070b19] text-cyan-50 sm:max-w-md sm:mx-auto sm:border-x sm:border-cyan-900/50 sm:shadow-[0_0_40px_rgba(6,182,212,0.1)]"
-      >
-        <LoadingSkeleton />
-      </div>
-    );
-  }
-
-  if (!sessionUserId || !currentUserRecord) return <LoginPage />;
+  if (!sessionUserId) return <LoginPage />;
 
   const themeClass = theme === 'light' ? 'pertamina-light' : '';
 

@@ -23,21 +23,6 @@ import {
   subscribeToCloudAppState,
   uploadCloudDataUrlAsset,
 } from '../services/firebase/cloudState';
-import {
-  clearNotificationLaunchRequest,
-  ensurePushServiceWorkerRegistration,
-  getNotificationPermission,
-  getOrCreatePushDeviceId,
-  getStoredAssignedPushUserId,
-  getStoredPushToken,
-  isPushMessagingSupported,
-  readNotificationLaunchRequest,
-  registerDevicePushToken,
-  setStoredAssignedPushUserId,
-  setStoredPushToken,
-  showDeviceNotification,
-  subscribeToForegroundPushMessages,
-} from '../services/firebase/messaging';
 
 // --- DATA MOCKUP ---
 const ACCESS_ROLES = {
@@ -55,11 +40,6 @@ const CLOUD_SYNC_DEBUG_KEY = 'smartpatrol.debug.cloudSync';
 const ADMIN_RESET_EMAIL = 'admin@smartpatrol.local';
 const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
 const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
-const PUSH_SUBSCRIPTION_STATUS = {
-  ACTIVE: 'active',
-  PAUSED: 'paused',
-  REVOKED: 'revoked',
-};
 const MINUTE_IN_MS = 60 * 1000;
 const SHIFT_SEQUENCE = [
   {
@@ -505,27 +485,6 @@ function normalizeShiftKeyForCloudSync(shiftKey, fallbackMeta = getShiftMeta()) 
   return persistedShiftMeta.key;
 }
 
-function getShiftStartTimestampFromKey(shiftKey) {
-  const shiftMeta = getShiftMetaFromKey(shiftKey);
-  if (!shiftMeta) return 0;
-
-  const shiftDefinition = getShiftDefinition(shiftMeta.id);
-  if (isLegacyShiftDefinition(shiftDefinition)) return 0;
-
-  return getShiftScheduleTimes(shiftMeta).startAt.getTime();
-}
-
-function selectLatestShiftKey(...shiftKeys) {
-  return shiftKeys
-    .filter(Boolean)
-    .reduce((latestKey, candidateKey) => {
-      if (!latestKey) return candidateKey;
-      return getShiftStartTimestampFromKey(candidateKey) >= getShiftStartTimestampFromKey(latestKey)
-        ? candidateKey
-        : latestKey;
-    }, '');
-}
-
 function addDaysToDateKey(dateKey, days) {
   const { year, month, day } = parseDateKey(dateKey);
   const safeDate = new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0));
@@ -620,8 +579,7 @@ function shouldResetCheckpointForActiveShift(checkpoint, activeShiftKey) {
   return checkpointTimestamp < activeShiftStartTimestamp;
 }
 
-function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey = null, options = {}) {
-  const { resetForActiveShift = true } = options;
+function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey = null) {
   const baseCheckpoints = createShipCheckpointCollection(ship);
   const checkpointsById = new Map((checkpoints || []).map(checkpoint => [String(checkpoint.id), checkpoint]));
   const checkpointsByName = new Map((checkpoints || []).map(checkpoint => [createCheckpointNameKey(checkpoint.name), checkpoint]));
@@ -632,7 +590,7 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey =
 
     if (!matchedCheckpoint) return baseCheckpoint;
 
-    const normalizedCheckpoint = resetForActiveShift && shouldResetCheckpointForActiveShift(matchedCheckpoint, activeShiftKey)
+    const normalizedCheckpoint = shouldResetCheckpointForActiveShift(matchedCheckpoint, activeShiftKey)
       ? resetCheckpointForShift(matchedCheckpoint, { shiftKey: activeShiftKey })
       : matchedCheckpoint;
 
@@ -648,7 +606,7 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey =
   });
 }
 
-function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, legacyCheckpoints = null, activeShiftKey = null, options = {}) {
+function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, legacyCheckpoints = null, activeShiftKey = null) {
   const savedState = savedCheckpointsByShip && typeof savedCheckpointsByShip === 'object'
     ? savedCheckpointsByShip
     : {};
@@ -663,7 +621,7 @@ function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, l
           ? legacyCheckpoints
           : [];
 
-    collection[ship.id] = normalizeShipScopedCheckpoints(ship, savedForShip, activeShiftKey, options);
+    collection[ship.id] = normalizeShipScopedCheckpoints(ship, savedForShip, activeShiftKey);
     return collection;
   }, {});
 }
@@ -1038,44 +996,6 @@ function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) 
   return Array.from(merged.values());
 }
 
-function hasCheckpointCompletionDetails(checkpoint) {
-  if (!checkpoint || checkpoint.status === 'pending') return false;
-  return Boolean(
-    checkpoint.completedAt
-    || checkpoint.completedBy
-    || checkpoint.completedByUserId
-    || checkpoint.resultType
-    || checkpoint.time
-    || checkpoint.photoUrl
-    || checkpoint.kejadian
-    || checkpoint.penyebab
-    || checkpoint.tindakLanjut
-    || checkpoint.gpsSnapshot
-    || checkpoint.weatherSnapshot
-    || checkpoint.shipSnapshot
-  );
-}
-
-function shouldPreserveLocalCheckpointRecord(localCheckpoint, incomingCheckpoint) {
-  if (!localCheckpoint || localCheckpoint.status !== 'completed') return false;
-  if (!incomingCheckpoint || incomingCheckpoint.status === 'completed') return false;
-  if (hasCheckpointCompletionDetails(incomingCheckpoint)) return false;
-  return true;
-}
-
-function mergeIncomingCheckpointsWithLocalProtection(localCheckpoints = [], incomingCheckpoints = []) {
-  const localCheckpointMap = new Map(
-    (localCheckpoints || []).map((checkpoint) => [getCheckpointMergeKey(checkpoint), checkpoint]),
-  );
-
-  return (incomingCheckpoints || []).map((incomingCheckpoint) => {
-    const localCheckpoint = localCheckpointMap.get(getCheckpointMergeKey(incomingCheckpoint));
-    return shouldPreserveLocalCheckpointRecord(localCheckpoint, incomingCheckpoint)
-      ? localCheckpoint
-      : incomingCheckpoint;
-  });
-}
-
 function getNotificationMergeKey(notification) {
   return String(notification?.dedupeKey || notification?.id || '');
 }
@@ -1266,9 +1186,7 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const deletedRecords = mergeDeletedRecords(baseState.deletedRecords || {}, nextState.deletedRecords || {});
   const baseUsers = applyAdminCredentialReset(normalizeUsersCollection(baseState.usersData || []));
   const nextUsers = applyAdminCredentialReset(normalizeUsersCollection(nextState.usersData || []));
-  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers, {
-    merge: (baseUser, nextUser) => mergeUserRecords(baseUser, nextUser),
-  }), deletedRecords.users);
+  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers), deletedRecords.users);
   const baseShips = normalizeShipsCollection(baseState.shipsData || []);
   const nextShips = normalizeShipsCollection(nextState.shipsData || []);
   const mergedShips = pruneShipPersonnelAssignments(
@@ -1289,7 +1207,7 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   }, {});
 
   return createSharedStateSnapshot({
-    activeShiftKey: selectLatestShiftKey(nextState.activeShiftKey, baseState.activeShiftKey) || nextState.activeShiftKey || baseState.activeShiftKey,
+    activeShiftKey: nextState.activeShiftKey || baseState.activeShiftKey,
     checkpointsByShip,
     deletedRecords,
     historyEntries: omitDeletedEntities(
@@ -1399,7 +1317,7 @@ function normalizeUserRecord(user, index = 0) {
     : sanitizeText(user?.authProvider || seedUser?.authProvider || (hasCredential ? 'legacy' : 'none'), 20).toLowerCase();
   const fallbackStatus = role === ACCESS_ROLES.PETUGAS ? (shipAssigned ? 'active' : 'off-duty') : 'active';
   const status = sanitizeText(user?.status || seedUser?.status || fallbackStatus, 20) || fallbackStatus;
-  return { ...seedUser, ...user, id: user?.id || seedUser?.id || `u${Date.now()}${index}`, name: safeName, role, type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP', workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40), status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status, shipAssigned, email: safeEmail, password: '', hasCredential, passwordSalt, passwordHash, authProvider, firebaseUid: firebaseUid || null, phone: sanitizePhone(user?.phone || seedUser?.phone || ''), address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180), emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80), emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''), emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua', officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180), photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index), pushSubscriptions: normalizePushSubscriptions(user?.pushSubscriptions || seedUser?.pushSubscriptions || []) };
+  return { ...seedUser, ...user, id: user?.id || seedUser?.id || `u${Date.now()}${index}`, name: safeName, role, type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP', workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40), status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status, shipAssigned, email: safeEmail, password: '', hasCredential, passwordSalt, passwordHash, authProvider, firebaseUid: firebaseUid || null, phone: sanitizePhone(user?.phone || seedUser?.phone || ''), address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180), emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80), emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''), emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua', officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180), photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index) };
 }
 
 function normalizeUsersCollection(users) {
@@ -1436,101 +1354,6 @@ function canUserAccessApplication(user) {
   if (!user) return false;
   if (user.role !== ACCESS_ROLES.PETUGAS) return true;
   return Boolean(user.shipAssigned && user.status === 'active');
-}
-
-function getPushSubscriptionMergeKey(subscription = {}, index = 0) {
-  return sanitizeText(subscription?.deviceId || subscription?.token || `push-${index + 1}`, 4096).trim();
-}
-
-function normalizePushSubscriptionRecord(subscription = {}, index = 0) {
-  const token = sanitizeText(subscription?.token || '', 4096).trim();
-  const deviceId = sanitizeText(subscription?.deviceId || '', 160).trim();
-  const mergeKey = getPushSubscriptionMergeKey({ token, deviceId }, index);
-  if (!mergeKey) return null;
-
-  const createdAt = subscription?.createdAt || subscription?.updatedAt || new Date().toISOString();
-  const updatedAt = subscription?.updatedAt || createdAt;
-  const status = sanitizeText(subscription?.status || PUSH_SUBSCRIPTION_STATUS.ACTIVE, 20).trim().toLowerCase();
-
-  return {
-    token,
-    deviceId: deviceId || null,
-    platform: sanitizeText(subscription?.platform || '', 80),
-    userAgent: sanitizeText(subscription?.userAgent || '', 260),
-    permission: sanitizeText(subscription?.permission || 'granted', 20).trim().toLowerCase() || 'granted',
-    status: status === PUSH_SUBSCRIPTION_STATUS.REVOKED
-      ? PUSH_SUBSCRIPTION_STATUS.REVOKED
-      : status === PUSH_SUBSCRIPTION_STATUS.PAUSED
-        ? PUSH_SUBSCRIPTION_STATUS.PAUSED
-        : PUSH_SUBSCRIPTION_STATUS.ACTIVE,
-    createdAt,
-    updatedAt,
-  };
-}
-
-function normalizePushSubscriptions(subscriptions = []) {
-  const merged = new Map();
-
-  (Array.isArray(subscriptions) ? subscriptions : []).forEach((subscription, index) => {
-    const normalizedRecord = normalizePushSubscriptionRecord(subscription, index);
-    if (!normalizedRecord) return;
-
-    const mergeKey = getPushSubscriptionMergeKey(normalizedRecord, index);
-    const existingRecord = merged.get(mergeKey);
-    if (!existingRecord) {
-      merged.set(mergeKey, normalizedRecord);
-      return;
-    }
-
-    const existingUpdatedAt = new Date(existingRecord.updatedAt || existingRecord.createdAt || '').getTime();
-    const nextUpdatedAt = new Date(normalizedRecord.updatedAt || normalizedRecord.createdAt || '').getTime();
-    merged.set(
-      mergeKey,
-      Number.isNaN(existingUpdatedAt) || nextUpdatedAt >= existingUpdatedAt
-        ? { ...existingRecord, ...normalizedRecord }
-        : { ...normalizedRecord, ...existingRecord },
-    );
-  });
-
-  return Array.from(merged.values());
-}
-
-function mergePushSubscriptions(baseSubscriptions = [], nextSubscriptions = []) {
-  return normalizePushSubscriptions([...(baseSubscriptions || []), ...(nextSubscriptions || [])]);
-}
-
-function upsertPushSubscription(subscriptions = [], nextSubscription = {}) {
-  return normalizePushSubscriptions([...(subscriptions || []), nextSubscription]);
-}
-
-function createRevokedPushSubscription(subscription = {}) {
-  const now = new Date().toISOString();
-  return normalizePushSubscriptionRecord({
-    ...subscription,
-    status: PUSH_SUBSCRIPTION_STATUS.REVOKED,
-    permission: subscription?.permission || 'denied',
-    updatedAt: now,
-    createdAt: subscription?.createdAt || now,
-  }) || null;
-}
-
-function mergeUserRecords(baseUser = {}, nextUser = {}) {
-  return {
-    ...baseUser,
-    ...nextUser,
-    pushSubscriptions: mergePushSubscriptions(baseUser?.pushSubscriptions || [], nextUser?.pushSubscriptions || []),
-  };
-}
-
-function getClientPlatformLabel() {
-  if (typeof navigator === 'undefined') return 'browser';
-  const userAgent = navigator.userAgent || '';
-  if (/android/i.test(userAgent)) return 'android';
-  if (/iphone|ipad|ipod/i.test(userAgent)) return 'ios';
-  if (/windows/i.test(userAgent)) return 'windows';
-  if (/macintosh|mac os x/i.test(userAgent)) return 'macos';
-  if (/linux/i.test(userAgent)) return 'linux';
-  return 'browser';
 }
 
 function createFirebaseBackedUserRecord(authUser, users = []) {
@@ -1794,14 +1617,6 @@ export function AppProvider({ children }) {
   const [authError, setAuthError] = useState('');
   const [authNotice, setAuthNotice] = useState('');
   const [authForm, setAuthForm] = useState(() => createAuthFormState());
-  const [deviceNotificationPermission, setDeviceNotificationPermission] = useState(() => getNotificationPermission());
-  const [isDeviceNotificationSupported, setIsDeviceNotificationSupported] = useState(false);
-  const [deviceNotificationsBusy, setDeviceNotificationsBusy] = useState(false);
-  const [deviceNotificationsError, setDeviceNotificationsError] = useState('');
-  const [pendingNotificationOpenId, setPendingNotificationOpenId] = useState(() => {
-    const launchRequest = readNotificationLaunchRequest();
-    return launchRequest.notificationId || (launchRequest.openNotifications ? '__open-notifications__' : '');
-  });
 
   // Core data
   const [activeShiftKey, setActiveShiftKey] = useState(() => persistedState?.activeShiftKey || getShiftMeta().key);
@@ -1900,16 +1715,8 @@ export function AppProvider({ children }) {
   const previousUsersDataRef = useRef(usersData);
   const lastSharedStateRef = useRef('');
   const latestCloudSharedStateRef = useRef(null);
-  const latestLocalSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
-  const devicePushTokenRef = useRef(getStoredPushToken());
-  const devicePushDeviceIdRef = useRef(getOrCreatePushDeviceId());
-  const deviceServiceWorkerRegistrationRef = useRef(null);
-  const foregroundPushUnsubscribeRef = useRef(null);
-  const seenForegroundPushIdsRef = useRef(new Set());
-  const seenDeviceNotificationIdsRef = useRef(new Set());
-  const initializedVisibleNotificationIdsRef = useRef(new Set());
 
 // SOS Hooks moved to resolve TDZ
 
@@ -1934,198 +1741,6 @@ export function AppProvider({ children }) {
   const isPic = currentUserRole === ACCESS_ROLES.PIC;
   const isPetugas = currentUserRole === ACCESS_ROLES.PETUGAS;
   const currentUserId = currentUserRecord?.id || null;
-  const currentDevicePushSubscription = useMemo(() => {
-    if (!currentUserRecord) return null;
-
-    const currentDeviceId = devicePushDeviceIdRef.current;
-    const currentToken = devicePushTokenRef.current || getStoredPushToken();
-    return (currentUserRecord.pushSubscriptions || []).find((subscription) => (
-      (currentDeviceId && subscription.deviceId === currentDeviceId)
-      || (currentToken && subscription.token === currentToken)
-    )) || null;
-  }, [currentUserRecord]);
-  const isDeviceNotificationPopupEnabled = Boolean(
-    deviceNotificationPermission === 'granted'
-    && currentDevicePushSubscription?.status === PUSH_SUBSCRIPTION_STATUS.ACTIVE,
-  );
-  const upsertDevicePushSubscriptionForUser = useCallback((userId, subscriptionPatch = {}) => {
-    if (!userId) return;
-
-    setUsersData((previousUsers) => {
-      let didChange = false;
-      const nextUsers = previousUsers.map((user, index) => {
-        if (user.id !== userId) return user;
-
-        const nextSubscription = normalizePushSubscriptionRecord({
-          ...subscriptionPatch,
-          deviceId: subscriptionPatch.deviceId || getOrCreatePushDeviceId(),
-          platform: subscriptionPatch.platform || getClientPlatformLabel(),
-          userAgent: subscriptionPatch.userAgent || sanitizeText(globalThis.navigator?.userAgent || '', 260),
-          permission: subscriptionPatch.permission || deviceNotificationPermission,
-          updatedAt: subscriptionPatch.updatedAt || new Date().toISOString(),
-          createdAt: subscriptionPatch.createdAt || subscriptionPatch.updatedAt || new Date().toISOString(),
-        }, index);
-
-        if (!nextSubscription) return user;
-
-        const nextUser = normalizeUserRecord({
-          ...user,
-          pushSubscriptions: upsertPushSubscription(user.pushSubscriptions || [], nextSubscription),
-        }, index);
-
-        if (JSON.stringify(user.pushSubscriptions || []) === JSON.stringify(nextUser.pushSubscriptions || [])) {
-          return user;
-        }
-
-        didChange = true;
-        return nextUser;
-      });
-
-      return didChange ? nextUsers : previousUsers;
-    });
-  }, [deviceNotificationPermission]);
-  const revokeDevicePushSubscriptionForUser = useCallback((userId, subscriptionPatch = {}) => {
-    if (!userId) return;
-
-    setUsersData((previousUsers) => {
-      let didChange = false;
-      const nextUsers = previousUsers.map((user, index) => {
-        if (user.id !== userId) return user;
-
-        const nextSubscription = createRevokedPushSubscription({
-          ...subscriptionPatch,
-          deviceId: subscriptionPatch.deviceId || getOrCreatePushDeviceId(),
-          platform: subscriptionPatch.platform || getClientPlatformLabel(),
-          userAgent: subscriptionPatch.userAgent || sanitizeText(globalThis.navigator?.userAgent || '', 260),
-          permission: subscriptionPatch.permission || getNotificationPermission(),
-        });
-
-        if (!nextSubscription) return user;
-
-        const nextUser = normalizeUserRecord({
-          ...user,
-          pushSubscriptions: upsertPushSubscription(user.pushSubscriptions || [], nextSubscription),
-        }, index);
-
-        if (JSON.stringify(user.pushSubscriptions || []) === JSON.stringify(nextUser.pushSubscriptions || [])) {
-          return user;
-        }
-
-        didChange = true;
-        return nextUser;
-      });
-
-      return didChange ? nextUsers : previousUsers;
-    });
-  }, []);
-  const enableDeviceNotifications = useCallback(async ({ silent = false } = {}) => {
-    if (!currentUserId) {
-      if (!silent) setDeviceNotificationsError('Login petugas terlebih dulu untuk mengaktifkan notifikasi perangkat.');
-      return false;
-    }
-
-    setDeviceNotificationsBusy(true);
-    if (!silent) setDeviceNotificationsError('');
-
-    try {
-      const supported = await isPushMessagingSupported();
-      setIsDeviceNotificationSupported(supported);
-
-      if (!supported) {
-        if (!silent) setDeviceNotificationsError('Browser ini belum mendukung push notification.');
-        return false;
-      }
-
-      const registrationResult = await registerDevicePushToken();
-      setDeviceNotificationPermission(registrationResult.permission || getNotificationPermission());
-
-      if (!registrationResult.ok) {
-        if (registrationResult.reason === 'denied') {
-          const storedUserId = getStoredAssignedPushUserId();
-          const storedToken = devicePushTokenRef.current || getStoredPushToken();
-          if (storedUserId && storedToken) {
-            revokeDevicePushSubscriptionForUser(storedUserId, { token: storedToken });
-          }
-          setStoredAssignedPushUserId('');
-          setStoredPushToken('');
-          devicePushTokenRef.current = '';
-        }
-
-        if (!silent) {
-          if (registrationResult.reason === 'missing-vapid-key') {
-            setDeviceNotificationsError('VAPID key Firebase belum diisi. Lengkapi VITE_FIREBASE_VAPID_KEY.');
-          } else if (registrationResult.reason === 'firebase-not-configured') {
-            setDeviceNotificationsError('Konfigurasi Firebase Messaging belum lengkap.');
-          } else if (registrationResult.reason === 'denied') {
-            setDeviceNotificationsError('Izin notifikasi ditolak di browser ini.');
-          } else {
-            setDeviceNotificationsError('Token notifikasi perangkat belum berhasil dibuat.');
-          }
-        }
-        return false;
-      }
-
-      const { token, serviceWorkerRegistration } = registrationResult;
-      deviceServiceWorkerRegistrationRef.current = serviceWorkerRegistration || null;
-      devicePushTokenRef.current = token;
-      setStoredPushToken(token);
-
-      const previousAssignedUserId = getStoredAssignedPushUserId();
-      if (previousAssignedUserId && previousAssignedUserId !== currentUserId) {
-        revokeDevicePushSubscriptionForUser(previousAssignedUserId, { token });
-      }
-
-      upsertDevicePushSubscriptionForUser(currentUserId, {
-        token,
-        status: PUSH_SUBSCRIPTION_STATUS.ACTIVE,
-        permission: 'granted',
-      });
-      setStoredAssignedPushUserId(currentUserId);
-      setDeviceNotificationsError('');
-      return true;
-    } catch (error) {
-      console.error('[SmartPatrol][push] gagal mengaktifkan notifikasi perangkat', error);
-      if (!silent) {
-        setDeviceNotificationsError(error?.message || 'Gagal mengaktifkan notifikasi perangkat.');
-      }
-      return false;
-    } finally {
-      setDeviceNotificationsBusy(false);
-    }
-  }, [currentUserId, revokeDevicePushSubscriptionForUser, upsertDevicePushSubscriptionForUser]);
-  const disableDeviceNotificationPopups = useCallback(async () => {
-    if (!currentUserId) {
-      setDeviceNotificationsError('Login petugas terlebih dulu untuk mengatur popup perangkat.');
-      return false;
-    }
-
-    const deviceToken = devicePushTokenRef.current || getStoredPushToken();
-    const deviceId = devicePushDeviceIdRef.current || getOrCreatePushDeviceId();
-
-    if (!deviceToken && !currentDevicePushSubscription) {
-      setDeviceNotificationsError('Perangkat ini belum punya token notifikasi aktif.');
-      return false;
-    }
-
-    setDeviceNotificationsBusy(true);
-    setDeviceNotificationsError('');
-
-    try {
-      upsertDevicePushSubscriptionForUser(currentUserId, {
-        token: deviceToken || currentDevicePushSubscription?.token || '',
-        deviceId,
-        permission: getNotificationPermission(),
-        status: PUSH_SUBSCRIPTION_STATUS.PAUSED,
-      });
-      return true;
-    } catch (error) {
-      console.error('[SmartPatrol][push] gagal menonaktifkan popup perangkat', error);
-      setDeviceNotificationsError(error?.message || 'Gagal menonaktifkan popup perangkat.');
-      return false;
-    } finally {
-      setDeviceNotificationsBusy(false);
-    }
-  }, [currentDevicePushSubscription, currentUserId, upsertDevicePushSubscriptionForUser]);
 
   const handleSOSTrigger = useCallback((lat, lng) => {
     if (!currentUserRecord) return;
@@ -2230,177 +1845,6 @@ export function AppProvider({ children }) {
     if (!currentUserId) return 0;
     return visibleNotifications.filter(notification => !notification.readByUserIds.includes(currentUserId)).length;
   }, [visibleNotifications, currentUserId]);
-  useEffect(() => {
-    clearNotificationLaunchRequest();
-  }, []);
-  useEffect(() => {
-    let isMounted = true;
-
-    const syncPushSupport = async () => {
-      const supported = await isPushMessagingSupported();
-      if (!isMounted) return;
-
-      setIsDeviceNotificationSupported(supported);
-      setDeviceNotificationPermission(getNotificationPermission());
-
-      if (!supported) return;
-
-      try {
-        deviceServiceWorkerRegistrationRef.current = await ensurePushServiceWorkerRegistration();
-      } catch (error) {
-        console.error('[SmartPatrol][push] gagal registrasi service worker', error);
-      }
-    };
-
-    syncPushSupport();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.serviceWorker) return undefined;
-
-    const handleServiceWorkerMessage = (event) => {
-      const payload = event.data || {};
-      if (payload.type !== 'SMARTPATROL_OPEN_NOTIFICATION') return;
-      setPendingNotificationOpenId(payload.notificationId || '__open-notifications__');
-    };
-
-    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
-    return () => {
-      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
-    };
-  }, []);
-  useEffect(() => {
-    if (deviceNotificationPermission !== 'granted' || !currentUserId) return;
-    if (currentDevicePushSubscription?.status === PUSH_SUBSCRIPTION_STATUS.PAUSED) return;
-    if (currentDevicePushSubscription?.status === PUSH_SUBSCRIPTION_STATUS.ACTIVE) return;
-    enableDeviceNotifications({ silent: true });
-  }, [currentDevicePushSubscription, currentUserId, deviceNotificationPermission, enableDeviceNotifications]);
-  useEffect(() => {
-    if (currentUserId) return;
-
-    const assignedUserId = getStoredAssignedPushUserId();
-    const storedToken = devicePushTokenRef.current || getStoredPushToken();
-    if (!assignedUserId || !storedToken) return;
-
-    revokeDevicePushSubscriptionForUser(assignedUserId, { token: storedToken });
-    setStoredAssignedPushUserId('');
-    setStoredPushToken('');
-    devicePushTokenRef.current = '';
-  }, [currentUserId, revokeDevicePushSubscriptionForUser]);
-  useEffect(() => {
-    if (deviceNotificationPermission !== 'denied') return;
-
-    const assignedUserId = getStoredAssignedPushUserId();
-    const storedToken = devicePushTokenRef.current || getStoredPushToken();
-    if (assignedUserId && storedToken) {
-      revokeDevicePushSubscriptionForUser(assignedUserId, { token: storedToken });
-    }
-
-    setStoredAssignedPushUserId('');
-    setStoredPushToken('');
-    devicePushTokenRef.current = '';
-  }, [deviceNotificationPermission, revokeDevicePushSubscriptionForUser]);
-  useEffect(() => {
-    let isActive = true;
-
-    const subscribeForegroundPush = async () => {
-      const unsubscribe = await subscribeToForegroundPushMessages(async (message) => {
-        const messageKey = message.notificationId || `${message.notificationType}:${message.title}:${message.body}`;
-        if (!messageKey || seenForegroundPushIdsRef.current.has(messageKey)) return;
-
-        seenForegroundPushIdsRef.current.add(messageKey);
-        if (seenForegroundPushIdsRef.current.size > 50) {
-          const firstSeenKey = seenForegroundPushIdsRef.current.values().next().value;
-          seenForegroundPushIdsRef.current.delete(firstSeenKey);
-        }
-
-        if (getNotificationPermission() !== 'granted' || !isDeviceNotificationPopupEnabled) return;
-
-        try {
-          const registration = deviceServiceWorkerRegistrationRef.current || await ensurePushServiceWorkerRegistration();
-          deviceServiceWorkerRegistrationRef.current = registration;
-          if (message.notificationId) {
-            seenDeviceNotificationIdsRef.current.add(message.notificationId);
-          }
-          await showDeviceNotification({
-            notificationId: message.notificationId,
-            title: message.title,
-            body: message.body,
-          }, {
-            serviceWorkerRegistration: registration,
-          });
-        } catch (error) {
-          console.error('[SmartPatrol][push] gagal menampilkan notifikasi foreground', error);
-        }
-      });
-
-      if (isActive) {
-        foregroundPushUnsubscribeRef.current = unsubscribe;
-      } else if (typeof unsubscribe === 'function') {
-        unsubscribe();
-      }
-    };
-
-    subscribeForegroundPush();
-    return () => {
-      isActive = false;
-      if (typeof foregroundPushUnsubscribeRef.current === 'function') {
-        foregroundPushUnsubscribeRef.current();
-      }
-      foregroundPushUnsubscribeRef.current = null;
-    };
-  }, [isDeviceNotificationPopupEnabled]);
-  useEffect(() => {
-    if (!currentUserId) {
-      initializedVisibleNotificationIdsRef.current = new Set();
-      return;
-    }
-
-    const currentNotificationIds = new Set(visibleNotifications.map((notification) => notification.id).filter(Boolean));
-    const initializedIds = initializedVisibleNotificationIdsRef.current;
-
-    if (initializedIds.size === 0) {
-      initializedVisibleNotificationIdsRef.current = currentNotificationIds;
-      return;
-    }
-
-    const newlyVisibleNotifications = visibleNotifications.filter((notification) => (
-      notification?.id
-      && !initializedIds.has(notification.id)
-      && !seenDeviceNotificationIdsRef.current.has(notification.id)
-    ));
-
-    initializedVisibleNotificationIdsRef.current = currentNotificationIds;
-
-    if (newlyVisibleNotifications.length === 0) return;
-    if (getNotificationPermission() !== 'granted' || !isDeviceNotificationPopupEnabled) return;
-
-    const showNotifications = async () => {
-      try {
-        const registration = deviceServiceWorkerRegistrationRef.current || await ensurePushServiceWorkerRegistration();
-        deviceServiceWorkerRegistrationRef.current = registration;
-
-        for (const notification of newlyVisibleNotifications) {
-          if (!notification?.id || seenDeviceNotificationIdsRef.current.has(notification.id)) continue;
-          seenDeviceNotificationIdsRef.current.add(notification.id);
-          await showDeviceNotification({
-            notificationId: notification.id,
-            title: notification.title,
-            body: notification.message,
-            dedupeKey: notification.dedupeKey,
-          }, {
-            serviceWorkerRegistration: registration,
-          });
-        }
-      } catch (error) {
-        console.error('[SmartPatrol][push] gagal menampilkan popup notifikasi lokal', error);
-      }
-    };
-
-    showNotifications();
-  }, [currentUserId, isDeviceNotificationPopupEnabled, visibleNotifications]);
   const filteredCheckpoints = useMemo(() => checkpoints.filter(cp => cp.name.toLowerCase().includes(deferredSearchQuery.toLowerCase())), [checkpoints, deferredSearchQuery]);
   const incidentLocationOptions = useMemo(() => Array.from(new Set(checkpoints.map(cp => cp.name))), [checkpoints]);
   const completedCount = useMemo(() => checkpoints.filter(c => c.status === 'completed').length, [checkpoints]);
@@ -2445,30 +1889,6 @@ export function AppProvider({ children }) {
     activeSOSAlert,
     sosHistory,
   ]);
-  useEffect(() => {
-    latestLocalSharedStateRef.current = sharedState;
-  }, [sharedState]);
-  const primeLocalSharedState = useCallback((updater) => {
-    const baseState = latestLocalSharedStateRef.current || sharedState;
-    const nextState = typeof updater === 'function' ? updater(baseState) : baseState;
-    if (!nextState || typeof nextState !== 'object') return;
-
-    latestLocalSharedStateRef.current = createSharedStateSnapshot({
-      activeShiftKey: nextState.activeShiftKey || baseState.activeShiftKey,
-      checkpointsByShip: nextState.checkpointsByShip || baseState.checkpointsByShip,
-      deletedRecords: nextState.deletedRecords || baseState.deletedRecords,
-      historyEntries: nextState.historyEntries || baseState.historyEntries,
-      incidentMeta: nextState.incidentMeta || baseState.incidentMeta,
-      incidentsData: nextState.incidentsData || baseState.incidentsData,
-      notifications: nextState.notifications || baseState.notifications,
-      shipsData: nextState.shipsData || baseState.shipsData,
-      usersData: nextState.usersData || baseState.usersData,
-      activeSOSAlert: Object.prototype.hasOwnProperty.call(nextState, 'activeSOSAlert')
-        ? nextState.activeSOSAlert
-        : baseState.activeSOSAlert,
-      sosHistory: nextState.sosHistory || baseState.sosHistory,
-    });
-  }, [sharedState]);
   const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
     if (!photoUrl.startsWith('idb://')) return photoUrl;
@@ -2590,12 +2010,6 @@ export function AppProvider({ children }) {
   const applyCloudSharedState = useCallback((nextState) => {
     if (!nextState || typeof nextState !== 'object') return null;
 
-    const latestLocalState = latestLocalSharedStateRef.current || {};
-    const normalizedIncomingShiftKey = normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta());
-    const resolvedActiveShiftKey = selectLatestShiftKey(
-      latestLocalState.activeShiftKey,
-      normalizedIncomingShiftKey,
-    ) || normalizedIncomingShiftKey;
     const nextShips = normalizeShipsCollection(nextState.shipsData || initialShipsData);
     const nextUsers = applyAdminCredentialReset(
       normalizeUsersCollection(nextState.usersData || mockUsersList),
@@ -2604,41 +2018,11 @@ export function AppProvider({ children }) {
       nextShips,
       nextState.checkpointsByShip,
       nextState.checkpoints,
-      resolvedActiveShiftKey,
-      { resetForActiveShift: false },
-    );
-    const mergedCheckpointsByShip = Object.fromEntries(
-      Object.entries(nextCheckpointsByShip).map(([shipId, incomingShipCheckpoints]) => {
-        const localShipCheckpoints = Array.isArray(latestLocalState.checkpointsByShip?.[shipId])
-          ? latestLocalState.checkpointsByShip[shipId]
-          : [];
-        const protectedShipCheckpoints = mergeIncomingCheckpointsWithLocalProtection(
-          localShipCheckpoints,
-          incomingShipCheckpoints,
-        );
-
-        const preservedCheckpointIds = protectedShipCheckpoints
-          .filter((checkpoint, index) => checkpoint === localShipCheckpoints.find((localCheckpoint) => (
-            getCheckpointMergeKey(localCheckpoint) === getCheckpointMergeKey(incomingShipCheckpoints[index])
-          )))
-          .map((checkpoint) => String(checkpoint?.id || ''))
-          .filter(Boolean);
-
-        if (preservedCheckpointIds.length > 0) {
-          logCloudSyncDebug('preserve-local-checkpoints', {
-            shipId,
-            preservedCheckpointIds,
-            localShiftKey: latestLocalState.activeShiftKey || null,
-            incomingShiftKey: normalizedIncomingShiftKey || null,
-          });
-        }
-
-        return [shipId, protectedShipCheckpoints];
-      }),
+      normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
     );
     const incomingState = createSharedStateSnapshot({
-      activeShiftKey: resolvedActiveShiftKey,
-      checkpointsByShip: mergedCheckpointsByShip,
+      activeShiftKey: normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
+      checkpointsByShip: nextCheckpointsByShip,
       deletedRecords: nextState.deletedRecords,
       historyEntries: sortHistoryEntries(nextState.historyEntries || createSeedHistoryEntries()),
       incidentMeta: nextState.incidentMeta && typeof nextState.incidentMeta === 'object' ? nextState.incidentMeta : {},
@@ -2649,7 +2033,7 @@ export function AppProvider({ children }) {
       activeSOSAlert: nextState.activeSOSAlert || null,
       sosHistory: nextState.sosHistory || [],
     });
-    const normalizedState = mergeSharedStateSnapshots(latestLocalSharedStateRef.current || {}, incomingState);
+    const normalizedState = mergeSharedStateSnapshots({}, incomingState);
     const serializedState = serializeSharedStateSnapshot(normalizedState);
     latestCloudSharedStateRef.current = normalizedState;
 
@@ -2961,31 +2345,6 @@ export function AppProvider({ children }) {
 
     closeHistoryEntry();
   }, [allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry]);
-  useEffect(() => {
-    if (!pendingNotificationOpenId || !currentUserId) return;
-
-    if (pendingNotificationOpenId === '__open-notifications__') {
-      openNotificationsPage();
-      setPendingNotificationOpenId('');
-      return;
-    }
-
-    const matchedNotification = notifications.find((notification) => (
-      notification.id === pendingNotificationOpenId
-      && notification.targetUserIds.includes(currentUserId)
-    ));
-
-    if (matchedNotification) {
-      handleNotificationClick(matchedNotification);
-      setPendingNotificationOpenId('');
-      return;
-    }
-
-    if (cloudSyncBootstrapped) {
-      openNotificationsPage();
-      setPendingNotificationOpenId('');
-    }
-  }, [cloudSyncBootstrapped, currentUserId, handleNotificationClick, notifications, openNotificationsPage, pendingNotificationOpenId]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => setShiftClock(Date.now()), 60 * 1000);
@@ -3013,108 +2372,90 @@ export function AppProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    if (!operationalShipName) return;
     const { startAt, endAt } = currentShiftSchedule;
     const now = new Date(shiftClock);
     if (now < startAt || now >= endAt) return;
+    appendNotifications([{
+      type: 'shift_started',
+      title: 'Shift patroli dimulai',
+      message: `${currentShiftMeta.label} ${currentShiftMeta.timeRange} untuk ${operationalShipName} telah dimulai.`,
+      senderName: 'Sistem',
+      senderRole: 'SYSTEM',
+      targetUserIds: getShipRecipients(operationalShipName, { includePic: true, includePetugas: true }),
+      route: 'patrol/checkpoint',
+      shipName: operationalShipName,
+      shiftKey: currentShiftMeta.key,
+      dedupeKey: `shift-started:${operationalShipName}:${currentShiftMeta.key}`,
+      createdAt: startAt.toISOString(),
+    }]);
+  }, [appendNotifications, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
 
-    appendNotifications(shipsData.flatMap((ship) => {
-      const shipName = sanitizeText(ship?.name || '', 120);
-      if (!shipName) return [];
+  useEffect(() => {
+    if (!operationalShipName) return;
+    const { endAt, checkpointPendingAt, shiftEndingSoonAt } = currentShiftSchedule;
+    const now = new Date(shiftClock);
+    const remainingMinutes = Math.ceil((endAt.getTime() - now.getTime()) / MINUTE_IN_MS);
+    const pendingCheckpoints = checkpoints.filter(checkpoint => checkpoint.status === 'pending').length;
+    const targetUserIds = getShipRecipients(operationalShipName, { includePic: true, includePetugas: true });
 
-      const targetUserIds = getShipRecipients(shipName, { includePic: true, includePetugas: true });
-      if (targetUserIds.length === 0) return [];
+    logShiftNotificationDebug('evaluate', {
+      shipName: operationalShipName,
+      shiftKey: currentShiftMeta.key,
+      shiftLabel: currentShiftMeta.label,
+      now: now.toISOString(),
+      remainingMinutes,
+      pendingCheckpoints,
+      targetUserIds,
+      checkpointPendingAt: checkpointPendingAt.toISOString(),
+      shiftEndingSoonAt: shiftEndingSoonAt.toISOString(),
+    });
 
-      return [{
-        type: 'shift_started',
-        title: 'Shift patroli dimulai',
-        message: `${currentShiftMeta.label} ${currentShiftMeta.timeRange} untuk ${shipName} telah dimulai.`,
+    if (now >= endAt) {
+      logShiftNotificationDebug('skip-window', {
+        shipName: operationalShipName,
+        shiftKey: currentShiftMeta.key,
+        remainingMinutes,
+      });
+      return;
+    }
+
+    const scheduledNotifications = [];
+
+    if (now >= shiftEndingSoonAt) {
+      scheduledNotifications.push({
+        type: 'shift_ending_soon',
+        title: 'Shift akan berakhir',
+        message: 'Shift akan berakhir 15 menit lagi silahkan cek kembali laporan patroli anda',
+        senderName: 'Sistem',
+        senderRole: 'SYSTEM',
+        targetUserIds,
+        route: 'patrol/info',
+        shipName: operationalShipName,
+        shiftKey: currentShiftMeta.key,
+        dedupeKey: `shift-ending-soon:${operationalShipName}:${currentShiftMeta.key}`,
+        createdAt: shiftEndingSoonAt.toISOString(),
+      });
+    }
+
+    if (pendingCheckpoints > 0 && now >= checkpointPendingAt) {
+      scheduledNotifications.push({
+        type: 'checkpoint_pending',
+        title: 'Masih ada checkpoint pending',
+        message: `${pendingCheckpoints} checkpoint belum dipatroli pada ${currentShiftMeta.label}.`,
         senderName: 'Sistem',
         senderRole: 'SYSTEM',
         targetUserIds,
         route: 'patrol/checkpoint',
-        shipName,
+        shipName: operationalShipName,
         shiftKey: currentShiftMeta.key,
-        dedupeKey: `shift-started:${shipName}:${currentShiftMeta.key}`,
-        createdAt: startAt.toISOString(),
-      }];
-    }));
-  }, [appendNotifications, currentShiftMeta, currentShiftSchedule, getShipRecipients, shipsData, shiftClock]);
-
-  useEffect(() => {
-    const { endAt, checkpointPendingAt, shiftEndingSoonAt } = currentShiftSchedule;
-    const now = new Date(shiftClock);
-    if (now >= endAt) {
-      return;
+        dedupeKey: `checkpoint-pending:${operationalShipName}:${currentShiftMeta.key}`,
+        createdAt: checkpointPendingAt.toISOString(),
+      });
     }
 
-    const remainingMinutes = Math.ceil((endAt.getTime() - now.getTime()) / MINUTE_IN_MS);
-    const scheduledNotifications = shipsData.flatMap((ship) => {
-      const shipName = sanitizeText(ship?.name || '', 120);
-      if (!shipName) return [];
-
-      const shipCheckpoints = checkpointsByShip[ship.id] || createShipCheckpointCollection(ship);
-      const pendingCheckpoints = shipCheckpoints.filter(checkpoint => checkpoint.status === 'pending').length;
-      const targetUserIds = getShipRecipients(shipName, { includePic: true, includePetugas: true });
-
-      logShiftNotificationDebug('evaluate', {
-        shipName,
-        shiftKey: currentShiftMeta.key,
-        shiftLabel: currentShiftMeta.label,
-        now: now.toISOString(),
-        remainingMinutes,
-        pendingCheckpoints,
-        targetUserIds,
-        checkpointPendingAt: checkpointPendingAt.toISOString(),
-        shiftEndingSoonAt: shiftEndingSoonAt.toISOString(),
-      });
-
-      if (targetUserIds.length === 0) {
-        logShiftNotificationDebug('skip-recipients', {
-          shipName,
-          shiftKey: currentShiftMeta.key,
-        });
-        return [];
-      }
-
-      const nextNotifications = [];
-
-      if (now >= shiftEndingSoonAt) {
-        nextNotifications.push({
-          type: 'shift_ending_soon',
-          title: 'Shift akan berakhir',
-          message: 'Shift akan berakhir 15 menit lagi silahkan cek kembali laporan patroli anda',
-          senderName: 'Sistem',
-          senderRole: 'SYSTEM',
-          targetUserIds,
-          route: 'patrol/info',
-          shipName,
-          shiftKey: currentShiftMeta.key,
-          dedupeKey: `shift-ending-soon:${shipName}:${currentShiftMeta.key}`,
-          createdAt: shiftEndingSoonAt.toISOString(),
-        });
-      }
-
-      if (pendingCheckpoints > 0 && now >= checkpointPendingAt) {
-        nextNotifications.push({
-          type: 'checkpoint_pending',
-          title: 'Masih ada checkpoint pending',
-          message: `${pendingCheckpoints} checkpoint belum dipatroli pada ${currentShiftMeta.label}.`,
-          senderName: 'Sistem',
-          senderRole: 'SYSTEM',
-          targetUserIds,
-          route: 'patrol/checkpoint',
-          shipName,
-          shiftKey: currentShiftMeta.key,
-          dedupeKey: `checkpoint-pending:${shipName}:${currentShiftMeta.key}`,
-          createdAt: checkpointPendingAt.toISOString(),
-        });
-      }
-
-      return nextNotifications;
-    });
-
     appendNotifications(scheduledNotifications);
-  }, [appendNotifications, checkpointsByShip, currentShiftMeta, currentShiftSchedule, getShipRecipients, shipsData, shiftClock]);
+  }, [appendNotifications, checkpoints, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
 
   useEffect(() => {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
@@ -3203,7 +2544,7 @@ export function AppProvider({ children }) {
           message: `${entry.missed} titik patroli missed pada ${entry.ship} ${entry.shift}.`,
           senderName: 'Sistem',
           senderRole: 'SYSTEM',
-          targetUserIds: getShipRecipients(entry.ship, { includeAdmins: true, includePic: true, includePetugas: true }),
+          targetUserIds: getShipRecipients(entry.ship, { includeAdmins: true, includePic: true }),
           route: 'history/detail',
           routeParams: { historyId: entry.id },
           historyId: entry.id,
@@ -3291,7 +2632,7 @@ export function AppProvider({ children }) {
       time: timeString,
       completedAt: now.toISOString(),
       updatedAt: now.toISOString(),
-      shiftKey: activeShiftKey,
+      shiftKey: currentShiftMeta.key,
       shipName: operationalShipName,
       shipSnapshot: environmentSnapshot.shipSnapshot,
       gpsSnapshot: environmentSnapshot.gpsSnapshot,
@@ -3302,48 +2643,6 @@ export function AppProvider({ children }) {
       kejadian: sanitizeMultilineText(formState.kejadian, 280),
       tindakLanjut: sanitizeMultilineText(formState.tindakLanjut, 240),
     };
-    const persistedPatrolIncident = submittedItem?.resultType === 'temuan'
-      ? {
-          ...createPatrolIncidentRecord(submittedItem, { fallbackShipName: operationalShipName }),
-          createdAt: submittedItem.completedAt,
-          updatedAt: submittedItem.updatedAt,
-        }
-      : null;
-    const incidentNotification = submittedItem?.resultType === 'temuan'
-      ? {
-          type: 'incident_created',
-          title: 'Temuan patroli baru',
-          message: `${submittedItem.name} dilaporkan sebagai temuan oleh ${currentUser}.`,
-          senderName: currentUser,
-          senderRole: currentUserRole,
-          targetUserIds: getShipRecipients(operationalShipName, {
-            includeAdmins: true,
-            includePic: true,
-            includeUserIds: currentUserRecord?.id ? [currentUserRecord.id] : [],
-          }),
-          route: 'incidents/detail',
-          routeParams: { incidentId: submittedItem.incidentId },
-          incidentId: submittedItem.incidentId,
-          shipName: operationalShipName,
-          createdAt: submittedItem.completedAt,
-          dedupeKey: submittedItem.incidentId ? `incident-created:${submittedItem.incidentId}` : '',
-        }
-      : null;
-    primeLocalSharedState((baseState) => ({
-      ...baseState,
-      checkpointsByShip: {
-        ...(baseState.checkpointsByShip || {}),
-        [operationalShip.id]: (baseState.checkpointsByShip?.[operationalShip.id] || []).map((checkpoint) => (
-          String(checkpoint.id) === String(id) ? submittedItem : checkpoint
-        )),
-      },
-      incidentsData: persistedPatrolIncident
-        ? [persistedPatrolIncident, ...(baseState.incidentsData || []).filter((incident) => incident.id !== persistedPatrolIncident.id)]
-        : baseState.incidentsData,
-      notifications: incidentNotification
-        ? mergeNotificationsCollection(baseState.notifications || [], [createNotificationRecord(incidentNotification)])
-        : baseState.notifications,
-    }));
     setActiveForms(prev => {
       updateOperationalShipCheckpoints(shipCheckpoints => shipCheckpoints.map((checkpoint) => (
         String(checkpoint.id) === String(id) ? submittedItem : checkpoint
@@ -3354,20 +2653,25 @@ export function AppProvider({ children }) {
     });
     setPendingPatrolCameraCapture(null);
 
-    if (persistedPatrolIncident) {
-      setIncidentsData((previousIncidents) => [
-        persistedPatrolIncident,
-        ...previousIncidents.filter((incident) => incident.id !== persistedPatrolIncident.id),
-      ]);
-    }
-
-    if (incidentNotification) {
-      appendNotifications([incidentNotification]);
+    if (submittedItem?.resultType === 'temuan') {
+      appendNotifications([{
+        type: 'incident_created',
+        title: 'Temuan patroli baru',
+        message: `${submittedItem.name} dilaporkan sebagai temuan oleh ${currentUser}.`,
+        senderName: currentUser,
+        senderRole: currentUserRole,
+        targetUserIds: getShipRecipients(operationalShipName, { includeAdmins: true, includePic: true }),
+        route: 'incidents/detail',
+        routeParams: { incidentId: submittedItem.incidentId },
+        incidentId: submittedItem.incidentId,
+        shipName: operationalShipName,
+        createdAt: submittedItem.completedAt,
+      }]);
     }
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, primeLocalSharedState, submittingPatrolId, updateOperationalShipCheckpoints]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, submittingPatrolId, updateOperationalShipCheckpoints]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -3376,12 +2680,12 @@ export function AppProvider({ children }) {
       cancelText: 'BATAL',
       onConfirm: () => { 
         updateOperationalShipCheckpoints(prev => prev.map(c => (
-          String(c.id) === String(id) ? resetCheckpointForShift(c, { shiftKey: activeShiftKey }) : c
+          String(c.id) === String(id) ? resetCheckpointForShift(c, { shiftKey: currentShiftMeta.key }) : c
         )));
         setSelectedReportDetail(null); 
       } 
     }); 
-  }, [activeShiftKey, updateOperationalShipCheckpoints]);
+  }, [currentShiftMeta.key, updateOperationalShipCheckpoints]);
   const handleOpenPatrolResult = useCallback((item) => {
     setActiveForms({});
     setPendingPatrolCameraCapture(null);
@@ -3437,11 +2741,11 @@ export function AppProvider({ children }) {
         shipId: operationalShip.id,
         shipName: operationalShip.name,
         isTemporaryShiftNode: true,
-        createdInShiftKey: activeShiftKey,
+        createdInShiftKey: currentShiftMeta.key,
       },
     ]));
     setNewCustomNode('');
-  }, [activeShiftKey, canAddTemporaryPatrolNode, checkpoints, newCustomNode, operationalShip, updateOperationalShipCheckpoints]);
+  }, [canAddTemporaryPatrolNode, checkpoints, currentShiftMeta.key, newCustomNode, operationalShip, updateOperationalShipCheckpoints]);
   const closePatrolCameraCapture = useCallback(() => {
     setPendingPatrolCameraCapture(null);
   }, []);
@@ -3472,33 +2776,22 @@ export function AppProvider({ children }) {
     const now = new Date();
     const createdAt = now.toISOString();
     const newIncident = { ...incidentForm, id: Date.now(), createdAt, time: formatAppTime(now), date: formatAppDate(now), reportedBy: currentUser, shipName: operationalShipName, location: loc, customLocation: incidentForm.locType === 'custom' ? loc : '', photoUrl: incidentForm.photoUrl, penyebab: sanitizeMultilineText(incidentForm.penyebab, 240), deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320), tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240) };
-    const incidentNotification = {
+    setIncidentsData(prev => [newIncident, ...prev]);
+    appendNotifications([{
       type: 'incident_created',
       title: 'Laporan temuan baru',
       message: `${loc} dilaporkan sebagai temuan baru oleh ${currentUser}.`,
       senderName: currentUser,
       senderRole: currentUserRole,
-      targetUserIds: getShipRecipients(operationalShipName, {
-        includeAdmins: true,
-        includePic: true,
-        includeUserIds: currentUserRecord?.id ? [currentUserRecord.id] : [],
-      }),
+      targetUserIds: getShipRecipients(operationalShipName, { includeAdmins: true, includePic: true }),
       route: 'incidents/detail',
       routeParams: { incidentId: newIncident.id },
       incidentId: newIncident.id,
       shipName: operationalShipName,
       createdAt,
-      dedupeKey: `incident-created:${newIncident.id}`,
-    };
-    primeLocalSharedState((baseState) => ({
-      ...baseState,
-      incidentsData: [newIncident, ...(baseState.incidentsData || [])],
-      notifications: mergeNotificationsCollection(baseState.notifications || [], [createNotificationRecord(incidentNotification)]),
-    }));
-    setIncidentsData(prev => [newIncident, ...prev]);
-    appendNotifications([incidentNotification]);
+    }]);
     closeIncidentModal();
-  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShipName, primeLocalSharedState]);
+  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShipName]);
 
   // Ship handlers
   const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
@@ -4001,23 +3294,35 @@ export function AppProvider({ children }) {
       cancelText: 'BATAL',
       onConfirm: () => {
         if (incident.isPatrol) {
+          let removedFromActiveShift = false;
+
           setCheckpointsByShip((previousState) => Object.fromEntries(
             Object.entries(previousState).map(([shipId, shipCheckpoints]) => ([
               shipId,
               shipCheckpoints.map((checkpoint) => {
                 if (createPatrolIncidentId(checkpoint) !== incidentId) return checkpoint;
-                return resetCheckpointForShift(checkpoint, { shiftKey: activeShiftKey });
+                removedFromActiveShift = true;
+                return resetCheckpointForShift(checkpoint, { shiftKey: currentShiftMeta.key });
               }),
             ])),
           ));
-          setIncidentsData((previousIncidents) => previousIncidents.filter((entry) => entry.id !== incidentId));
-          setIncidentMeta((previousMeta) => ({
-            ...previousMeta,
-            [incidentId]: {
-              ...(previousMeta[incidentId] || {}),
-              deleted: true,
-            },
-          }));
+
+          if (!removedFromActiveShift) {
+            setIncidentMeta((previousMeta) => ({
+              ...previousMeta,
+              [incidentId]: {
+                ...(previousMeta[incidentId] || {}),
+                deleted: true,
+              },
+            }));
+          } else {
+            setIncidentMeta((previousMeta) => {
+              if (!previousMeta[incidentId]) return previousMeta;
+              const nextMeta = { ...previousMeta };
+              delete nextMeta[incidentId];
+              return nextMeta;
+            });
+          }
         } else {
           const deletedAt = new Date().toISOString();
           setDeletedRecords((previousDeletedRecords) => markDeletedRecord(previousDeletedRecords, 'incidents', incidentId, deletedAt));
@@ -4035,7 +3340,7 @@ export function AppProvider({ children }) {
         ));
       },
     });
-  }, [activeShiftKey, allIncidents, isAdmin, selectedIncident]);
+  }, [allIncidents, currentShiftMeta.key, isAdmin, selectedIncident]);
   const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
   const handleUpdateIncidentPhoto = useCallback(async (incidentId) => {
     const dataUrl = await pickLocalImage();
@@ -4054,8 +3359,9 @@ export function AppProvider({ children }) {
           )),
         ])),
       ));
+    } else {
+      setIncidentsData(prev => prev.map(inc => inc.id === incidentId ? { ...inc, photoUrl: url } : inc));
     }
-    setIncidentsData(prev => prev.map(inc => inc.id === incidentId ? { ...inc, photoUrl: url } : inc));
     setSelectedIncident(prev => prev && prev.id === incidentId ? { ...prev, photoUrl: url } : prev);
   }, []);
 
@@ -4357,7 +3663,7 @@ export function AppProvider({ children }) {
       latestCloudSharedStateRef.current || {},
       createSharedStateSnapshot({
         ...sharedState,
-        activeShiftKey,
+        activeShiftKey: currentShiftMeta.key,
       }),
     );
     const serializedState = serializeSharedStateSnapshot(cloudReadyState);
@@ -4370,7 +3676,7 @@ export function AppProvider({ children }) {
           latestCloudSharedStateRef.current || {},
           createSharedStateSnapshot({
             ...sharedState,
-            activeShiftKey,
+            activeShiftKey: currentShiftMeta.key,
           }),
         );
         const latestSerializedState = serializeSharedStateSnapshot(latestStateForWrite);
@@ -4404,7 +3710,7 @@ export function AppProvider({ children }) {
       .catch((error) => {
         console.error('Gagal mengirim laporan patroli ke cloud', error);
       });
-  }, [activeShiftKey, cloudSyncBootstrapped, isOffline, prepareSharedStateForCloudSync, sharedState]);
+  }, [cloudSyncBootstrapped, currentShiftMeta.key, isOffline, prepareSharedStateForCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
@@ -4519,7 +3825,7 @@ export function AppProvider({ children }) {
     // Theme
     currentPage, setCurrentPage, theme, setTheme, isOffline, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog, setConfirmDialog,
     // Auth
-    sessionUserId, firebaseAuthReady, authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
+    sessionUserId, authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
     // User role
     currentUserRecord, currentUser, currentUserId, currentUserRole, isAdmin, isPic, isPetugas,
     // Core data
@@ -4543,12 +3849,11 @@ export function AppProvider({ children }) {
     historyEntries: visibleHistoryEntries, selectedHistoryEntry, setSelectedHistoryId, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     // Notifications
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
-    deviceNotificationPermission, isDeviceNotificationSupported, deviceNotificationsBusy, deviceNotificationsError, isDeviceNotificationPopupEnabled, enableDeviceNotifications, disableDeviceNotificationPopups,
     // SOS
     activeSOSAlert, sosHistory, handleSOSTrigger, handleSOSConfirm, handleSOSDismiss,
   }), [
     currentPage, theme, isOffline, showSettingsDropdown, showNotificationsDropdown, notificationReturnPage, openNotificationsPage, closeNotificationsPage, confirmDialog,
-    sessionUserId, firebaseAuthReady, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
+    sessionUserId, authMode, authBusy, authError, authNotice, authForm, handleLogin, handleRegister, handleLogout, handleAuthPhotoUpload,
     currentUserRecord, currentUser, currentUserId, currentUserRole, isAdmin, isPic, isPetugas,
     checkpoints, shipsData, usersData, incidentsData, incidentMeta, currentShiftMeta, currentShiftSchedule, activeShiftKey, activeShiftGuardSnapshot,
     filteredCheckpoints, searchQuery, patrolTab, activeForms, activePatrolId, activePatrolState, activePatrolItem, canPatrolCurrentShip, canAddTemporaryPatrolNode, shouldForcePatrolCameraCapture, pendingPatrolCameraCapture, submittingPatrolId, completedCount, totalCount, progressPercentage, newCustomNode,
@@ -4562,7 +3867,6 @@ export function AppProvider({ children }) {
     weatherInfo, weatherLoading, getWeatherDetail,
     visibleHistoryEntries, selectedHistoryEntry, openHistoryEntry, closeHistoryEntry, handleDeleteHistoryEntry,
     notifications, visibleNotifications, unreadNotificationCount, appendNotifications, markNotificationAsRead, markAllNotificationsAsRead, handleNotificationClick,
-    deviceNotificationPermission, isDeviceNotificationSupported, deviceNotificationsBusy, deviceNotificationsError, isDeviceNotificationPopupEnabled, enableDeviceNotifications, disableDeviceNotificationPopups,
     activeSOSAlert, sosHistory, handleSOSTrigger, handleSOSConfirm, handleSOSDismiss,
   ]);
 
