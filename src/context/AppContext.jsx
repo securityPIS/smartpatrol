@@ -1038,14 +1038,42 @@ function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) 
   return Array.from(merged.values());
 }
 
-function getCompletedCheckpointCount(checkpoints = []) {
-  return (checkpoints || []).filter((checkpoint) => checkpoint?.status === 'completed').length;
+function hasCheckpointCompletionDetails(checkpoint) {
+  if (!checkpoint || checkpoint.status === 'pending') return false;
+  return Boolean(
+    checkpoint.completedAt
+    || checkpoint.completedBy
+    || checkpoint.completedByUserId
+    || checkpoint.resultType
+    || checkpoint.time
+    || checkpoint.photoUrl
+    || checkpoint.kejadian
+    || checkpoint.penyebab
+    || checkpoint.tindakLanjut
+    || checkpoint.gpsSnapshot
+    || checkpoint.weatherSnapshot
+    || checkpoint.shipSnapshot
+  );
 }
 
-function shouldPreserveLocalCheckpointState(localCheckpoints = [], incomingCheckpoints = []) {
-  const localCompletedCount = getCompletedCheckpointCount(localCheckpoints);
-  if (localCompletedCount === 0) return false;
-  return getCompletedCheckpointCount(incomingCheckpoints) < localCompletedCount;
+function shouldPreserveLocalCheckpointRecord(localCheckpoint, incomingCheckpoint) {
+  if (!localCheckpoint || localCheckpoint.status !== 'completed') return false;
+  if (!incomingCheckpoint || incomingCheckpoint.status === 'completed') return false;
+  if (hasCheckpointCompletionDetails(incomingCheckpoint)) return false;
+  return true;
+}
+
+function mergeIncomingCheckpointsWithLocalProtection(localCheckpoints = [], incomingCheckpoints = []) {
+  const localCheckpointMap = new Map(
+    (localCheckpoints || []).map((checkpoint) => [getCheckpointMergeKey(checkpoint), checkpoint]),
+  );
+
+  return (incomingCheckpoints || []).map((incomingCheckpoint) => {
+    const localCheckpoint = localCheckpointMap.get(getCheckpointMergeKey(incomingCheckpoint));
+    return shouldPreserveLocalCheckpointRecord(localCheckpoint, incomingCheckpoint)
+      ? localCheckpoint
+      : incomingCheckpoint;
+  });
 }
 
 function getNotificationMergeKey(notification) {
@@ -2579,31 +2607,37 @@ export function AppProvider({ children }) {
       resolvedActiveShiftKey,
       { resetForActiveShift: false },
     );
+    let shouldPreserveLocalShiftKey = false;
     const mergedCheckpointsByShip = Object.fromEntries(
       Object.entries(nextCheckpointsByShip).map(([shipId, incomingShipCheckpoints]) => {
         const localShipCheckpoints = Array.isArray(latestLocalState.checkpointsByShip?.[shipId])
           ? latestLocalState.checkpointsByShip[shipId]
           : [];
+        const protectedShipCheckpoints = mergeIncomingCheckpointsWithLocalProtection(
+          localShipCheckpoints,
+          incomingShipCheckpoints,
+        );
 
-        if (!shouldPreserveLocalCheckpointState(localShipCheckpoints, incomingShipCheckpoints)) {
-          return [shipId, incomingShipCheckpoints];
+        const preservedCheckpointIds = protectedShipCheckpoints
+          .filter((checkpoint, index) => checkpoint === localShipCheckpoints.find((localCheckpoint) => (
+            getCheckpointMergeKey(localCheckpoint) === getCheckpointMergeKey(incomingShipCheckpoints[index])
+          )))
+          .map((checkpoint) => String(checkpoint?.id || ''))
+          .filter(Boolean);
+
+        if (preservedCheckpointIds.length > 0) {
+          shouldPreserveLocalShiftKey = true;
+          logCloudSyncDebug('preserve-local-checkpoints', {
+            shipId,
+            preservedCheckpointIds,
+            localShiftKey: latestLocalState.activeShiftKey || null,
+            incomingShiftKey: normalizedIncomingShiftKey || null,
+          });
         }
 
-        logCloudSyncDebug('preserve-local-checkpoints', {
-          shipId,
-          localCompleted: getCompletedCheckpointCount(localShipCheckpoints),
-          incomingCompleted: getCompletedCheckpointCount(incomingShipCheckpoints),
-          localShiftKey: latestLocalState.activeShiftKey || null,
-          incomingShiftKey: normalizedIncomingShiftKey || null,
-        });
-
-        return [shipId, localShipCheckpoints];
+        return [shipId, protectedShipCheckpoints];
       }),
     );
-    const shouldPreserveLocalShiftKey = Object.entries(mergedCheckpointsByShip).some(([shipId, shipCheckpoints]) => (
-      shipCheckpoints === latestLocalState.checkpointsByShip?.[shipId]
-      && shouldPreserveLocalCheckpointState(latestLocalState.checkpointsByShip?.[shipId] || [], nextCheckpointsByShip[shipId] || [])
-    ));
     const finalActiveShiftKey = shouldPreserveLocalShiftKey
       ? (latestLocalState.activeShiftKey || resolvedActiveShiftKey)
       : resolvedActiveShiftKey;
