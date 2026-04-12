@@ -2607,7 +2607,6 @@ export function AppProvider({ children }) {
       resolvedActiveShiftKey,
       { resetForActiveShift: false },
     );
-    let shouldPreserveLocalShiftKey = false;
     const mergedCheckpointsByShip = Object.fromEntries(
       Object.entries(nextCheckpointsByShip).map(([shipId, incomingShipCheckpoints]) => {
         const localShipCheckpoints = Array.isArray(latestLocalState.checkpointsByShip?.[shipId])
@@ -2626,7 +2625,6 @@ export function AppProvider({ children }) {
           .filter(Boolean);
 
         if (preservedCheckpointIds.length > 0) {
-          shouldPreserveLocalShiftKey = true;
           logCloudSyncDebug('preserve-local-checkpoints', {
             shipId,
             preservedCheckpointIds,
@@ -2638,11 +2636,8 @@ export function AppProvider({ children }) {
         return [shipId, protectedShipCheckpoints];
       }),
     );
-    const finalActiveShiftKey = shouldPreserveLocalShiftKey
-      ? (latestLocalState.activeShiftKey || resolvedActiveShiftKey)
-      : resolvedActiveShiftKey;
     const incomingState = createSharedStateSnapshot({
-      activeShiftKey: finalActiveShiftKey,
+      activeShiftKey: resolvedActiveShiftKey,
       checkpointsByShip: mergedCheckpointsByShip,
       deletedRecords: nextState.deletedRecords,
       historyEntries: sortHistoryEntries(nextState.historyEntries || createSeedHistoryEntries()),
@@ -3124,17 +3119,6 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
     if (!persistedShiftMeta || persistedShiftMeta.key === currentShiftMeta.key) return;
-    const hasLiveCompletedCheckpoints = Object.values(checkpointsByShip).some((shipCheckpoints) => (
-      (shipCheckpoints || []).some((checkpoint) => checkpoint?.status === 'completed')
-    ));
-
-    if (hasLiveCompletedCheckpoints) {
-      logCloudSyncDebug('skip-shift-history-live-completed-checkpoints', {
-        persistedShiftKey: persistedShiftMeta.key,
-        currentShiftKey: currentShiftMeta.key,
-      });
-      return;
-    }
 
     const persistedShiftDefinition = getShiftDefinition(persistedShiftMeta.id);
 
