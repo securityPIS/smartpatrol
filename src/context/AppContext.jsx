@@ -1837,6 +1837,7 @@ export function AppProvider({ children }) {
   const previousUsersDataRef = useRef(usersData);
   const lastSharedStateRef = useRef('');
   const latestCloudSharedStateRef = useRef(null);
+  const latestLocalSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
   const devicePushTokenRef = useRef(getStoredPushToken());
@@ -2331,6 +2332,9 @@ export function AppProvider({ children }) {
     activeSOSAlert,
     sosHistory,
   ]);
+  useEffect(() => {
+    latestLocalSharedStateRef.current = sharedState;
+  }, [sharedState]);
   const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
     if (!photoUrl.startsWith('idb://')) return photoUrl;
@@ -2475,7 +2479,7 @@ export function AppProvider({ children }) {
       activeSOSAlert: nextState.activeSOSAlert || null,
       sosHistory: nextState.sosHistory || [],
     });
-    const normalizedState = mergeSharedStateSnapshots({}, incomingState);
+    const normalizedState = mergeSharedStateSnapshots(latestLocalSharedStateRef.current || {}, incomingState);
     const serializedState = serializeSharedStateSnapshot(normalizedState);
     latestCloudSharedStateRef.current = normalizedState;
 
@@ -3145,7 +3149,11 @@ export function AppProvider({ children }) {
         message: `${submittedItem.name} dilaporkan sebagai temuan oleh ${currentUser}.`,
         senderName: currentUser,
         senderRole: currentUserRole,
-        targetUserIds: getShipRecipients(operationalShipName, { includeAdmins: true, includePic: true }),
+        targetUserIds: getShipRecipients(operationalShipName, {
+          includeAdmins: true,
+          includePic: true,
+          includeUserIds: currentUserRecord?.id ? [currentUserRecord.id] : [],
+        }),
         route: 'incidents/detail',
         routeParams: { incidentId: submittedItem.incidentId },
         incidentId: submittedItem.incidentId,
@@ -3268,7 +3276,11 @@ export function AppProvider({ children }) {
       message: `${loc} dilaporkan sebagai temuan baru oleh ${currentUser}.`,
       senderName: currentUser,
       senderRole: currentUserRole,
-      targetUserIds: getShipRecipients(operationalShipName, { includeAdmins: true, includePic: true }),
+      targetUserIds: getShipRecipients(operationalShipName, {
+          includeAdmins: true,
+          includePic: true,
+          includeUserIds: currentUserRecord?.id ? [currentUserRecord.id] : [],
+        }),
       route: 'incidents/detail',
       routeParams: { incidentId: newIncident.id },
       incidentId: newIncident.id,
