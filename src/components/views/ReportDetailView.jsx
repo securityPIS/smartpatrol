@@ -107,16 +107,15 @@ export default function ReportDetailView({ isInline = false }) {
         <div className="px-4 py-4 border-b border-cyan-900/50 bg-[#091022] shrink-0">
           <div className="flex items-center gap-3 overflow-x-auto scrollbar-thin scrollbar-thumb-cyan-900/50">
             {galleryItems.length === 0 ? (
-              <div className="w-24 h-24 shrink-0 rounded-2xl border border-dashed border-cyan-800/60 bg-[#0b1229] flex flex-col items-center justify-center text-cyan-700">
-                <Images className="w-6 h-6 mb-2" />
-                <span className="text-[10px] font-bold uppercase tracking-widest">Belum Ada</span>
+              <div className="w-12 h-12 shrink-0 rounded-xl border border-dashed border-cyan-800/60 bg-[#0b1229] flex items-center justify-center text-cyan-700">
+                <Images className="w-4 h-4" />
               </div>
             ) : galleryItems.map((item, index) => (
               <button
                 key={item.id || `${item.photoUrl}-${index}`}
                 type="button"
                 onClick={() => setPreviewPhoto({ url: item.photoUrl, author: item.author, time: item.date ? `${item.date} ${item.time}` : item.time })}
-                className="w-24 h-24 shrink-0 rounded-2xl overflow-hidden border border-cyan-800/60 bg-[#0b1229] hover:border-cyan-500/60 transition-all group"
+                className="w-12 h-12 shrink-0 rounded-xl overflow-hidden border border-cyan-800/60 bg-[#0b1229] hover:border-cyan-500/60 transition-all group"
                 aria-label={`Lihat foto patroli ${index + 1}`}
               >
                 <AsyncImage src={item.photoUrl} className="w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-300" alt={`Foto patroli ${index + 1}`} />
@@ -126,11 +125,10 @@ export default function ReportDetailView({ isInline = false }) {
               <button
                 type="button"
                 onClick={() => handleAddReportGalleryPhoto(selectedReportDetail.id)}
-                className="w-24 h-24 shrink-0 rounded-2xl border border-dashed border-cyan-500/50 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all flex flex-col items-center justify-center gap-2"
+                className="w-12 h-12 shrink-0 rounded-xl border border-dashed border-cyan-500/50 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all flex items-center justify-center"
                 aria-label="Upload foto patroli tambahan"
               >
-                <Camera className="w-5 h-5" />
-                <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
+                <Camera className="w-4 h-4" />
               </button>
             )}
           </div>
