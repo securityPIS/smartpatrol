@@ -8,10 +8,14 @@ export default function SOSAlertModal() {
   const { currentUserId } = useRole();
   const { setCurrentPage } = useUI();
 
+  const isTargetedToMe = currentUserId && (
+    !Array.isArray(activeSOSAlert?.targetUserIds)
+    || activeSOSAlert.targetUserIds.includes(currentUserId)
+  );
   const isConfirmedByMe = currentUserId && activeSOSAlert?.confirmedBy?.includes(currentUserId);
 
   useEffect(() => {
-    if (activeSOSAlert && !isConfirmedByMe) {
+    if (activeSOSAlert && isTargetedToMe && !isConfirmedByMe) {
       startSOSAlarm();
     } else {
       stopSOSAlarm();
@@ -20,9 +24,9 @@ export default function SOSAlertModal() {
     return () => {
       stopSOSAlarm();
     };
-  }, [activeSOSAlert, isConfirmedByMe]);
+  }, [activeSOSAlert, isConfirmedByMe, isTargetedToMe]);
 
-  if (!activeSOSAlert || isConfirmedByMe) return null;
+  if (!activeSOSAlert || !isTargetedToMe || isConfirmedByMe) return null;
 
   const onConfirm = () => {
     handleSOSConfirm();

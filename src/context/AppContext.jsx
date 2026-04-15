@@ -231,6 +231,11 @@ function normalizeShipRouteFields(ship = {}) {
 function normalizeShipRecord(ship = {}) {
   const normalizedStatus = normalizeShipStatus(ship?.status);
   const routeFields = normalizeShipRouteFields({ ...ship, status: normalizedStatus });
+  const sosRecipientShipIds = Array.from(new Set(
+    (Array.isArray(ship?.sosRecipientShipIds) ? ship.sosRecipientShipIds : [])
+      .map((shipId) => sanitizeText(shipId || '', 80))
+      .filter(Boolean),
+  ));
 
   return {
     ...ship,
@@ -243,6 +248,7 @@ function normalizeShipRecord(ship = {}) {
         docDate: sanitizeText(document?.docDate || '', 20),
       }))
       : [],
+    sosRecipientShipIds,
     defaultCheckpointsInitialized: true,
     customCheckpoints: ship?.defaultCheckpointsInitialized
       ? normalizeShipCheckpointDefinitions(ship?.customCheckpoints)
@@ -271,7 +277,7 @@ const defaultAuthForm = {
   photoUrl: null,
 };
 const defaultUserForm = { name: '', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', workerNumber: '', dob: '', email: '', password: '', phone: '', address: '', emergencyName: '', emergencyContact: '', emergencyRelation: 'Orang Tua', officeAddress: '', photoUrl: null };
-const defaultShipForm = { name: '', type: 'Oil Tanker', imoNumber: '', route: '', routeLoading: '', routeDischarge: '', cargoType: '', cargoAmount: '', status: 'Non Operasional', customCheckpoints: createDefaultShipCheckpoints(), photoUrl: null };
+const defaultShipForm = { name: '', type: 'Oil Tanker', imoNumber: '', route: '', routeLoading: '', routeDischarge: '', cargoType: '', cargoAmount: '', status: 'Non Operasional', customCheckpoints: createDefaultShipCheckpoints(), photoUrl: null, sosRecipientShipIds: [] };
 const defaultShipDocumentForm = { title: '', docDate: '', desc: '', fileUrl: null, fileName: '', mimeType: '' };
 const defaultIncidentForm = { locType: 'default', location: defaultLocationOptions[0], customLocation: '', penyebab: '', deskripsi: '', tindakLanjut: '', photoUrl: null };
 
@@ -318,8 +324,8 @@ let _initialShipsData = null;
 function getInitialShipsData() {
   if (_initialShipsData) return _initialShipsData;
   _initialShipsData = [
-    { id: 's1', name: 'MT MENGGALA', type: 'Oil Tanker', imoNumber: '9387421', lat: '-6.1021', lng: '106.8833', status: 'UPP', route: 'Jakarta - Singapore', cargoType: 'Crude Oil', cargoAmount: '50,000 MT', photoUrl: createPosterDataUrl('MT MENGGALA', 'Operasi patroli aktif', 0, false), personnel: ['u1', 'u2', 'u3'], personnelNextMonth: ['u1', 'u4', 'u5'], customCheckpoints: [{name: 'Cuaca', desc: 'Cek visibilitas dan gelombang.'}, {name: 'Ruang Mesin', desc: 'Pastikan suhu generator normal.'}], documents: [{title: 'Sertifikat Keselamatan', docDate: '2026-01-12', desc: 'Berlaku hingga 2027'}, {title: 'Izin Berlayar', docDate: '2026-02-03', desc: 'Dikeluarkan Syahbandar'}] },
-    { id: 's2', name: 'MT SRIWIJAYA', type: 'Chemical Tanker', imoNumber: '9471208', lat: '-5.9123', lng: '105.8122', status: 'NON UPP', route: 'Merak - Bakauheni', cargoType: 'Methanol', cargoAmount: '12,000 MT', photoUrl: createPosterDataUrl('MT SRIWIJAYA', 'Armada Cadangan', 1, false), personnel: [], personnelNextMonth: [], customCheckpoints: [{name: 'Pompa Kimia', desc: 'Pastikan tidak ada kebocoran'}], documents: [] },
+    { id: 's1', name: 'MT MENGGALA', type: 'Oil Tanker', imoNumber: '9387421', lat: '-6.1021', lng: '106.8833', status: 'UPP', route: 'Jakarta - Singapore', cargoType: 'Crude Oil', cargoAmount: '50,000 MT', photoUrl: createPosterDataUrl('MT MENGGALA', 'Operasi patroli aktif', 0, false), personnel: ['u1', 'u2', 'u3'], personnelNextMonth: ['u1', 'u4', 'u5'], customCheckpoints: [{name: 'Cuaca', desc: 'Cek visibilitas dan gelombang.'}, {name: 'Ruang Mesin', desc: 'Pastikan suhu generator normal.'}], documents: [{title: 'Sertifikat Keselamatan', docDate: '2026-01-12', desc: 'Berlaku hingga 2027'}, {title: 'Izin Berlayar', docDate: '2026-02-03', desc: 'Dikeluarkan Syahbandar'}], sosRecipientShipIds: [] },
+    { id: 's2', name: 'MT SRIWIJAYA', type: 'Chemical Tanker', imoNumber: '9471208', lat: '-5.9123', lng: '105.8122', status: 'NON UPP', route: 'Merak - Bakauheni', cargoType: 'Methanol', cargoAmount: '12,000 MT', photoUrl: createPosterDataUrl('MT SRIWIJAYA', 'Armada Cadangan', 1, false), personnel: [], personnelNextMonth: [], customCheckpoints: [{name: 'Pompa Kimia', desc: 'Pastikan tidak ada kebocoran'}], documents: [], sosRecipientShipIds: [] },
   ];
   return _initialShipsData;
 }
@@ -1820,6 +1826,30 @@ export function AppProvider({ children }) {
   const isPic = currentUserRole === ACCESS_ROLES.PIC;
   const isPetugas = currentUserRole === ACCESS_ROLES.PETUGAS;
   const currentUserId = effectiveSessionUser?.id || null;
+  const getSOSRecipientUserIds = useCallback((shipName) => {
+    const safeShipName = sanitizeText(shipName || '', 80);
+    if (!safeShipName) return [];
+
+    const sourceShip = shipsData.find((ship) => ship.name === safeShipName) || null;
+    const recipientShipNames = new Set([safeShipName]);
+
+    (sourceShip?.sosRecipientShipIds || []).forEach((shipId) => {
+      const linkedShip = shipsData.find((ship) => ship.id === shipId);
+      if (linkedShip?.name) recipientShipNames.add(linkedShip.name);
+    });
+
+    return Array.from(new Set(
+      usersData
+        .filter((user) => {
+          if (user.role === ACCESS_ROLES.ADMIN || user.role === ACCESS_ROLES.PIC) return true;
+          if (!recipientShipNames.has(user.shipAssigned)) return false;
+          if (user.role === ACCESS_ROLES.PETUGAS) return user.status === 'active';
+          return false;
+        })
+        .map((user) => user.id)
+        .filter(Boolean),
+    ));
+  }, [shipsData, usersData]);
 
   useEffect(() => {
     const landingUser = currentUserRecord || sessionUserRecord;
@@ -1839,15 +1869,28 @@ export function AppProvider({ children }) {
 
   const handleSOSTrigger = useCallback((lat, lng) => {
     if (!currentUserRecord) return;
+    const senderShipName = sanitizeText(currentUserRecord.shipAssigned || '', 80) || 'Tidak diketahui';
+    const sourceShip = shipsData.find((ship) => ship.name === senderShipName) || null;
+    const targetShipIds = Array.from(new Set([
+      sourceShip?.id || null,
+      ...((sourceShip?.sosRecipientShipIds || []).filter(Boolean)),
+    ].filter(Boolean)));
+    const targetShipNames = targetShipIds
+      .map((shipId) => shipsData.find((ship) => ship.id === shipId)?.name || '')
+      .filter(Boolean);
+    const targetUserIds = getSOSRecipientUserIds(senderShipName);
     const rawSOS = {
       id: `sos-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
       senderUserId: currentUserRecord.id || 'unknown',
       senderName: currentUserRecord.name || 'Unknown',
       senderRole: currentUserRecord.role || 'petugas',
-      shipName: currentUserRecord.shipAssigned || 'Tidak diketahui',
+      shipName: senderShipName,
       lat: lat !== undefined ? lat : null,
       lng: lng !== undefined ? lng : null,
       triggeredAt: new Date().toISOString(),
+      targetUserIds,
+      targetShipIds,
+      targetShipNames,
       confirmedBy: [],
       status: 'active'
     };
@@ -1857,10 +1900,10 @@ export function AppProvider({ children }) {
       id: `notif-sos-${Date.now()}`,
       type: 'sos',
       title: '🚨 DARURAT SOS',
-      message: `Tanda darurat dikirim oleh ${currentUserRecord.name || 'Seseorang'} dari ${currentUserRecord.shipAssigned || 'lokasi tidak diketahui'}.`,
+      message: `Tanda darurat dikirim oleh ${currentUserRecord.name || 'Seseorang'} dari ${senderShipName}.`,
       senderName: currentUserRecord.name || 'Unknown',
       senderRole: currentUserRecord.role || 'petugas',
-      targetUserIds: (usersData || []).map(u => u.id || 'unknown'), // Send to all users
+      targetUserIds,
       readByUserIds: [],
       route: 'home',
       createdAt: new Date().toISOString(),
@@ -1873,10 +1916,11 @@ export function AppProvider({ children }) {
     setActiveSOSAlert(newSOS);
     setSosHistory(prev => [newSOS, ...prev]);
     setNotifications(prev => [notification, ...prev]); 
-  }, [currentUserRecord, usersData]);
+  }, [currentUserRecord, getSOSRecipientUserIds, shipsData]);
 
   const handleSOSConfirm = useCallback(() => {
     if (!activeSOSAlert || !currentUserId) return;
+    if (Array.isArray(activeSOSAlert.targetUserIds) && !activeSOSAlert.targetUserIds.includes(currentUserId)) return;
     
     const updatedSOS = {
       ...activeSOSAlert,
@@ -3072,7 +3116,12 @@ export function AppProvider({ children }) {
       onConfirm: () => {
         const deletedAt = new Date().toISOString();
         setDeletedRecords(previousDeletedRecords => markDeletedRecord(previousDeletedRecords, 'ships', id, deletedAt));
-        setShipsData(prev => prev.filter(s => s.id !== id));
+        setShipsData(prev => prev
+          .filter(s => s.id !== id)
+          .map((ship) => normalizeShipRecord({
+            ...ship,
+            sosRecipientShipIds: (ship.sosRecipientShipIds || []).filter((shipId) => shipId !== id),
+          })));
         if (activeShipId === id) setActiveShipId(null);
         closeShipDocForm();
       }

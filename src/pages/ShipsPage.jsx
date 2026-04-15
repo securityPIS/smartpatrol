@@ -2,7 +2,7 @@ import React from 'react';
 import { SHIP_STATUS_OPTIONS, useRole, useShips, useUsers } from '../context/AppContextRuntime';
 import {
   Anchor, PlusCircle, Users, ShieldAlert, Ship, ChevronDown, ImageIcon,
-  Navigation, Package, Weight, CalendarClock, UserMinus, UserPlus, Trash2, FilePlus, FileText, Download
+  Navigation, Package, Weight, CalendarClock, UserMinus, UserPlus, Trash2, FilePlus, FileText, Download, Siren, Check
 } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 import { detectDocumentType, getDocumentTypeLabel } from '../utils/documentFiles';
@@ -112,6 +112,19 @@ const ShipsPage = React.memo(function ShipsPage() {
 
   const renderShipDetail = () => {
     if (!activeShip) return null;
+    const configuredSOSShipIds = Array.isArray(activeShip.sosRecipientShipIds) ? activeShip.sosRecipientShipIds : [];
+    const selectableSOSShips = shipsData.filter((ship) => ship.id !== activeShip.id);
+    const selectedSOSShips = selectableSOSShips.filter((ship) => configuredSOSShipIds.includes(ship.id));
+    const recipientShipNames = [activeShip.name, ...selectedSOSShips.map((ship) => ship.name)];
+    const globalSOSUsers = usersData.filter((user) => user.role === 'ADMIN' || user.role === 'PIC');
+    const recipientUsers = usersData.filter((user) => (
+      (user.role === 'ADMIN' || user.role === 'PIC')
+      || (
+        recipientShipNames.includes(user.shipAssigned)
+        && user.role === 'PETUGAS'
+        && user.status === 'active'
+      )
+    ));
     return (
       <div className="p-4 space-y-4 animate-in slide-in-from-right-4 pb-10">
         <div className="h-40 rounded-2xl overflow-hidden relative border border-cyan-700 shadow-[0_0_20px_rgba(6,182,212,0.15)] group">
@@ -134,6 +147,7 @@ const ShipsPage = React.memo(function ShipsPage() {
             {id: 'info', icon: <Ship className="w-4 h-4"/>, label: 'Data'},
             {id: 'personil', icon: <Users className="w-4 h-4"/>, label: 'Kru'},
             {id: 'checkpoints', icon: <ShieldAlert className="w-4 h-4"/>, label: 'TITIK'},
+            {id: 'sos', icon: <Siren className="w-4 h-4"/>, label: 'SOS'},
             {id: 'documents', icon: <FileText className="w-4 h-4"/>, label: 'Dokumen'}
           ].map(tab => (
             <button key={tab.id} onClick={() => setShipDetailTab(tab.id)} className={`flex-1 min-w-[80px] flex flex-col items-center gap-1 py-2 rounded-lg transition-all ${shipDetailTab === tab.id ? 'bg-cyan-600/20 text-cyan-300 border border-cyan-500/30' : 'text-cyan-700 hover:text-cyan-500'}`}>
@@ -314,6 +328,89 @@ const ShipsPage = React.memo(function ShipsPage() {
                    <input type="text" placeholder="Deskripsi instruksi..." value={newShipCp.desc} onChange={e=>setNewShipCp({...newShipCp, desc: e.target.value})} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-lg p-2 text-sm focus:border-cyan-400 outline-none text-white"/>
                    <button onClick={handleAddShipCp} className="w-full py-2 bg-cyan-900/50 hover:bg-cyan-600 text-cyan-300 hover:text-white rounded-lg text-xs font-bold uppercase tracking-widest transition-colors">Tambah Titik</button>
                 </div>
+             </div>
+          </div>
+        )}
+
+        {shipDetailTab === 'sos' && (
+          <div className="space-y-4 animate-in fade-in">
+             <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-800/50 space-y-4 text-left">
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 rounded-xl bg-red-500/10 p-2 text-red-300">
+                      <Siren className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-red-200">Penerima SOS Armada</p>
+                      <p className="mt-1 text-xs leading-relaxed text-cyan-300/80">
+                        Admin dan PIC selalu menerima SOS dari semua kapal. Setting di bawah ini dipakai untuk menentukan kapal tambahan yang petugas aktifnya ikut menerima SOS dari {activeShip.name}.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-cyan-800/50 bg-[#070b19] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-500">Ringkasan Penerima</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[activeShip, ...selectedSOSShips].map((ship) => (
+                      <span key={ship.id} className="inline-flex items-center gap-1 rounded-full border border-cyan-700/60 bg-cyan-900/30 px-3 py-1 text-[11px] font-bold text-cyan-200">
+                        <Check className="w-3 h-3 text-emerald-300" />
+                        {ship.name}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs text-cyan-400">
+                    Total user penerima aktif: <span className="font-bold text-white">{recipientUsers.length}</span>
+                  </p>
+                  <p className="mt-1 text-[11px] text-cyan-500">
+                    Admin & PIC global: {globalSOSUsers.length} user
+                  </p>
+                </div>
+
+                {selectableSOSShips.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-cyan-800/60 px-4 py-5 text-center text-xs italic text-cyan-500">
+                    Belum ada armada lain yang bisa dijadikan penerima tambahan.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectableSOSShips.map((ship) => {
+                      const isSelected = configuredSOSShipIds.includes(ship.id);
+                      const assignedReceivers = usersData.filter((user) => (
+                        user.shipAssigned === ship.name
+                        && user.role !== 'ADMIN'
+                        && (user.role !== 'PETUGAS' || user.status === 'active')
+                      )).length;
+
+                      return (
+                        <button
+                          key={ship.id}
+                          type="button"
+                          onClick={() => updateActiveShip({
+                            sosRecipientShipIds: isSelected
+                              ? configuredSOSShipIds.filter((shipId) => shipId !== ship.id)
+                              : [...configuredSOSShipIds, ship.id],
+                          })}
+                          className={`w-full rounded-2xl border p-4 text-left transition-all ${isSelected ? 'border-emerald-500/50 bg-emerald-500/10 shadow-[0_0_18px_rgba(16,185,129,0.12)]' : 'border-cyan-800/50 bg-[#070b19] hover:border-cyan-500/50'}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-bold text-white">{ship.name}</p>
+                              <p className="mt-1 text-xs text-cyan-400">
+                                SOS dari {activeShip.name} {isSelected ? 'akan diteruskan' : 'tidak diteruskan'} ke armada ini.
+                              </p>
+                              <p className="mt-2 text-[11px] text-cyan-500">
+                                Perkiraan penerima aktif: {assignedReceivers} user
+                              </p>
+                            </div>
+                            <span className={`inline-flex min-w-[88px] justify-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${isSelected ? 'bg-emerald-500 text-white' : 'border border-cyan-700/60 text-cyan-400'}`}>
+                              {isSelected ? 'Aktif' : 'Pilih'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
              </div>
           </div>
         )}
