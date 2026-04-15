@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useIncidents, usePatrol } from '../../context/AppContextRuntime';
 import { ChevronDown, Camera, X, MapPin, Save } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
@@ -26,6 +26,19 @@ export default function IncidentFormView({ isInline = false }) {
 
   const locs = incidentLocationOptions;
 
+  useEffect(() => {
+    if (incidentForm.locType !== 'default') return;
+    if (locs.length === 0) {
+      if (incidentForm.location) {
+        setIncidentForm((previousValue) => ({ ...previousValue, location: '' }));
+      }
+      return;
+    }
+    if (incidentForm.location && !locs.includes(incidentForm.location)) {
+      setIncidentForm((previousValue) => ({ ...previousValue, location: '' }));
+    }
+  }, [incidentForm.locType, incidentForm.location, locs, setIncidentForm]);
+
   return (
     <div className={`flex flex-col h-full bg-[#070b19] ${isInline ? 'border-l border-yellow-500/20' : 'fixed inset-0 z-[100] sm:max-w-md sm:mx-auto sm:border-x sm:border-yellow-500/20'}`}>
       <div className="p-4 border-b border-yellow-500/30 flex items-center gap-3 bg-[#0b1229] shrink-0 shadow-sm">
@@ -49,7 +62,29 @@ export default function IncidentFormView({ isInline = false }) {
           {incidentForm.locType === 'custom' ? (
             <input type="text" value={incidentForm.customLocation} onChange={e => setIncidentForm(prev => ({...prev, customLocation: e.target.value}))} placeholder="Masukkan nama lokasi..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-yellow-500 outline-none shadow-sm" />
           ) : (
-            <select value={incidentForm.location} onChange={e => setIncidentForm(prev => ({...prev, location: e.target.value}))} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-yellow-500 outline-none appearance-none shadow-sm">{locs.map(l => <option key={l} value={l}>{l}</option>)}</select>
+            locs.length > 0 ? (
+              <div className="space-y-2">
+                <select
+                  value={incidentForm.location}
+                  onChange={e => setIncidentForm(prev => ({ ...prev, location: e.target.value }))}
+                  className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-yellow-500 outline-none appearance-none shadow-sm"
+                  required
+                >
+                  <option value="" disabled>Pilih lokasi checkpoint...</option>
+                  {locs.map((locationName) => (
+                    <option key={locationName} value={locationName}>{locationName}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-cyan-600 uppercase tracking-widest pl-1">
+                  Dropdown ini mengambil daftar checkpoint kapal dan wajib dipilih.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-cyan-800/50 bg-[#0b1229] p-4 text-center">
+                <p className="text-xs font-bold uppercase tracking-widest text-cyan-400">Belum Ada Checkpoint</p>
+                <p className="text-[11px] text-cyan-600 mt-2">Daftar lokasi akan mengikuti checkpoint kapal yang tersedia.</p>
+              </div>
+            )
           )}
         </div>
         <div><label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Deskripsi Temuan</label><textarea rows={3} value={incidentForm.deskripsi} onChange={e => setIncidentForm(prev => ({...prev, deskripsi: e.target.value}))} placeholder="Jelaskan detail temuan..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none" /></div>

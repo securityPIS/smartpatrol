@@ -593,6 +593,18 @@ function resetCheckpointForShift(checkpoint, options = {}) {
   };
 }
 
+function createCheckpointGalleryPhotoRecord(photoUrl, options = {}) {
+  const createdAt = options.createdAt || new Date().toISOString();
+  return {
+    id: options.id || `checkpoint-gallery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    photoUrl,
+    author: sanitizeText(options.author || '', 80) || '-',
+    date: options.date || formatAppDate(new Date(createdAt)),
+    time: options.time || formatAppTime(new Date(createdAt)),
+    createdAt,
+  };
+}
+
 function resetCheckpointCollection(checkpoints, options = {}) {
   return checkpoints
     .filter(checkpoint => !checkpoint.isTemporaryShiftNode)
@@ -2066,6 +2078,13 @@ export function AppProvider({ children }) {
             checkpoint.photoUrl,
             ['checkpoints', shipId, checkpoint.id, checkpoint.photoUrl],
           ),
+          galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => ({
+            ...galleryPhoto,
+            photoUrl: await prepareCloudPhotoUrl(
+              galleryPhoto.photoUrl,
+              ['checkpoints-gallery', shipId, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+            ),
+          }))),
         }))),
       ])),
     ));
@@ -2125,6 +2144,13 @@ export function AppProvider({ children }) {
           checkpoint.photoUrl,
           ['history', entry.id || entry.key, checkpoint.id, checkpoint.photoUrl],
         ),
+        galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => ({
+          ...galleryPhoto,
+          photoUrl: await prepareCloudPhotoUrl(
+            galleryPhoto.photoUrl,
+            ['history-gallery', entry.id || entry.key, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+          ),
+        }))),
       }))),
       crewSnapshot: await Promise.all((entry.crewSnapshot || []).map(async (crew) => ({
         ...crew,
@@ -2836,6 +2862,39 @@ export function AppProvider({ children }) {
       } 
     }); 
   }, [currentShiftMeta.key, updateOperationalShipCheckpoints]);
+  const handleAddReportGalleryPhoto = useCallback(async (reportId) => {
+    if (!reportId || selectedReportDetail?.readOnly) return;
+
+    const dataUrl = await pickLocalImage();
+    if (!dataUrl) return;
+
+    const photoUrl = await saveImageToDB(dataUrl);
+    if (!photoUrl) return;
+
+    const galleryPhoto = createCheckpointGalleryPhotoRecord(photoUrl, {
+      author: currentUser || selectedReportDetail?.completedBy || '',
+    });
+
+    updateOperationalShipCheckpoints((previousCheckpoints) => previousCheckpoints.map((checkpoint) => (
+      String(checkpoint.id) === String(reportId)
+        ? {
+          ...checkpoint,
+          updatedAt: galleryPhoto.createdAt,
+          galleryPhotos: [...(checkpoint.galleryPhotos || []), galleryPhoto],
+        }
+        : checkpoint
+    )));
+
+    setSelectedReportDetail((previousReport) => (
+      previousReport && String(previousReport.id) === String(reportId)
+        ? {
+          ...previousReport,
+          updatedAt: galleryPhoto.createdAt,
+          galleryPhotos: [...(previousReport.galleryPhotos || []), galleryPhoto],
+        }
+        : previousReport
+    ));
+  }, [currentUser, selectedReportDetail?.completedBy, selectedReportDetail?.readOnly, updateOperationalShipCheckpoints]);
   const handleOpenPatrolResult = useCallback((item) => {
     setActiveForms({});
     setPendingPatrolCameraCapture(null);
@@ -4090,6 +4149,7 @@ export function AppProvider({ children }) {
     handlePhotoUpload,
     handleSubmitPatrol,
     handleDeleteReport,
+    handleAddReportGalleryPhoto,
     handleOpenPatrolResult,
     handleAddCustomPatrolNode,
     closePatrolCameraCapture,
@@ -4111,6 +4171,7 @@ export function AppProvider({ children }) {
     filteredCheckpoints,
     handleActionClick,
     handleAddCustomPatrolNode,
+    handleAddReportGalleryPhoto,
     handleDeleteReport,
     handleFormChange,
     handleOpenPatrolResult,

@@ -6,6 +6,13 @@ import AsyncImage from '../components/AsyncImage';
 import IncidentDetailView from '../components/views/IncidentDetailView';
 import IncidentFormView from '../components/views/IncidentFormView';
 
+function getIncidentStatus(incident, incidentMeta) {
+  const metaStatus = incidentMeta[incident?.id]?.status;
+  if (metaStatus) return metaStatus;
+  if (incident?.isSOS) return incident.sosStatus === 'resolved' ? 'closed' : 'open';
+  return 'open';
+}
+
 const IncidentsPage = React.memo(function IncidentsPage() {
   const { visibleIncidents, openIncidentModal, closeIncidentModal, setSelectedIncident, incidentMeta, selectedIncident, showIncidentModal } = useIncidents();
   const { operationalShipName } = useShips();
@@ -28,8 +35,8 @@ const IncidentsPage = React.memo(function IncidentsPage() {
     const closed = [];
 
     visibleIncidents.forEach((incident) => {
-      const meta = incidentMeta[incident.id] || { status: 'open' };
-      if (meta.status === 'closed') {
+      const status = getIncidentStatus(incident, incidentMeta);
+      if (status === 'closed') {
         closed.push(incident);
         return;
       }
@@ -197,37 +204,49 @@ const IncidentsPage = React.memo(function IncidentsPage() {
          ) : (
             <div className="space-y-3">
               {filteredIncidents.map(inc => {
-                 const meta = incidentMeta[inc.id] || { status: 'open' };
-                 const isClosed = meta.status === 'closed';
+                 const isClosed = getIncidentStatus(inc, incidentMeta) === 'closed';
                  const isSelected = selectedIncident?.id === inc.id;
+                 const accentClass = inc.isSOS ? 'bg-rose-500' : (inc.isPatrol ? 'bg-emerald-500' : 'bg-yellow-500');
+                 const badgeClass = inc.isSOS
+                   ? (isClosed ? 'border-rose-700 text-rose-300 bg-rose-950/40' : 'border-rose-500 text-rose-300 bg-rose-500/10')
+                   : (isClosed ? 'border-slate-600 text-slate-400 bg-slate-800/50' : 'border-yellow-500 text-yellow-400 bg-yellow-500/10');
+                 const cardClass = isSelected
+                   ? (inc.isSOS ? 'border-rose-500 bg-rose-500/10 shadow-[0_0_15px_rgba(244,63,94,0.12)]' : 'border-yellow-500 bg-yellow-500/10 shadow-[0_0_15px_rgba(250,204,21,0.1)]')
+                   : (isClosed ? (inc.isSOS ? 'bg-rose-950/20 border-rose-950/40' : 'bg-slate-900/40 border-slate-800') : (inc.isSOS ? 'bg-rose-950/10 border-rose-900/40 hover:border-rose-500/50' : 'bg-yellow-950/10 border-yellow-900/40 hover:border-yellow-500/50'));
+                 const titleClass = isClosed
+                   ? (inc.isSOS ? 'text-rose-300' : 'text-slate-400')
+                   : (inc.isSOS ? 'text-rose-300' : (isSelected ? 'text-white' : 'text-yellow-400'));
+                 const descriptionClass = isClosed
+                   ? (inc.isSOS ? 'text-rose-100/70' : 'text-slate-500')
+                   : (inc.isSOS ? 'text-rose-100/80' : 'text-yellow-100/70');
                  
                  return (
                 <div 
                   key={inc.id} 
                   onClick={() => handleIncidentSelect(inc)}
-                  className={`p-4 border rounded-xl transition-all cursor-pointer group relative overflow-hidden flex gap-3 ${isSelected ? 'border-yellow-500 bg-yellow-500/10 shadow-[0_0_15px_rgba(250,204,21,0.1)]' : (isClosed ? 'bg-slate-900/40 border-slate-800' : 'bg-yellow-950/10 border-yellow-900/40 hover:border-yellow-500/50')}`}
+                  className={`p-4 border rounded-xl transition-all cursor-pointer group relative overflow-hidden flex gap-3 ${cardClass}`}
                 >
-                   <div className={`absolute left-0 top-0 bottom-0 w-1 ${isClosed ? 'bg-slate-700' : (inc.isPatrol ? 'bg-emerald-500' : 'bg-yellow-500')}`}></div>
+                   <div className={`absolute left-0 top-0 bottom-0 w-1 ${isClosed && !inc.isSOS ? 'bg-slate-700' : accentClass}`}></div>
                    <div className="flex-1 ml-1 min-w-0 flex flex-col justify-between">
                       <div>
                          <div className="flex items-center gap-2 mb-2">
-                           <h3 className={`font-bold text-lg leading-tight truncate ${isClosed ? 'text-slate-400' : (isSelected ? 'text-white' : 'text-yellow-400')}`}>{inc.location}</h3>
+                           <h3 className={`font-bold text-lg leading-tight truncate ${titleClass}`}>{inc.location}</h3>
                            {isClosed ? (
-                              <span className="shrink-0 text-[8px] px-1.5 py-0.5 border border-slate-600 text-slate-400 bg-slate-800/50 rounded uppercase font-black tracking-widest">CLOSED</span>
+                              <span className={`shrink-0 text-[8px] px-1.5 py-0.5 border rounded uppercase font-black tracking-widest ${badgeClass}`}>{inc.isSOS ? 'RESOLVED' : 'CLOSED'}</span>
                            ) : (
-                              <span className="shrink-0 text-[8px] px-1.5 py-0.5 border border-yellow-500 text-yellow-400 bg-yellow-500/10 rounded uppercase font-black tracking-widest animate-pulse">OPEN</span>
+                              <span className={`shrink-0 text-[8px] px-1.5 py-0.5 border rounded uppercase font-black tracking-widest ${badgeClass} ${inc.isSOS ? '' : 'animate-pulse'}`}>{inc.isSOS ? 'SOS' : 'OPEN'}</span>
                            )}
                          </div>
                          <p className="text-[10px] uppercase tracking-widest font-bold text-cyan-600 mb-2">{inc.shipName || operationalShipName}</p>
-                         <p className={`text-xs ${isClosed ? 'text-slate-500' : 'text-yellow-100/70'} line-clamp-2 leading-relaxed mb-3`}>"{inc.deskripsi}"</p>
+                         <p className={`text-xs ${descriptionClass} line-clamp-2 leading-relaxed mb-3`}>"{inc.deskripsi}"</p>
                       </div>
-                      <div className={`mt-auto flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-bold ${isClosed ? 'text-slate-600' : 'text-cyan-600'}`}>
-                         <User className="w-3 h-3 shrink-0"/> <span className="truncate">oleh <span className={isClosed ? 'text-slate-500' : 'text-cyan-400'}>{inc.reportedBy}</span></span>
+                      <div className={`mt-auto flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-bold ${isClosed && !inc.isSOS ? 'text-slate-600' : 'text-cyan-600'}`}>
+                         <User className="w-3 h-3 shrink-0"/> <span className="truncate">oleh <span className={isClosed && !inc.isSOS ? 'text-slate-500' : (inc.isSOS ? 'text-rose-300' : 'text-cyan-400')}>{inc.reportedBy}</span></span>
                       </div>
                    </div>
                    <div className="flex flex-col items-end justify-between shrink-0 gap-2">
                       {inc.photoUrl ? (
-                         <div className={`w-20 h-20 rounded-lg overflow-hidden border shadow-sm ${isSelected ? 'border-yellow-400' : (isClosed ? 'border-slate-700' : 'border-yellow-700/50')}`}>
+                         <div className={`w-20 h-20 rounded-lg overflow-hidden border shadow-sm ${isSelected ? (inc.isSOS ? 'border-rose-400' : 'border-yellow-400') : (isClosed ? (inc.isSOS ? 'border-rose-900/40' : 'border-slate-700') : (inc.isSOS ? 'border-rose-700/50' : 'border-yellow-700/50'))}`}>
                             <AsyncImage src={inc.photoUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt="Thumb"/>
                          </div>
                       ) : (

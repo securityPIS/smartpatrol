@@ -1,5 +1,5 @@
 import React from 'react';
-import { useHistory, useIncidents, usePatrol, useShips, useSOS, useUI, useWeather } from '../context/AppContextRuntime';
+import { useHistory, useIncidents, usePatrol, useShips, useSOS, useUI } from '../context/AppContextRuntime';
 import AsyncImage from '../components/AsyncImage';
 import {
   Activity,
@@ -10,11 +10,8 @@ import {
   CheckCircle2,
   CircleAlert,
   CircleOff,
-  CloudRain,
   ShieldAlert,
-  Thermometer,
   UserRound,
-  Wind,
 } from 'lucide-react';
 
 const APP_TIME_ZONE = 'Asia/Jakarta';
@@ -29,6 +26,16 @@ const keyFormatter = new Intl.DateTimeFormat('en-CA', {
 const shortDateFormatter = new Intl.DateTimeFormat('id-ID', {
   timeZone: APP_TIME_ZONE,
   day: '2-digit',
+  month: 'short',
+});
+
+const chartDayFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: APP_TIME_ZONE,
+  day: '2-digit',
+});
+
+const chartMonthFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: APP_TIME_ZONE,
   month: 'short',
 });
 
@@ -63,6 +70,32 @@ function formatDateKey(value) {
   const parsed = new Date(`${value}T00:00:00+07:00`);
   if (Number.isNaN(parsed.getTime())) return value;
   return longDateFormatter.format(parsed);
+}
+
+function getChartAxisLabel(dateKey, previousDateKey, isBoundary = false) {
+  if (!dateKey) {
+    return { primary: '', secondary: '' };
+  }
+
+  const currentDate = new Date(`${dateKey}T00:00:00+07:00`);
+  if (Number.isNaN(currentDate.getTime())) {
+    return { primary: dateKey, secondary: '' };
+  }
+
+  const previousDate = previousDateKey
+    ? new Date(`${previousDateKey}T00:00:00+07:00`)
+    : null;
+
+  const primary = chartDayFormatter.format(currentDate);
+  const showMonth = isBoundary
+    || !previousDate
+    || previousDate.getMonth() !== currentDate.getMonth()
+    || previousDate.getFullYear() !== currentDate.getFullYear();
+
+  return {
+    primary,
+    secondary: showMonth ? chartMonthFormatter.format(currentDate) : '',
+  };
 }
 
 function formatDateTime(value) {
@@ -109,6 +142,16 @@ function createRangeDays(startKey, endKey) {
   return days;
 }
 
+function createQuickRange(daysBack = 0) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - daysBack);
+  return {
+    from: getDateKey(start),
+    to: getDateKey(end),
+  };
+}
+
 function summarizeCheckpoints(checkpoints = []) {
   return checkpoints.reduce((summary, checkpoint) => {
     summary.total += 1;
@@ -134,31 +177,6 @@ function getProgressTone(rate) {
   if (rate >= 70) return 'from-cyan-400 via-cyan-500 to-yellow-400';
   if (rate >= 50) return 'from-yellow-400 via-amber-500 to-orange-400';
   return 'from-rose-400 via-rose-500 to-orange-400';
-}
-
-function getWeatherSeverity(snapshot) {
-  const code = Number(snapshot?.weathercode);
-  const windspeed = Number(snapshot?.windspeed);
-
-  if ((code >= 80 && code <= 99) || windspeed >= 30) return 'critical';
-  if ((code >= 51 && code <= 67) || windspeed >= 20) return 'warning';
-  return 'normal';
-}
-
-function getWeatherSeverityLabel(severity) {
-  if (severity === 'critical') return 'Buruk';
-  if (severity === 'warning') return 'Perlu Waspada';
-  return 'Normal';
-}
-
-function getWeatherCardTone(severity) {
-  if (severity === 'critical') {
-    return 'border-rose-500/30 bg-rose-500/10 text-rose-100';
-  }
-  if (severity === 'warning') {
-    return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100';
-  }
-  return 'border-cyan-800/50 bg-[#0b1229] text-cyan-100';
 }
 
 function normalizeIncidentTimestamp(incident) {
@@ -260,7 +278,21 @@ const CHART_SERIES = [
   },
 ];
 
+const QUICK_FILTERS = [
+  { id: 'today', label: 'Today', daysBack: 0 },
+  { id: 'three-days', label: '3D', daysBack: 2 },
+  { id: 'week', label: '7D', daysBack: 6 },
+  { id: 'month', label: '30D', daysBack: 29 },
+];
+
 function DailyReportTrendChart({ chartData }) {
+  const xAxisLabelStep = React.useMemo(() => {
+    if (chartData.length <= 7) return 1;
+    if (chartData.length <= 14) return 2;
+    if (chartData.length <= 21) return 3;
+    return 4;
+  }, [chartData.length]);
+
   const chartMaxValue = React.useMemo(() => {
     return Math.max(
       100,
@@ -274,11 +306,11 @@ function DailyReportTrendChart({ chartData }) {
   }, [chartData]);
 
   const chartSvg = React.useMemo(() => {
-    const width = 640;
+    const width = 1080;
     const height = 260;
     const topPadding = 20;
-    const bottomPadding = 34;
-    const sidePadding = 18;
+    const bottomPadding = 42;
+    const sidePadding = 22;
     const usableHeight = height - topPadding - bottomPadding;
     const baselineY = height - bottomPadding;
     const stepX = chartData.length > 1
@@ -336,8 +368,12 @@ function DailyReportTrendChart({ chartData }) {
           </span>
         ))}
       </div>
-      <div className="overflow-hidden rounded-[1.5rem] border border-cyan-800/40 bg-[#070b19] p-3">
-        <svg viewBox={`0 0 ${chartSvg.width} ${chartSvg.height}`} className="h-72 w-full">
+      <div className="overflow-hidden rounded-[1.5rem] border border-cyan-800/40 bg-[#070b19] px-0 py-3">
+        <svg
+          viewBox={`0 0 ${chartSvg.width} ${chartSvg.height}`}
+          preserveAspectRatio="xMidYMid meet"
+          className="h-72 w-full"
+        >
           {chartSvg.guideLines.map((guide) => (
             <g key={`guide-${guide.value}`}>
               <line
@@ -388,43 +424,60 @@ function DailyReportTrendChart({ chartData }) {
                     >
                       <title>{`${point.label} - ${series.label}: ${formatMetricNumber(point.rawValue, series.key === 'completionRate' ? 1 : 0)}${series.key === 'completionRate' ? '%' : ''}`}</title>
                     </circle>
-                    {index === points.length - 1 ? (
-                      <text
-                        x={point.x - 6}
-                        y={point.y - 10}
-                        textAnchor="end"
-                        fill={series.stroke}
-                        fontSize="10"
-                        fontWeight="800"
-                      >
-                        {series.shortLabel}
-                      </text>
-                    ) : null}
                   </g>
                 ))}
               </g>
             );
           })}
 
-          {chartData.map((day, index) => {
+          {(() => {
+            let previousRenderedDateKey = null;
+
+            return chartData.map((day, index) => {
             const points = chartSvg.pointsBySeries.completionRate || [];
             const anchorPoint = points[index];
             if (!anchorPoint) return null;
+            const shouldRenderLabel = index === 0
+              || index === chartData.length - 1
+              || index % xAxisLabelStep === 0;
+
+            if (!shouldRenderLabel) return null;
+
+            const label = getChartAxisLabel(
+              day.dateKey,
+              previousRenderedDateKey,
+              index === 0 || index === chartData.length - 1,
+            );
+            previousRenderedDateKey = day.dateKey;
 
             return (
-              <text
-                key={`label-${day.dateKey}`}
-                x={anchorPoint.x}
-                y={chartSvg.height - 10}
-                textAnchor="middle"
-                fill="rgba(103,232,249,0.72)"
-                fontSize="10"
-                fontWeight="700"
-              >
-                {day.label}
-              </text>
+              <g key={`label-${day.dateKey}`}>
+                <text
+                  x={anchorPoint.x}
+                  y={chartSvg.height - 18}
+                  textAnchor="middle"
+                  fill="rgba(103,232,249,0.88)"
+                  fontSize="10"
+                  fontWeight="800"
+                >
+                  {label.primary}
+                </text>
+                {label.secondary ? (
+                  <text
+                    x={anchorPoint.x}
+                    y={chartSvg.height - 6}
+                    textAnchor="middle"
+                    fill="rgba(103,232,249,0.58)"
+                    fontSize="8"
+                    fontWeight="700"
+                  >
+                    {label.secondary}
+                  </text>
+                ) : null}
+              </g>
             );
-          })}
+            });
+          })()}
         </svg>
       </div>
     </div>
@@ -435,23 +488,23 @@ const DailyReportPage = React.memo(function DailyReportPage() {
   const { historyEntries } = useHistory();
   const { checkpoints, currentShiftMeta, activeShiftGuardSnapshot } = usePatrol();
   const { operationalShip, operationalShipName } = useShips();
-  const { weatherInfo, getWeatherDetail } = useWeather();
   const { allIncidents, incidentMeta, setSelectedIncident } = useIncidents();
   const { sosHistory } = useSOS();
   const { setCurrentPage } = useUI();
 
   const initialRange = React.useMemo(() => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - 6);
-    return {
-      from: getDateKey(start),
-      to: getDateKey(end),
-    };
+    return createQuickRange(6);
   }, []);
 
   const [startDate, setStartDate] = React.useState(initialRange.from);
   const [endDate, setEndDate] = React.useState(initialRange.to);
+  const activeQuickFilter = React.useMemo(() => {
+    const activeFilter = QUICK_FILTERS.find((filter) => {
+      const range = createQuickRange(filter.daysBack);
+      return range.from === startDate && range.to === endDate;
+    });
+    return activeFilter?.id || null;
+  }, [endDate, startDate]);
 
   const liveEntry = React.useMemo(() => {
     if (!operationalShipName || !currentShiftMeta?.dateKey) return null;
@@ -465,7 +518,7 @@ const DailyReportPage = React.memo(function DailyReportPage() {
       shift: currentShiftMeta.label,
       ship: operationalShipName,
       crewSnapshot: activeShiftGuardSnapshot || [],
-      weatherSnapshot: weatherInfo || null,
+      weatherSnapshot: null,
       checkpoints,
       summary,
       issue: summary.temuan,
@@ -479,7 +532,6 @@ const DailyReportPage = React.memo(function DailyReportPage() {
     currentShiftMeta,
     operationalShip?.id,
     operationalShipName,
-    weatherInfo,
   ]);
 
   const reportEntries = React.useMemo(() => {
@@ -607,6 +659,7 @@ const DailyReportPage = React.memo(function DailyReportPage() {
   const openIncidents = React.useMemo(() => {
     return allIncidents
       .filter((incident) => {
+        if (incident?.isSOS) return false;
         const meta = incidentMeta[incident.id] || { status: 'open' };
         if (meta.status === 'closed') return false;
         return true;
@@ -671,39 +724,18 @@ const DailyReportPage = React.memo(function DailyReportPage() {
       .slice(0, 5);
   }, [filteredEntries]);
 
-  const badWeatherShips = React.useMemo(() => {
-    const weatherByShip = new Map();
-
-    filteredEntries.forEach((entry) => {
-      const snapshot = entry.weatherSnapshot;
-      if (!snapshot) return;
-
-      const severity = getWeatherSeverity(snapshot);
-      if (severity === 'normal') return;
-
-      const timestamp = new Date(entry.createdAt || `${entry.dateKey}T00:00:00+07:00`).getTime();
-      const existing = weatherByShip.get(entry.ship);
-
-      if (!existing || timestamp > existing.timestamp) {
-        weatherByShip.set(entry.ship, {
-          ship: entry.ship,
-          shift: entry.shift || '-',
-          timestamp,
-          dateKey: entry.dateKey,
-          weather: snapshot,
-          severity,
-        });
-      }
-    });
-
-    return Array.from(weatherByShip.values())
-      .sort((left, right) => {
-        if (left.severity !== right.severity) {
-          return left.severity === 'critical' ? -1 : 1;
-        }
-        return right.timestamp - left.timestamp;
-      });
-  }, [filteredEntries]);
+  const sosInfoEntries = React.useMemo(() => {
+    return [...filteredSos]
+      .map((item) => ({
+        id: item.id,
+        shipName: item.shipName || 'Tanpa Kapal',
+        senderName: item.senderName || 'Tidak diketahui',
+        senderRole: item.senderRole || 'Petugas',
+        triggeredAt: item.triggeredAt || item.createdAt || null,
+        status: item.status || 'active',
+      }))
+      .sort((left, right) => new Date(right.triggeredAt || 0).getTime() - new Date(left.triggeredAt || 0).getTime());
+  }, [filteredSos]);
 
   const openIncidentDetail = React.useCallback((incident) => {
     if (!incident) return;
@@ -711,15 +743,21 @@ const DailyReportPage = React.memo(function DailyReportPage() {
     setCurrentPage('incidents');
   }, [setCurrentPage, setSelectedIncident]);
 
+  const applyQuickFilter = React.useCallback((daysBack) => {
+    const range = createQuickRange(daysBack);
+    setStartDate(range.from);
+    setEndDate(range.to);
+  }, []);
+
   return (
     <div className="min-h-full overflow-y-auto p-4 pb-8 text-cyan-50 animate-in fade-in space-y-6 scrollbar-thin scrollbar-thumb-cyan-900/50">
       <section className="rounded-[2rem] border border-cyan-800/50 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.18),transparent_35%),linear-gradient(135deg,#0b1229,#070b19_55%,#03131d)] p-5 shadow-[0_0_40px_rgba(6,182,212,0.08)]">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-2xl">
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-400">Admin Daily Report</p>
-            <h2 className="mt-2 text-3xl font-black text-white">Ringkasan Operasional Harian Armada</h2>
+            <h2 className="mt-2 text-3xl font-black text-white">Ringkasan Penjagaan Kapal Non-Operasional</h2>
             <p className="mt-3 text-sm leading-relaxed text-cyan-200/75">
-              Dashboard ini merangkum performa patroli, temuan yang masih terbuka, aktivitas petugas terakhir, dan cuaca yang berpotensi mengganggu operasi kapal dalam rentang tanggal yang Anda pilih.
+              Dashboard ini menyajikan rangkuman kegiatan patroli keamanan, status temuan yang belum terselesaikan, pembaruan aktivitas petugas jaga, serta informasi SOS selama periode waktu yang dipilih.
             </p>
           </div>
 
@@ -750,6 +788,24 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                 className="w-full rounded-xl border border-cyan-800/60 bg-[#0b1229] px-3 py-3 text-sm text-cyan-50 outline-none transition-colors focus:border-cyan-400"
               />
             </label>
+            <div className="sm:col-span-2 flex justify-end">
+              <div className="grid w-full max-w-[320px] grid-cols-4 gap-2">
+                {QUICK_FILTERS.map((filter) => (
+                  <button
+                    key={filter.id}
+                    type="button"
+                    onClick={() => applyQuickFilter(filter.daysBack)}
+                    className={`min-w-0 rounded-full border px-2 py-1.5 text-[9px] font-black uppercase tracking-[0.14em] transition-all ${
+                      activeQuickFilter === filter.id
+                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 shadow-[0_0_16px_rgba(34,211,238,0.12)]'
+                        : 'border-cyan-800/50 bg-[#0b1229]/70 text-cyan-500 hover:border-cyan-600 hover:text-cyan-300'
+                    }`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -807,7 +863,43 @@ const DailyReportPage = React.memo(function DailyReportPage() {
         />
       </section>
 
-      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <section className="min-w-0 rounded-[1.9rem] border border-cyan-800/50 bg-[#0b1229] p-5 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">View Chart</p>
+            <h3 className="mt-2 text-xl font-black text-white">Completion Rate, Aman, Temuan, Missed</h3>
+          </div>
+          <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-3 text-cyan-300">
+            <BarChart3 className="h-5 w-5" />
+          </div>
+        </div>
+
+        {chartData.length === 0 ? (
+          <div className="mt-5">
+            <EmptyState
+              title="Belum Ada Data Harian"
+              description="Silakan pilih rentang tanggal yang memiliki entry patroli."
+              icon={<BarChart3 className="h-5 w-5" />}
+            />
+          </div>
+        ) : (
+          <SectionErrorBoundary
+            fallback={(
+              <div className="mt-5">
+                <EmptyState
+                  title="Chart Tidak Tersedia"
+                  description="Grafik sementara tidak bisa dirender, tetapi data report lainnya tetap aman tampil."
+                  icon={<BarChart3 className="h-5 w-5" />}
+                />
+              </div>
+            )}
+          >
+            <DailyReportTrendChart chartData={chartData} />
+          </SectionErrorBoundary>
+        )}
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="min-w-0 rounded-[1.9rem] border border-cyan-800/50 bg-[#0b1229] p-5 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -819,9 +911,9 @@ const DailyReportPage = React.memo(function DailyReportPage() {
             </div>
           </div>
 
-          <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="mt-5 space-y-3">
             {perShipBreakdown.length === 0 ? (
-              <div className="lg:col-span-2">
+              <div>
                 <EmptyState
                   title="Belum Ada Ringkasan Kapal"
                   description="Tidak ada entry patroli dalam rentang tanggal yang dipilih."
@@ -830,71 +922,65 @@ const DailyReportPage = React.memo(function DailyReportPage() {
               </div>
             ) : perShipBreakdown.map((ship) => (
               <div key={ship.ship} className="rounded-[1.4rem] border border-cyan-800/50 bg-[#070b19] p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-lg font-black text-white">{ship.ship}</p>
-                    <p className="mt-1 text-[11px] uppercase tracking-widest text-cyan-500">
-                      {ship.shifts} shift tercatat
-                    </p>
-                  </div>
-                  <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
-                    ship.completionRate >= 90
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                      : ship.completionRate >= 70
-                        ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
-                        : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
-                  }`}>
-                    {formatMetricNumber(ship.completionRate, 1)}%
-                  </span>
-                </div>
-
-                <div className="mt-4 h-2 overflow-hidden rounded-full border border-cyan-900/50 bg-[#0b1229]">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div
-                    className={`h-full rounded-full bg-gradient-to-r ${getProgressTone(ship.completionRate)}`}
-                    style={{ width: `${Math.max(ship.completionRate, 4)}%` }}
-                  ></div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div
-                    title="Completion Rate"
-                    className="rounded-xl border border-cyan-900/40 bg-[#0b1229] p-3"
+                    className="min-w-0 flex-1"
                   >
-                    <div className="flex items-center gap-2 text-cyan-400">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-lg font-black text-white">{ship.ship}</p>
+                        <p className="mt-1 text-[11px] uppercase tracking-widest text-cyan-500">
+                          {ship.shifts} shift tercatat
+                        </p>
+                      </div>
+                      <span className={`shrink-0 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
+                        ship.completionRate >= 90
+                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                          : ship.completionRate >= 70
+                            ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+                            : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
+                      }`}>
+                        {formatMetricNumber(ship.completionRate, 1)}%
+                      </span>
+                    </div>
+
+                    <div className="mt-4 h-2 overflow-hidden rounded-full border border-cyan-900/50 bg-[#0b1229]">
+                      <div
+                        className={`h-full rounded-full bg-gradient-to-r ${getProgressTone(ship.completionRate)}`}
+                        style={{ width: `${Math.max(ship.completionRate, 4)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2 lg:min-w-[252px]">
+                    <div
+                      title="Completion Rate"
+                      className="flex flex-col items-center justify-center rounded-xl border border-cyan-900/40 bg-[#0b1229] px-2 py-3 text-cyan-300"
+                    >
                       <Activity className="h-4 w-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">CR</span>
+                      <p className="mt-2 text-sm font-black text-cyan-100">{formatMetricNumber(ship.completionRate, 1)}%</p>
                     </div>
-                    <p className="mt-2 font-black text-cyan-100">{formatMetricNumber(ship.completionRate, 1)}%</p>
-                  </div>
-                  <div
-                    title="Aman"
-                    className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3"
-                  >
-                    <div className="flex items-center gap-2 text-emerald-400">
+                    <div
+                      title="Aman"
+                      className="flex flex-col items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-2 py-3 text-emerald-300"
+                    >
                       <CheckCircle2 className="h-4 w-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">OK</span>
+                      <p className="mt-2 text-sm font-black text-emerald-200">{Math.max(ship.completed - ship.temuan, 0)}</p>
                     </div>
-                    <p className="mt-2 font-black text-emerald-200">{Math.max(ship.completed - ship.temuan, 0)}</p>
-                  </div>
-                  <div
-                    title="Temuan"
-                    className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3"
-                  >
-                    <div className="flex items-center gap-2 text-yellow-400">
+                    <div
+                      title="Temuan"
+                      className="flex flex-col items-center justify-center rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-2 py-3 text-yellow-300"
+                    >
                       <CircleAlert className="h-4 w-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">TM</span>
+                      <p className="mt-2 text-sm font-black text-yellow-200">{ship.temuan}</p>
                     </div>
-                    <p className="mt-2 font-black text-yellow-200">{ship.temuan}</p>
-                  </div>
-                  <div
-                    title="Missed"
-                    className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3"
-                  >
-                    <div className="flex items-center gap-2 text-rose-400">
+                    <div
+                      title="Missed"
+                      className="flex flex-col items-center justify-center rounded-xl border border-rose-500/20 bg-rose-500/10 px-2 py-3 text-rose-300"
+                    >
                       <CircleOff className="h-4 w-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">MS</span>
+                      <p className="mt-2 text-sm font-black text-rose-200">{ship.missed}</p>
                     </div>
-                    <p className="mt-2 font-black text-rose-200">{ship.missed}</p>
                   </div>
                 </div>
               </div>
@@ -905,37 +991,49 @@ const DailyReportPage = React.memo(function DailyReportPage() {
         <div className="min-w-0 rounded-[1.9rem] border border-cyan-800/50 bg-[#0b1229] p-5 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">View Chart</p>
-              <h3 className="mt-2 text-xl font-black text-white">Completion Rate, Aman, Temuan, Missed</h3>
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">Aktivitas Petugas</p>
+              <h3 className="mt-2 text-xl font-black text-white">5 Petugas Patroli Terakhir</h3>
             </div>
-            <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-3 text-cyan-300">
-              <BarChart3 className="h-5 w-5" />
+            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-emerald-300">
+              <UserRound className="h-5 w-5" />
             </div>
           </div>
 
-          {chartData.length === 0 ? (
-            <div className="mt-5">
+          <div className="mt-5 space-y-3">
+            {latestGuardPatrols.length === 0 ? (
               <EmptyState
-                title="Belum Ada Data Harian"
-                description="Silakan pilih rentang tanggal yang memiliki entry patroli."
-                icon={<BarChart3 className="h-5 w-5" />}
+                title="Belum Ada Aktivitas"
+                description="Belum ada checkpoint selesai pada periode tanggal ini."
+                icon={<UserRound className="h-5 w-5" />}
               />
-            </div>
-          ) : (
-            <SectionErrorBoundary
-              fallback={(
-                <div className="mt-5">
-                  <EmptyState
-                    title="Chart Tidak Tersedia"
-                    description="Grafik sementara tidak bisa dirender, tetapi data report lainnya tetap aman tampil."
-                    icon={<BarChart3 className="h-5 w-5" />}
-                  />
+            ) : latestGuardPatrols.map((guard, index) => (
+              <div key={guard.id} className="flex items-center gap-3 rounded-[1.25rem] border border-cyan-800/50 bg-[#070b19] p-3">
+                <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-cyan-700/50 bg-[#0b1229] text-cyan-400">
+                  {guard.photoUrl ? (
+                    <AsyncImage
+                      src={guard.photoUrl}
+                      alt={guard.name}
+                      className="h-full w-full object-cover"
+                      fallbackLayout={<UserRound className="h-5 w-5" />}
+                    />
+                  ) : (
+                    <UserRound className="h-5 w-5" />
+                  )}
                 </div>
-              )}
-            >
-              <DailyReportTrendChart chartData={chartData} />
-            </SectionErrorBoundary>
-          )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-cyan-600">#{index + 1}</span>
+                    <p className="truncate text-sm font-black text-white">{guard.name}</p>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-cyan-300/75">{guard.ship} - {guard.checkpoint}</p>
+                </div>
+                <div className="rounded-xl border border-cyan-800/50 bg-[#0b1229] px-3 py-2 text-right">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Jam</p>
+                  <p className="mt-1 text-xs font-bold text-cyan-100">{formatDateTime(guard.completedAt)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -1021,117 +1119,43 @@ const DailyReportPage = React.memo(function DailyReportPage() {
           <div className="rounded-[1.9rem] border border-cyan-800/50 bg-[#0b1229] p-5 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">Aktivitas Petugas</p>
-                <h3 className="mt-2 text-xl font-black text-white">5 Petugas Patroli Terakhir</h3>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">Emergency Info</p>
+                <h3 className="mt-2 text-xl font-black text-white">Info SOS</h3>
               </div>
-              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-emerald-300">
-                <UserRound className="h-5 w-5" />
+              <div className="flex items-center gap-2 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-rose-300">
+                <ShieldAlert className="h-5 w-5" />
+                <span className="inline-flex min-h-6 min-w-6 items-center justify-center rounded-full border border-rose-400/40 bg-rose-500 px-1.5 text-[10px] font-black leading-none text-white">
+                  {formatMetricNumber(sosInfoEntries.length)}
+                </span>
               </div>
             </div>
 
-            <div className="mt-5 space-y-3">
-              {latestGuardPatrols.length === 0 ? (
+            <div className="mt-5 max-h-[380px] space-y-3 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-rose-900/40">
+              {sosInfoEntries.length === 0 ? (
                 <EmptyState
-                  title="Belum Ada Aktivitas"
-                  description="Belum ada checkpoint selesai pada periode tanggal ini."
-                  icon={<UserRound className="h-5 w-5" />}
+                  title="Tidak Ada SOS"
+                  description="Belum ada aktivitas tombol SOS pada periode laporan ini."
+                  icon={<ShieldAlert className="h-5 w-5" />}
                 />
-              ) : latestGuardPatrols.map((guard, index) => (
-                <div key={guard.id} className="flex items-center gap-3 rounded-[1.25rem] border border-cyan-800/50 bg-[#070b19] p-3">
-                  <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-cyan-700/50 bg-[#0b1229] text-cyan-400">
-                    {guard.photoUrl ? (
-                      <AsyncImage
-                        src={guard.photoUrl}
-                        alt={guard.name}
-                        className="h-full w-full object-cover"
-                        fallbackLayout={<UserRound className="h-5 w-5" />}
-                      />
-                    ) : (
-                      <UserRound className="h-5 w-5" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-cyan-600">#{index + 1}</span>
-                      <p className="truncate text-sm font-black text-white">{guard.name}</p>
-                    </div>
-                    <p className="mt-1 truncate text-xs text-cyan-300/75">{guard.ship} - {guard.checkpoint}</p>
-                  </div>
-                  <div className="rounded-xl border border-cyan-800/50 bg-[#0b1229] px-3 py-2 text-right">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Jam</p>
-                    <p className="mt-1 text-xs font-bold text-cyan-100">{formatDateTime(guard.completedAt)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+              ) : sosInfoEntries.map((item) => {
+                const triggeredDate = item.triggeredAt ? new Date(item.triggeredAt) : null;
+                const timeLabel = triggeredDate && !Number.isNaN(triggeredDate.getTime())
+                  ? triggeredDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: APP_TIME_ZONE })
+                  : '-';
+                const dateLabel = triggeredDate && !Number.isNaN(triggeredDate.getTime())
+                  ? triggeredDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', timeZone: APP_TIME_ZONE })
+                  : '-';
 
-          <div className="rounded-[1.9rem] border border-cyan-800/50 bg-[#0b1229] p-5 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">Kondisi Cuaca</p>
-                <h3 className="mt-2 text-xl font-black text-white">Cuaca Buruk di Kapal</h3>
-              </div>
-              <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-3 text-rose-300">
-                <CloudRain className="h-5 w-5" />
-              </div>
-            </div>
-
-            <div className="mt-5 space-y-3">
-              {badWeatherShips.length === 0 ? (
-                <EmptyState
-                  title="Tidak Ada Cuaca Buruk"
-                  description="Tidak ada snapshot cuaca yang masuk kategori waspada atau buruk pada periode ini."
-                  icon={<CloudRain className="h-5 w-5" />}
-                />
-              ) : badWeatherShips.map((item) => {
-                const weatherDetail = getWeatherDetail(item.weather.weathercode);
                 return (
-                  <div key={`${item.ship}-${item.dateKey}`} className={`rounded-[1.35rem] border p-4 ${getWeatherCardTone(item.severity)}`}>
-                    <div className="flex items-start justify-between gap-3">
+                  <div key={item.id} className="rounded-[1.2rem] border border-rose-500/20 bg-rose-500/10 px-4 py-3">
+                    <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-black text-white">{item.ship}</p>
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest ${
-                            item.severity === 'critical'
-                              ? 'border-rose-500/30 bg-rose-500/10 text-rose-300'
-                              : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
-                          }`}>
-                            {getWeatherSeverityLabel(item.severity)}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-cyan-300/75">{item.shift} - {formatDateKey(item.dateKey)}</p>
+                        <p className="truncate text-sm font-black text-white">{item.shipName}</p>
+                        <p className="mt-1 truncate text-xs text-cyan-300/80">{item.senderName}</p>
                       </div>
-                      <div className={`rounded-2xl border p-2 ${
-                        item.severity === 'critical'
-                          ? 'border-rose-500/30 bg-rose-500/10 text-rose-300'
-                          : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
-                      }`}>
-                        {weatherDetail.icon}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-3 gap-3">
-                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                        <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-cyan-500">
-                          <CloudRain className="h-3.5 w-3.5" />
-                          Kondisi
-                        </p>
-                        <p className="mt-2 text-sm font-bold text-white">{weatherDetail.text}</p>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                        <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-cyan-500">
-                          <Thermometer className="h-3.5 w-3.5" />
-                          Suhu
-                        </p>
-                        <p className="mt-2 text-sm font-bold text-white">{item.weather.temperature} C</p>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                        <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-cyan-500">
-                          <Wind className="h-3.5 w-3.5" />
-                          Angin
-                        </p>
-                        <p className="mt-2 text-sm font-bold text-white">{item.weather.windspeed} k/j</p>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-black text-rose-200">{timeLabel}</p>
+                        <p className="mt-1 text-[11px] text-cyan-300/70">{dateLabel}</p>
                       </div>
                     </div>
                   </div>
