@@ -1,15 +1,13 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
-import { Shield, Ship, UserCog, Moon, Sun, LogOut, Settings, Wifi, WifiOff, Users, Anchor } from 'lucide-react';
+import { useAuth, useRole, useShips, useUI, useUsers } from '../context/AppContextRuntime';
+import { Shield, Ship, UserCog, Moon, Sun, LogOut, Settings, Wifi, WifiOff, Users, Anchor, BarChart3 } from 'lucide-react';
 
 const Header = React.memo(function Header() {
-  const {
-    currentUser, currentUserRecord, currentUserRole, isAdmin, isPic,
-    theme, setTheme, isOffline, setCurrentPage, setActiveShipId,
-    showSettingsDropdown, setShowSettingsDropdown, setShowNotificationsDropdown,
-    clearUserManagementFeedback, setSelectedUser, setShowUserForm, handleLogout,
-    setShowShipForm, closeShipDocForm, setIsEditingShipInfo
-  } = useApp();
+  const { currentUser, currentUserRecord, currentUserRole, isAdmin, isPic } = useRole();
+  const { theme, setTheme, isOffline, setCurrentPage, showSettingsDropdown, setShowSettingsDropdown, setShowNotificationsDropdown } = useUI();
+  const { clearUserManagementFeedback, setSelectedUser, setShowUserForm } = useUsers();
+  const { setActiveShipId, setShowShipForm, closeShipDocForm, setIsEditingShipInfo } = useShips();
+  const { handleLogout } = useAuth();
 
   return (
     <div className="sticky top-0 z-40 bg-[#0b1229]/90 backdrop-blur-md border-b border-cyan-800 px-4 py-3 flex justify-between items-center shadow-[0_4px_15px_rgba(6,182,212,0.1)]">
@@ -24,15 +22,18 @@ const Header = React.memo(function Header() {
             <h1 className="text-lg font-bold text-cyan-50">SmartPatrol</h1>
             <span className={`px-1.5 py-0.5 rounded border text-[9px] font-bold tracking-widest uppercase ${isAdmin ? 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/30' : isPic ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'}`}>{currentUserRole}</span>
           </div>
-          <p className="text-[10px] text-cyan-500 mt-0.5">{currentUser}{currentUserRecord?.shipAssigned ? ` · ${currentUserRecord.shipAssigned}` : ''}</p>
+          <p className="text-[10px] text-cyan-500 mt-0.5">
+            {currentUser}
+            {!isAdmin && currentUserRecord?.shipAssigned ? ` · ${currentUserRecord.shipAssigned}` : ''}
+          </p>
         </div>
       </div>
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-1.5 text-[10px] font-bold">
           {isOffline ? (
-            <span className="flex items-center gap-1 text-[#ED1C24]"><WifiOff className="w-5 h-5"/></span>
+            <span className="flex items-center gap-1 text-[#ED1C24]"><WifiOff className="w-5 h-5" /></span>
           ) : (
-            <span className="flex items-center gap-1 text-[#39B54A]"><Wifi className="w-5 h-5"/></span>
+            <span className="flex items-center gap-1 text-[#39B54A]"><Wifi className="w-5 h-5" /></span>
           )}
         </div>
         <div className="relative z-50">
@@ -57,6 +58,16 @@ const Header = React.memo(function Header() {
               </button>
               {isAdmin && (
                 <>
+                  <button
+                    onClick={() => {
+                      setActiveShipId(null);
+                      setCurrentPage('daily-report');
+                      setShowSettingsDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50"
+                  >
+                    <BarChart3 className="w-4 h-4" /> Daily Report
+                  </button>
                   <button
                     onClick={() => {
                       clearUserManagementFeedback();

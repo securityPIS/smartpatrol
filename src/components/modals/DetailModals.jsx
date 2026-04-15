@@ -1,13 +1,12 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { useReports, useUsers } from '../../context/AppContextRuntime';
 import UserDetailView from '../views/UserDetailView';
 import ReportDetailView from '../views/ReportDetailView';
 import AsyncImage from '../AsyncImage';
 
 export function UserDetailModal() {
-  const { selectedUser } = useApp();
-  const modalRef = useFocusTrap(!!selectedUser);
+  const { selectedUser } = useUsers();
+  const modalRef = React.useRef(null);
   if (!selectedUser) return null;
 
   return (
@@ -18,8 +17,8 @@ export function UserDetailModal() {
 }
 
 export function ReportDetailModal() {
-  const { selectedReportDetail } = useApp();
-  const modalRef = useFocusTrap(!!selectedReportDetail);
+  const { selectedReportDetail } = useReports();
+  const modalRef = React.useRef(null);
   if (!selectedReportDetail) return null;
 
   return (
@@ -31,8 +30,8 @@ export function ReportDetailModal() {
 
 export function PhotoPreviewModal() {
 // ... existing PhotoPreviewModal stays same for now
-  const { previewPhoto, setPreviewPhoto } = useApp();
-  const modalRef = useFocusTrap(!!previewPhoto);
+  const { previewPhoto, setPreviewPhoto } = useReports();
+  const modalRef = React.useRef(null);
   if (!previewPhoto) return null;
   return (
     <div ref={modalRef} className="fixed inset-0 z-[110] flex items-center justify-center bg-[#070b19]/95 p-4 animate-in fade-in" onClick={()=>setPreviewPhoto(null)}>

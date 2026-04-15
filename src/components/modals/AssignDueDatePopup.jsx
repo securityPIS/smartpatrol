@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext';
+import { useShips } from '../../context/AppContextRuntime';
 import { ModalShell } from '../ui';
 import { CalendarClock, Infinity, UserCheck } from 'lucide-react';
 
 export default function AssignDueDatePopup() {
-  const { showAssignPopup, setShowAssignPopup, assignPopupData, handleConfirmAssign } = useApp();
+  const { showAssignPopup, setShowAssignPopup, assignPopupData, handleConfirmAssign } = useShips();
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   

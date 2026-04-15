@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { usePatrol } from '../../context/AppContextRuntime';
 import { X, Camera, Send, Lock } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
@@ -23,7 +23,7 @@ function formatPatrolFormTimestamp(value = new Date()) {
 }
 
 export default function PatrolFormView({ isInline = false }) {
-  const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol, shouldForcePatrolCameraCapture, submittingPatrolId } = useApp();
+  const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol, shouldForcePatrolCameraCapture, submittingPatrolId } = usePatrol();
   const [formClock, setFormClock] = React.useState(() => Date.now());
 
   React.useEffect(() => {
@@ -70,7 +70,7 @@ export default function PatrolFormView({ isInline = false }) {
           <>
             <div className="bg-[#070b19] border border-yellow-500/20 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
               <p className="text-[10px] uppercase tracking-widest text-yellow-500 font-bold">Waktu Temuan</p>
-              <p className="text-sm font-black text-yellow-200 tabular-nums text-right">{formTimestamp.date} · {formTimestamp.time}</p>
+              <p className="text-sm font-black text-yellow-200 tabular-nums text-right">{formTimestamp.date} Â· {formTimestamp.time}</p>
             </div>
             {!activePatrolState.photoUrl ? (
               <button onClick={() => handlePhotoUpload(activePatrolId, false, { cameraOnly: shouldForcePatrolCameraCapture })} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40">

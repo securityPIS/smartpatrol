@@ -1,15 +1,14 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useShips, useUsers } from '../../context/AppContextRuntime';
 import { ChevronDown, FileText, Upload, Save } from 'lucide-react';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { detectDocumentType, getDocumentTypeLabel } from '../../utils/documentFiles';
 import ShipFormView from '../views/ShipFormView';
 import UserFormView from '../views/UserFormView';
 import ShipDocumentFormView from '../views/ShipDocumentFormView';
 
 export function ShipFormModal() {
-  const { showShipForm } = useApp();
-  const modalRef = useFocusTrap(showShipForm);
+  const { showShipForm } = useShips();
+  const modalRef = React.useRef(null);
   if (!showShipForm) return null;
 
   return (
@@ -20,8 +19,8 @@ export function ShipFormModal() {
 }
 
 export function UserFormModal() {
-  const { showUserForm } = useApp();
-  const modalRef = useFocusTrap(showUserForm);
+  const { showUserForm } = useUsers();
+  const modalRef = React.useRef(null);
   if (!showUserForm) return null;
 
   return (
@@ -32,7 +31,7 @@ export function UserFormModal() {
 }
 
 export function ShipDocumentFormModal() {
-  const { showShipDocForm } = useApp();
+  const { showShipDocForm } = useShips();
   if (!showShipDocForm) return null;
 
   return (

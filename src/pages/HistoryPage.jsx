@@ -1,29 +1,27 @@
-import React from 'react';
-import { useApp } from '../context/AppContext';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useHistory, useIncidents, useReports, useRole } from '../context/AppContextRuntime';
 import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX } from 'lucide-react';
 import HistoryDetailView from '../components/views/HistoryDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
 import AsyncImage from '../components/AsyncImage';
 
-const HistoryPage = React.memo(function HistoryPage() {
-  const { 
-    historyEntries, openHistoryEntry, handleDeleteHistoryEntry, isAdmin, 
-    selectedHistoryEntry, setSelectedHistoryId,
-    handleOpenPatrolResult, selectedReportDetail, setSelectedReportDetail,
-    selectedIncident, setSelectedIncident, setPreviewPhoto
-  } = useApp();
-  const [summaryDetailType, setSummaryDetailType] = React.useState(null);
-  const [showFilters, setShowFilters] = React.useState(false);
-  const [shipFilter, setShipFilter] = React.useState('');
-  const [shiftFilter, setShiftFilter] = React.useState('');
-  const [startDateFilter, setStartDateFilter] = React.useState('');
-  const [endDateFilter, setEndDateFilter] = React.useState('');
+export default function HistoryPage() {
+  const { historyEntries, closeHistoryEntry, handleDeleteHistoryEntry, selectedHistoryEntry, setSelectedHistoryId, handleOpenPatrolResult } = useHistory();
+  const { isAdmin } = useRole();
+  const { selectedReportDetail, setSelectedReportDetail, setPreviewPhoto } = useReports();
+  const { selectedIncident, setSelectedIncident } = useIncidents();
+  const [summaryDetailType, setSummaryDetailType] = useState(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [shipFilter, setShipFilter] = useState('');
+  const [shiftFilter, setShiftFilter] = useState('');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
 
-  const shipOptions = React.useMemo(() => (
+  const shipOptions = useMemo(() => (
     Array.from(new Set(historyEntries.map(entry => entry.ship).filter(Boolean))).sort((left, right) => left.localeCompare(right))
   ), [historyEntries]);
-  const shiftOptions = React.useMemo(() => (
+  const shiftOptions = useMemo(() => (
     Array.from(
       new Set(
         historyEntries
@@ -33,7 +31,7 @@ const HistoryPage = React.memo(function HistoryPage() {
     ).sort((left, right) => left.localeCompare(right))
   ), [historyEntries]);
 
-  const filteredHistoryEntries = React.useMemo(() => historyEntries.filter((entry) => {
+  const filteredHistoryEntries = useMemo(() => historyEntries.filter((entry) => {
     const entryDateKey = String(entry.dateKey || '');
     if (shipFilter && entry.ship !== shipFilter) return false;
     if (shiftFilter && entry.shift !== shiftFilter) return false;
@@ -43,30 +41,25 @@ const HistoryPage = React.memo(function HistoryPage() {
   }), [endDateFilter, historyEntries, shipFilter, shiftFilter, startDateFilter]);
 
   const hasActiveFilter = Boolean(shipFilter || shiftFilter || startDateFilter || endDateFilter);
+  const showMobileDetail = Boolean(selectedHistoryEntry);
 
   const handleEntryClick = (id) => {
-    // If we are on mobile (screen < 1024px), we navigate to the home page as before
-    if (window.innerWidth < 1024) {
-      openHistoryEntry(id);
-    } else {
-      // On desktop, we just select the entry to show it in the right pane
-      setSelectedHistoryId(id);
-    }
+    setSelectedHistoryId(id);
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     setSummaryDetailType(null);
     setSelectedReportDetail(null);
     setSelectedIncident(null);
   }, [selectedHistoryEntry?.id, setSelectedIncident, setSelectedReportDetail]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!selectedHistoryEntry?.id) return;
     if (filteredHistoryEntries.some(entry => entry.id === selectedHistoryEntry.id)) return;
     setSelectedHistoryId(null);
   }, [filteredHistoryEntries, selectedHistoryEntry?.id, setSelectedHistoryId]);
 
-  const summaryDetailItems = React.useMemo(() => {
+  const summaryDetailItems = useMemo(() => {
     if (!selectedHistoryEntry || !summaryDetailType) return [];
     return (selectedHistoryEntry.checkpoints || []).filter((item) => {
       if (summaryDetailType === 'missed') return item.status === 'missed' || item.resultType === 'missed';
@@ -234,13 +227,35 @@ const HistoryPage = React.memo(function HistoryPage() {
       );
     }
 
-    return <HistoryDetailView isInline={true} onSummaryCardClick={handleOpenSummaryDetail} />;
+    return (
+      <div className="h-full flex flex-col">
+        {selectedHistoryEntry && (
+          <div className="p-4 border-b border-cyan-900/50 bg-[#0b1229] flex items-center gap-3">
+            <button
+              type="button"
+              onClick={closeHistoryEntry}
+              className="w-10 h-10 rounded-xl border border-cyan-700/60 bg-[#070b19] text-cyan-300 flex items-center justify-center hover:bg-cyan-900/40 transition-colors"
+              aria-label="Kembali ke daftar riwayat"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-500">Riwayat Shift</p>
+              <h3 className="text-lg font-black text-white">Detail Ringkasan</h3>
+            </div>
+          </div>
+        )}
+        <div className="flex-1 overflow-hidden">
+          <HistoryDetailView isInline={true} onSummaryCardClick={handleOpenSummaryDetail} />
+        </div>
+      </div>
+    );
   };
 
   return (
     <div className="flex h-full overflow-hidden animate-in fade-in">
       {/* Left Pane: List */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 lg:border-r lg:border-cyan-900/50">
+      <div className={`flex-1 overflow-y-auto p-4 space-y-4 lg:border-r lg:border-cyan-900/50 ${showMobileDetail ? 'hidden lg:block' : ''}`}>
         <div className="flex items-center justify-between gap-3 mb-2">
           <h2 className="text-xl font-bold text-cyan-50">Riwayat Sistem</h2>
           <button
@@ -373,11 +388,9 @@ const HistoryPage = React.memo(function HistoryPage() {
       </div>
 
       {/* Right Pane: Detail View */}
-      <div className="hidden lg:block flex-1 bg-[#070b19] overflow-hidden relative">
+      <div className={`${showMobileDetail ? 'block' : 'hidden'} lg:block flex-1 bg-[#070b19] overflow-hidden relative`}>
         {renderRightPane()}
       </div>
     </div>
   );
-});
-
-export default HistoryPage;
+}

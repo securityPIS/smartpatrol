@@ -1,7 +1,6 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useShips } from '../../context/AppContextRuntime';
 import { ChevronDown, FileText, Upload, Save } from 'lucide-react';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { detectDocumentType, getDocumentTypeLabel } from '../../utils/documentFiles';
 import { ImageIcon } from 'lucide-react';
 
@@ -31,8 +30,8 @@ function ShipDocumentUploadVisual({ document }) {
 }
 
 export default function ShipDocumentFormView({ isInline = false }) {
-  const { showShipDocForm, closeShipDocForm, newShipDoc, setNewShipDoc, handleShipDocUpload, handleAddShipDoc } = useApp();
-  const modalRef = useFocusTrap(showShipDocForm);
+  const { showShipDocForm, closeShipDocForm, newShipDoc, setNewShipDoc, handleShipDocUpload, handleAddShipDoc } = useShips();
+  const modalRef = React.useRef(null);
   
   if (!showShipDocForm) return null;
 

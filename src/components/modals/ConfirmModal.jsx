@@ -1,9 +1,8 @@
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 const ConfirmModal = React.memo(function ConfirmModal({ isOpen, title, message, onConfirm, onCancel, confirmText, cancelText, isAlert }) {
-  const modalRef = useFocusTrap(isOpen);
+  const modalRef = React.useRef(null);
   if (!isOpen) return null;
 
   return (

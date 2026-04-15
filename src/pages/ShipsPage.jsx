@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp, SHIP_STATUS_OPTIONS } from '../context/AppContext';
+import { SHIP_STATUS_OPTIONS, useRole, useShips, useUsers } from '../context/AppContextRuntime';
 import {
   Anchor, PlusCircle, Users, ShieldAlert, Ship, ChevronDown, ImageIcon,
   Navigation, Package, Weight, CalendarClock, UserMinus, UserPlus, Trash2, FilePlus, FileText, Download
@@ -53,13 +53,15 @@ function usesSplitVoyageRoute(status) {
 
 const ShipsPage = React.memo(function ShipsPage() {
   const {
-    isAdmin, shipsData, activeShipId, setActiveShipId, activeShip,
+    shipsData, activeShipId, setActiveShipId, activeShip,
     setShowShipForm, showShipForm, shipDetailTab, setShipDetailTab, scheduleMonth, setScheduleMonth,
     isEditingShipInfo, setIsEditingShipInfo, editShipInfoData, setEditShipInfoData,
     updateActiveShip, handleTogglePersonnel, handleAddShipCp, handleShipPhotoUpdate,
     handleChangeSchedule, handleDownloadShipDoc, openShipDocForm, closeShipDocForm, showShipDocForm, newShipCp, setNewShipCp,
-    usersData, handleDeleteShip
-  } = useApp();
+    handleDeleteShip,
+  } = useShips();
+  const { usersData } = useUsers();
+  const { isAdmin } = useRole();
 
   if (!isAdmin) return null;
 

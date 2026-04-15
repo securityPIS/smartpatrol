@@ -1903,24 +1903,22 @@ export function AppProvider({ children }) {
 
   const assignedShipForCurrentUser = useMemo(() => {
     if (!currentUserRecord) return null;
-    if (currentUserRole === ACCESS_ROLES.ADMIN) return null;
     return shipsData.find((ship) => (
       ship.name === currentUserRecord.shipAssigned
       && Array.isArray(ship.personnel)
       && ship.personnel.includes(currentUserRecord.id)
       && currentUserRecord.status === 'active'
     )) || null;
-  }, [currentUserRecord, currentUserRole, shipsData]);
+  }, [currentUserRecord, shipsData]);
   const operationalShip = useMemo(() => {
     if (shipsData.length === 0) return null;
-    if (isAdmin) return null;
     if (isPetugas) return assignedShipForCurrentUser;
     if (currentUserRecord?.shipAssigned) {
       return shipsData.find(ship => ship.name === currentUserRecord.shipAssigned) || assignedShipForCurrentUser || shipsData[0];
     }
     return assignedShipForCurrentUser || shipsData[0];
-  }, [assignedShipForCurrentUser, currentUserRecord?.shipAssigned, isAdmin, isPetugas, shipsData]);
-  const operationalShipName = operationalShip?.name || (isPetugas ? null : isAdmin ? null : currentUserRecord?.shipAssigned || shipsData[0]?.name || null);
+  }, [assignedShipForCurrentUser, currentUserRecord?.shipAssigned, isPetugas, shipsData]);
+  const operationalShipName = operationalShip?.name || (isPetugas ? null : currentUserRecord?.shipAssigned || shipsData[0]?.name || null);
   const checkpoints = useMemo(() => {
     if (!operationalShip?.id) return [];
     return checkpointsByShip[operationalShip.id] || [];
@@ -1951,7 +1949,7 @@ export function AppProvider({ children }) {
   const activePatrolId = useMemo(() => Object.keys(activeForms)[0], [activeForms]);
   const activePatrolState = useMemo(() => activePatrolId ? activeForms[activePatrolId] : null, [activeForms, activePatrolId]);
   const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => String(c.id) === String(activePatrolId)) : null, [activePatrolId, checkpoints]);
-  const canPatrolCurrentShip = Boolean(currentUserRecord && operationalShip && (isPic || (isPetugas && assignedShipForCurrentUser?.id === operationalShip.id)));
+  const canPatrolCurrentShip = Boolean(currentUserRecord && operationalShip && (isAdmin || isPic || (isPetugas && assignedShipForCurrentUser?.id === operationalShip.id)));
   const canAddTemporaryPatrolNode = Boolean(isPetugas && canPatrolCurrentShip && operationalShip && !selectedHistoryEntry);
   const shouldForcePatrolCameraCapture = isMobilePatrolViewport();
 

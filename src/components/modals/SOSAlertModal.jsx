@@ -1,10 +1,12 @@
 import React, { useEffect } from 'react';
 import { Siren, MapPin, Map } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
+import { useRole, useSOS, useUI } from '../../context/AppContextRuntime';
 import { startSOSAlarm, stopSOSAlarm } from '../../utils/sosAudio';
 
 export default function SOSAlertModal() {
-  const { activeSOSAlert, handleSOSConfirm, currentUserId, setCurrentPage } = useApp();
+  const { activeSOSAlert, handleSOSConfirm } = useSOS();
+  const { currentUserId } = useRole();
+  const { setCurrentPage } = useUI();
 
   const isConfirmedByMe = currentUserId && activeSOSAlert?.confirmedBy?.includes(currentUserId);
 

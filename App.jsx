@@ -1,31 +1,88 @@
-import React, { Suspense, lazy } from 'react';
-import { AppProvider, useApp } from './src/context/AppContext';
+import React, { lazy, Suspense } from 'react';
+import {
+  AppProvider,
+  useAuth,
+  useIncidents,
+  usePatrol,
+  useReports,
+  useRole,
+  useShips,
+  useSOS,
+  useUI,
+  useUsers,
+} from './src/context/AppContextRuntime';
 import Header from './src/components/Header';
 import BottomNav from './src/components/BottomNav';
+import SideNav from './src/components/SideNav';
+
+// LoginPage stays eager and is always the first screen rendered on cold load.
 import LoginPage from './src/pages/LoginPage';
 import PatrolPage from './src/pages/PatrolPage';
 import IncidentsPage from './src/pages/IncidentsPage';
-import LoadingSkeleton from './src/components/LoadingSkeleton';
+import HistoryPage from './src/pages/HistoryPage';
+import NotificationsPage from './src/pages/NotificationsPage';
+import UsersPage from './src/pages/UsersPage';
+import ShipsPage from './src/pages/ShipsPage';
+import DailyReportPage from './src/pages/DailyReportPage';
 
-const HistoryPage = lazy(() => import('./src/pages/HistoryPage'));
-const NotificationsPage = lazy(() => import('./src/pages/NotificationsPage'));
-const UsersPage = lazy(() => import('./src/pages/UsersPage'));
-const ShipsPage = lazy(() => import('./src/pages/ShipsPage'));
+// Modals: lazy-loaded and only mounted when visible.
+const PatrolCameraModal = lazy(() => import('./src/components/modals/PatrolCameraModal'));
+const PatrolFormModal = lazy(() => import('./src/components/modals/PatrolFormModal'));
+const IncidentFormModal = lazy(() => import('./src/components/modals/IncidentFormModal'));
+const IncidentDetailModal = lazy(() => import('./src/components/modals/IncidentDetailModal'));
+const AssignDueDatePopup = lazy(() => import('./src/components/modals/AssignDueDatePopup'));
+const SOSAlertModal = lazy(() => import('./src/components/modals/SOSAlertModal'));
+const ShipFormModal = lazy(() => import('./src/components/modals/FormModals').then(module => ({ default: module.ShipFormModal })));
+const ShipDocumentFormModal = lazy(() => import('./src/components/modals/FormModals').then(module => ({ default: module.ShipDocumentFormModal })));
+const UserFormModal = lazy(() => import('./src/components/modals/FormModals').then(module => ({ default: module.UserFormModal })));
+const UserDetailModal = lazy(() => import('./src/components/modals/DetailModals').then(module => ({ default: module.UserDetailModal })));
+const ReportDetailModal = lazy(() => import('./src/components/modals/DetailModals').then(module => ({ default: module.ReportDetailModal })));
+const PhotoPreviewModal = lazy(() => import('./src/components/modals/DetailModals').then(module => ({ default: module.PhotoPreviewModal })));
+const ConfirmModal = lazy(() => import('./src/components/modals/ConfirmModal'));
 
-import PatrolFormModal from './src/components/modals/PatrolFormModal';
-import PatrolCameraModal from './src/components/modals/PatrolCameraModal';
-import IncidentFormModal from './src/components/modals/IncidentFormModal';
-import IncidentDetailModal from './src/components/modals/IncidentDetailModal';
-import { ShipDocumentFormModal, ShipFormModal, UserFormModal } from './src/components/modals/FormModals';
-import { UserDetailModal, ReportDetailModal, PhotoPreviewModal } from './src/components/modals/DetailModals';
-import ConfirmModal from './src/components/modals/ConfirmModal';
-import AssignDueDatePopup from './src/components/modals/AssignDueDatePopup';
-import SOSAlertModal from './src/components/modals/SOSAlertModal';
+class PageErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
-import SideNav from './src/components/SideNav';
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error('Page render failed', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4">
+          <div className="rounded-[1.8rem] border border-cyan-800/50 bg-[#0b1229] p-6 text-cyan-50 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">SmartPatrol</p>
+            <h2 className="mt-3 text-2xl font-black text-white">Halaman Sedang Dipulihkan</h2>
+            <p className="mt-3 text-sm leading-relaxed text-cyan-200/75">
+              Tampilan utama sempat gagal dimuat, tetapi aplikasi masih aktif. Refresh biasa sekarang seharusnya sudah lebih aman.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 function AppShell() {
-  const { sessionUserId, currentPage, isAdmin, theme, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, confirmDialog, setConfirmDialog } = useApp();
+  const { sessionUserId } = useAuth();
+  const { currentPage, theme, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, confirmDialog, setConfirmDialog } = useUI();
+  const { isAdmin } = useRole();
+  const { pendingPatrolCameraCapture, activePatrolItem } = usePatrol();
+  const { showIncidentModal, selectedIncident } = useIncidents();
+  const { showShipForm, showShipDocForm, showAssignPopup } = useShips();
+  const { showUserForm, selectedUser } = useUsers();
+  const { selectedReportDetail, previewPhoto } = useReports();
+  const { activeSOSAlert } = useSOS();
 
   if (!sessionUserId) return <LoginPage />;
 
@@ -35,52 +92,60 @@ function AppShell() {
     <div
       style={{ fontFamily: '"Chakra Petch", sans-serif' }}
       className={`w-full max-w-[1280px] mx-auto min-h-screen bg-[#070b19] text-cyan-50 lg:border-x lg:border-cyan-900/50 lg:shadow-[0_0_60px_rgba(6,182,212,0.15)] relative flex flex-col lg:flex-row lg:h-screen lg:overflow-hidden ${themeClass}`}
-      onClick={() => { if (showSettingsDropdown) setShowSettingsDropdown(false); if (showNotificationsDropdown) setShowNotificationsDropdown(false); }}
+      onClick={() => {
+        if (showSettingsDropdown) setShowSettingsDropdown(false);
+        if (showNotificationsDropdown) setShowNotificationsDropdown(false);
+      }}
     >
-      {/* SideNav for Desktop */}
       <SideNav />
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         <Header />
 
         <main className="flex-1 overflow-y-auto pb-24 lg:pb-0 relative scrollbar-thin scrollbar-thumb-cyan-900/50">
-          <Suspense fallback={<LoadingSkeleton />}>
+          <PageErrorBoundary>
             {currentPage === 'home' && <PatrolPage />}
             {currentPage === 'incidents' && <IncidentsPage />}
             {currentPage === 'history' && <HistoryPage />}
             {currentPage === 'notifications' && <NotificationsPage />}
-            {currentPage === 'users' && isAdmin && <UsersPage />}
-            {currentPage === 'ships' && isAdmin && <ShipsPage />}
-          </Suspense>
+            {currentPage === 'daily-report' && (isAdmin ? <DailyReportPage /> : <PatrolPage />)}
+            {currentPage === 'users' && (isAdmin ? <UsersPage /> : <PatrolPage />)}
+            {currentPage === 'ships' && (isAdmin ? <ShipsPage /> : <PatrolPage />)}
+            {!['home', 'incidents', 'history', 'notifications', 'daily-report', 'users', 'ships'].includes(currentPage) && (
+              isAdmin ? <DailyReportPage /> : <PatrolPage />
+            )}
+          </PageErrorBoundary>
         </main>
 
         <BottomNav />
       </div>
 
-      {/* Modals - Hidden on SM via component internal logic or visibility classes */}
-      <PatrolCameraModal />
-      <PatrolFormModal />
-      <IncidentFormModal />
-      <IncidentDetailModal />
-      <ShipFormModal />
-      <ShipDocumentFormModal />
-      <UserFormModal />
-      <UserDetailModal />
-      <ReportDetailModal />
-      <PhotoPreviewModal />
-      <ConfirmModal 
-        isOpen={!!confirmDialog} 
-        title={confirmDialog?.title} 
-        message={confirmDialog?.message} 
-        onConfirm={() => confirmDialog?.onConfirm?.()} 
-        onCancel={() => setConfirmDialog(null)} 
-        confirmText={confirmDialog?.confirmText}
-        cancelText={confirmDialog?.cancelText}
-        isAlert={confirmDialog?.isAlert}
-      />
-      <AssignDueDatePopup />
-      <SOSAlertModal />
+      <Suspense fallback={null}>
+        {pendingPatrolCameraCapture && <PatrolCameraModal />}
+        {activePatrolItem && <PatrolFormModal />}
+        {showIncidentModal && <IncidentFormModal />}
+        {selectedIncident && <IncidentDetailModal />}
+        {showShipForm && <ShipFormModal />}
+        {showShipDocForm && <ShipDocumentFormModal />}
+        {showUserForm && <UserFormModal />}
+        {selectedUser && <UserDetailModal />}
+        {selectedReportDetail && <ReportDetailModal />}
+        {previewPhoto && <PhotoPreviewModal />}
+        {confirmDialog && (
+          <ConfirmModal
+            isOpen={!!confirmDialog}
+            title={confirmDialog?.title}
+            message={confirmDialog?.message}
+            onConfirm={() => confirmDialog?.onConfirm?.()}
+            onCancel={() => setConfirmDialog(null)}
+            confirmText={confirmDialog?.confirmText}
+            cancelText={confirmDialog?.cancelText}
+            isAlert={confirmDialog?.isAlert}
+          />
+        )}
+        {showAssignPopup && <AssignDueDatePopup />}
+        {activeSOSAlert && <SOSAlertModal />}
+      </Suspense>
     </div>
   );
 }

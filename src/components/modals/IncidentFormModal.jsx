@@ -1,11 +1,10 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { useIncidents } from '../../context/AppContextRuntime';
 import IncidentFormView from '../views/IncidentFormView';
 
 export default function IncidentFormModal() {
-  const { showIncidentModal } = useApp();
-  const modalRef = useFocusTrap(showIncidentModal);
+  const { showIncidentModal } = useIncidents();
+  const modalRef = React.useRef(null);
   if (!showIncidentModal) return null;
 
   return (

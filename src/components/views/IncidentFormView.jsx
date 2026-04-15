@@ -1,14 +1,15 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useIncidents, usePatrol } from '../../context/AppContextRuntime';
 import { ChevronDown, Camera, X, MapPin, Save } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function IncidentFormView({ isInline = false }) {
-  const { 
-    showIncidentModal, incidentForm, setIncidentForm, 
-    incidentLocationOptions, closeIncidentModal, 
-    handleSubmitIncident, handlePhotoUpload 
-  } = useApp();
+  const {
+    showIncidentModal, incidentForm, setIncidentForm,
+    incidentLocationOptions, closeIncidentModal,
+    handleSubmitIncident,
+  } = useIncidents();
+  const { handlePhotoUpload } = usePatrol();
 
   if (!showIncidentModal) {
     if (isInline) return (

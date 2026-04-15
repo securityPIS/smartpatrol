@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp, ACCESS_ROLES } from '../../context/AppContext';
+import { ACCESS_ROLES, useHistory, usePatrol, useShips, useUI, useUsers, useWeather } from '../../context/AppContextRuntime';
 import { 
   Ship, MapPin, ExternalLink, CalendarDays, Thermometer, Wind, User, 
   CheckCircle2, AlertTriangle, CircleOff, Check, ArrowRight
@@ -65,11 +65,12 @@ function getLatestCompletedCheckpoint(checkpoints = []) {
 }
 
 export default function HistoryDetailView({ isInline = false, entryData = null, onSummaryCardClick = null }) {
-  const { 
-    selectedHistoryEntry, operationalShip, operationalShipName,
-    weatherInfo, weatherLoading, getWeatherDetail, 
-    checkpoints, usersData, setCurrentPage, setPatrolTab
-  } = useApp();
+  const { selectedHistoryEntry } = useHistory();
+  const { operationalShip, operationalShipName } = useShips();
+  const { weatherInfo, weatherLoading, getWeatherDetail } = useWeather();
+  const { checkpoints, setPatrolTab } = usePatrol();
+  const { usersData } = useUsers();
+  const { setCurrentPage } = useUI();
 
   const entry = entryData || selectedHistoryEntry;
 
@@ -179,7 +180,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
               <div className="flex items-center gap-4">
                 <div className="flex flex-col items-end">
                   <span className="text-[10px] text-cyan-500 flex items-center gap-1 uppercase tracking-wider"><Thermometer className="w-3 h-3 text-rose-400" /> Temp</span>
-                  <span className="text-sm font-bold text-cyan-50">{displayWeather.temperature}°C</span>
+                  <span className="text-sm font-bold text-cyan-50">{displayWeather.temperature}Â°C</span>
                 </div>
                 <div className="w-px h-6 bg-cyan-800"></div>
                 <div className="flex flex-col items-start">

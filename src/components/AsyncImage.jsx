@@ -1,61 +1,75 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { loadImageFromDB } from '../utils/imageStore';
 
-export default function AsyncImage({ src, alt, className, fallbackLayout }) {
-  const [dataUrl, setDataUrl] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default class AsyncImage extends React.PureComponent {
+  constructor(props) {
+    super(props);
+    this.state = {
+      dataUrl: null,
+      loading: true,
+    };
+    this._isMounted = false;
+  }
 
-  useEffect(() => {
-    let isMounted = true;
-    
+  componentDidMount() {
+    this._isMounted = true;
+    this.resolveSource(this.props.src);
+  }
+
+  componentDidUpdate(previousProps) {
+    if (previousProps.src !== this.props.src) {
+      this.resolveSource(this.props.src);
+    }
+  }
+
+  componentWillUnmount() {
+    this._isMounted = false;
+  }
+
+  async resolveSource(src) {
+    if (!this._isMounted) return;
+
     if (!src) {
-      if (isMounted) {
-        setDataUrl(null);
-        setLoading(false);
-      }
+      this.setState({ dataUrl: null, loading: false });
       return;
     }
 
-    if (src.startsWith('idb://')) {
-      if (isMounted) setLoading(true);
-      loadImageFromDB(src).then((result) => {
-        if (isMounted) {
-          setDataUrl(result);
-          setLoading(false);
-        }
-      }).catch((err) => {
-        console.error("AsyncImage error:", err);
-        if (isMounted) {
-          setDataUrl(null);
-          setLoading(false);
-        }
-      });
-    } else {
-      // It's a normal URL or base64
-      if (isMounted) {
-        setDataUrl(src);
-        setLoading(false);
-      }
+    if (!src.startsWith('idb://')) {
+      this.setState({ dataUrl: src, loading: false });
+      return;
     }
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [src]);
 
-  if (loading) {
-    return (
-      <div className={`animate-pulse bg-cyan-900/30 ${className}`}>
-        {fallbackLayout}
-      </div>
-    );
+    this.setState({ loading: true });
+
+    try {
+      const result = await loadImageFromDB(src);
+      if (!this._isMounted) return;
+      this.setState({ dataUrl: result, loading: false });
+    } catch (error) {
+      console.error('AsyncImage error:', error);
+      if (!this._isMounted) return;
+      this.setState({ dataUrl: null, loading: false });
+    }
   }
 
-  if (!dataUrl) {
-    return fallbackLayout ? (
-      <div className={`${className}`}>{fallbackLayout}</div>
-    ) : null;
-  }
+  render() {
+    const { alt, className, fallbackLayout } = this.props;
+    const { dataUrl, loading } = this.state;
 
-  return <img src={dataUrl} alt={alt || ''} className={className} />;
+    if (loading) {
+      return (
+        <div className={`animate-pulse bg-cyan-900/30 ${className || ''}`}>
+          {fallbackLayout}
+        </div>
+      );
+    }
+
+    if (!dataUrl) {
+      return fallbackLayout ? (
+        <div className={className || ''}>{fallbackLayout}</div>
+      ) : null;
+    }
+
+    return <img src={dataUrl} alt={alt || ''} className={className} />;
+  }
 }

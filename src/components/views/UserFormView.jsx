@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { useUsers } from '../../context/AppContextRuntime';
 import { ChevronDown, Camera, UserPlus } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
@@ -14,7 +14,7 @@ export default function UserFormView({ isInline = false }) {
     clearUserManagementFeedback,
     handleSaveUser,
     handleUserPhotoUpload,
-  } = useApp();
+  } = useUsers();
 
   if (!showUserForm) {
     if (isInline) {

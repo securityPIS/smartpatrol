@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useRole, useUsers } from '../context/AppContextRuntime';
 import { Users, PlusCircle, User, Ship } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 
@@ -7,7 +7,8 @@ import UserFormView from '../components/views/UserFormView';
 import UserDetailView from '../components/views/UserDetailView';
 
 const UsersPage = React.memo(function UsersPage() {
-  const { usersData, setSelectedUser, selectedUser, setShowUserForm, showUserForm, clearUserManagementFeedback, isAdmin } = useApp();
+  const { usersData, setSelectedUser, selectedUser, setShowUserForm, showUserForm, clearUserManagementFeedback } = useUsers();
+  const { isAdmin } = useRole();
   if (!isAdmin) return null;
 
   const showRightPane = selectedUser || showUserForm;

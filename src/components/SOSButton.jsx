@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Siren } from 'lucide-react';
-import { useApp } from '../context/AppContext';
+import { useSOS } from '../context/AppContextRuntime';
 
 export default function SOSButton({ className = '' }) {
-  const { handleSOSTrigger } = useApp();
+  const { handleSOSTrigger } = useSOS();
   const [isConfirming, setIsConfirming] = useState(false);
 
   const handleClick = (e) => {

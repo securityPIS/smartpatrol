@@ -1,10 +1,10 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AppContextRuntime';
 import { Shield, Ship, Eye, EyeOff, Camera } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 
 export default function LoginPage() {
-  const { authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleAuthPhotoUpload } = useApp();
+  const { authMode, setAuthMode, authBusy, authError, authNotice, authForm, setAuthForm, handleLogin, handleRegister, handleAuthPhotoUpload } = useAuth();
 
   const [showPassword, setShowPassword] = React.useState(false);
 

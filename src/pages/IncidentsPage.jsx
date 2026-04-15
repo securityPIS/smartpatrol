@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useIncidents, useShips } from '../context/AppContextRuntime';
 import { AlertOctagon, PlusCircle, User, Search, Ship, CalendarDays, Filter, FilterX } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 
@@ -7,16 +7,8 @@ import IncidentDetailView from '../components/views/IncidentDetailView';
 import IncidentFormView from '../components/views/IncidentFormView';
 
 const IncidentsPage = React.memo(function IncidentsPage() {
-  const {
-    visibleIncidents,
-    operationalShipName,
-    openIncidentModal,
-    closeIncidentModal,
-    setSelectedIncident,
-    incidentMeta,
-    selectedIncident,
-    showIncidentModal,
-  } = useApp();
+  const { visibleIncidents, openIncidentModal, closeIncidentModal, setSelectedIncident, incidentMeta, selectedIncident, showIncidentModal } = useIncidents();
+  const { operationalShipName } = useShips();
   const [statusFilter, setStatusFilter] = React.useState('open');
   const [showFilters, setShowFilters] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');

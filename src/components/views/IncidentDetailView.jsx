@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext';
+import { useIncidents, useReports, useRole } from '../../context/AppContextRuntime';
 import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, Trash2, Images } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function IncidentDetailView({ isInline = false }) {
-  const { 
-    selectedIncident, setSelectedIncident, incidentMeta, canManageIncident, 
-    canCloseIncident, handleAddProgress, handleCloseIncident, handleDeleteIncident, isAdmin, newProgress, 
-    setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto, handleAddIncidentDocumentation, setPreviewPhoto 
-  } = useApp();
+  const {
+    selectedIncident, setSelectedIncident, incidentMeta, canManageIncident,
+    canCloseIncident, handleAddProgress, handleCloseIncident, handleDeleteIncident, newProgress,
+    setNewProgress, handlePhotoProgress, handleUpdateIncidentPhoto, handleAddIncidentDocumentation,
+  } = useIncidents();
+  const { isAdmin } = useRole();
+  const { setPreviewPhoto } = useReports();
   
   const [activeTab, setActiveTab] = useState('update');
   const [showUpdateForm, setShowUpdateForm] = useState(false);
@@ -99,7 +101,7 @@ export default function IncidentDetailView({ isInline = false }) {
              </div>
              <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50">
                <p className="text-[10px] text-cyan-600 font-bold mb-2 uppercase tracking-widest">WHEN : Waktu Kejadian</p>
-               <p className="text-sm font-bold text-cyan-50">{selectedIncident.date} · {selectedIncident.time}</p>
+               <p className="text-sm font-bold text-cyan-50">{selectedIncident.date} Â· {selectedIncident.time}</p>
              </div>
              <div className="bg-yellow-950/10 p-4 rounded-xl border border-yellow-900/20">
                <p className="text-[10px] text-yellow-700 font-bold mb-2 uppercase tracking-widest">WHY : Penyebab</p>
@@ -168,7 +170,7 @@ export default function IncidentDetailView({ isInline = false }) {
                  {incidentMeta[selectedIncident.id]?.progress?.map((prog, idx) => (
                    <div key={idx} className="relative">
                      <div className="absolute -left-[25px] top-0 w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] border-2 border-[#070b19]"></div>
-                     <p className="text-[10px] font-mono text-cyan-500 mb-1.5">{prog.date} {prog.time} · <span className="text-emerald-400 font-bold">{prog.author}</span></p>
+                     <p className="text-[10px] font-mono text-cyan-500 mb-1.5">{prog.date} {prog.time} Â· <span className="text-emerald-400 font-bold">{prog.author}</span></p>
                      <div className="flex gap-3 items-start bg-[#0b1229] p-3.5 rounded-xl border border-cyan-900/50 shadow-sm hover:border-cyan-700 transition-colors">
                        <p className="text-sm text-cyan-50 flex-1 whitespace-pre-wrap leading-relaxed">{prog.comment}</p>
                        {prog.photoUrl && <div className="w-20 h-20 rounded-lg overflow-hidden border border-cyan-800 flex-shrink-0 cursor-pointer hover:opacity-80 transition-all relative group" onClick={() => setPreviewPhoto({url: prog.photoUrl, author: prog.author, time: `${prog.date} ${prog.time}`})}><AsyncImage src={prog.photoUrl} className="w-full h-full object-cover" alt="Progress"/></div>}

@@ -1,10 +1,12 @@
 import React from 'react';
-import { useApp, ACCESS_ROLES } from '../../context/AppContext';
+import { ACCESS_ROLES, useRole, useUI, useUsers } from '../../context/AppContextRuntime';
 import { ChevronDown, Trash2, Camera, Save, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function UserDetailView({ isInline = false }) {
-  const { selectedUser, setSelectedUser, userFormError, userFormNotice, clearUserManagementFeedback, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload, isAdmin, setConfirmDialog } = useApp();
+  const { selectedUser, setSelectedUser, userFormError, userFormNotice, clearUserManagementFeedback, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload } = useUsers();
+  const { isAdmin } = useRole();
+  const { setConfirmDialog } = useUI();
   const isFirebaseAccount = selectedUser?.authProvider === 'firebase' || Boolean(selectedUser?.firebaseUid);
   const canEditRole = isAdmin;
   const canDeleteUser = isAdmin && selectedUser?.role !== ACCESS_ROLES.ADMIN;

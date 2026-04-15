@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp, SHIP_STATUS_OPTIONS } from '../../context/AppContext';
+import { SHIP_STATUS_OPTIONS, useShips } from '../../context/AppContextRuntime';
 import { ChevronDown, Camera, Trash2, Save, Plus, Map, Package, Weight, Hash } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
@@ -8,12 +8,12 @@ function usesSplitVoyageRoute(status) {
 }
 
 export default function ShipFormView({ isInline = false }) {
-  const { 
-    showShipForm, setShowShipForm, shipFormData, setShipFormData, 
-    newCheckpoint, setNewCheckpoint, handleSaveShip, 
-    handleAddCheckpointToForm, handleRemoveCheckpointFromForm, 
-    handleShipFormPhotoUpload 
-  } = useApp();
+  const {
+    showShipForm, setShowShipForm, shipFormData, setShipFormData,
+    newCheckpoint, setNewCheckpoint, handleSaveShip,
+    handleAddCheckpointToForm, handleRemoveCheckpointFromForm,
+    handleShipFormPhotoUpload,
+  } = useShips();
 
   if (!showShipForm) {
     if (isInline) return (

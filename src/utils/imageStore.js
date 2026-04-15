@@ -63,3 +63,39 @@ export async function loadImageFromDB(key) {
     return null;
   }
 }
+
+export async function deleteOldImagesFromDB(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAllKeys();
+    
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => {
+        const keys = request.result || [];
+        const now = Date.now();
+        let deletedCount = 0;
+        
+        keys.forEach(key => {
+          // Format: idb://img-1234567890123-abcde
+          const match = key.match(/img-(\d+)-/);
+          if (match && match[1]) {
+            const timestamp = parseInt(match[1], 10);
+            if (now - timestamp > maxAgeMs) {
+              store.delete(key);
+              deletedCount++;
+            }
+          }
+        });
+        
+        tx.oncomplete = () => resolve(deletedCount);
+        tx.onerror = () => reject(tx.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error('Failed to cleanup IndexedDB:', error);
+    return 0;
+  }
+}

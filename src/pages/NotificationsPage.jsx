@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useNotifications, useRole, useUI } from '../context/AppContextRuntime';
 import { ArrowLeft, Bell, CheckCheck } from 'lucide-react';
 
 const APP_TIME_ZONE = 'Asia/Jakarta';
@@ -14,14 +14,9 @@ function getNotificationToneClass(type) {
 }
 
 const NotificationsPage = React.memo(function NotificationsPage() {
-  const {
-    currentUserRecord,
-    visibleNotifications,
-    unreadNotificationCount,
-    markAllNotificationsAsRead,
-    handleNotificationClick,
-    closeNotificationsPage,
-  } = useApp();
+  const { currentUserRecord } = useRole();
+  const { visibleNotifications, unreadNotificationCount, markAllNotificationsAsRead, handleNotificationClick } = useNotifications();
+  const { closeNotificationsPage } = useUI();
 
   return (
     <div className="p-4 space-y-4 animate-in fade-in">

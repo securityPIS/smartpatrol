@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp, ACCESS_ROLES } from '../context/AppContext';
+import { ACCESS_ROLES, useHistory, useIncidents, usePatrol, useReports, useShips, useWeather } from '../context/AppContextRuntime';
 import {
   CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft, Plus,
   CalendarDays, User, Thermometer, Wind, FileText, CircleOff, TimerReset,
@@ -86,11 +86,14 @@ const PatrolPage = React.memo(function PatrolPage() {
     patrolTab, setPatrolTab, searchQuery, setSearchQuery, filteredCheckpoints,
     handleActionClick, handleOpenPatrolResult, handleAddCustomPatrolNode,
     completedCount, totalCount, progressPercentage, newCustomNode, setNewCustomNode,
-    operationalShip, operationalShipName, checkpoints, activeShiftGuardSnapshot,
-    weatherInfo, weatherLoading, getWeatherDetail, setPreviewPhoto,
-    currentShiftMeta, currentShiftSchedule, selectedHistoryEntry, closeHistoryEntry, canPatrolCurrentShip, canAddTemporaryPatrolNode,
-    activeForms, selectedIncident, selectedReportDetail
-  } = useApp();
+    checkpoints, activeShiftGuardSnapshot, currentShiftMeta, currentShiftSchedule, canPatrolCurrentShip, canAddTemporaryPatrolNode,
+    activeForms,
+  } = usePatrol();
+  const { operationalShip, operationalShipName } = useShips();
+  const { weatherInfo, weatherLoading, getWeatherDetail } = useWeather();
+  const { setPreviewPhoto, selectedReportDetail } = useReports();
+  const { selectedHistoryEntry, closeHistoryEntry } = useHistory();
+  const { selectedIncident } = useIncidents();
   const [countdownNow, setCountdownNow] = React.useState(() => Date.now());
 
   const isHistoryMode = Boolean(selectedHistoryEntry);

@@ -1,16 +1,12 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
+import { usePatrol, useReports, useWeather } from '../../context/AppContextRuntime';
 import { ChevronDown, Trash2, AlertTriangle, CheckCircle2, MapPin, ExternalLink, Thermometer, Wind } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function ReportDetailView({ isInline = false }) {
-  const {
-    selectedReportDetail,
-    setSelectedReportDetail,
-    setPreviewPhoto,
-    handleDeleteReport,
-    getWeatherDetail,
-  } = useApp();
+  const { selectedReportDetail, setSelectedReportDetail, setPreviewPhoto } = useReports();
+  const { handleDeleteReport } = usePatrol();
+  const { getWeatherDetail } = useWeather();
 
   if (!selectedReportDetail) {
     if (isInline) return (
@@ -162,7 +158,7 @@ export default function ReportDetailView({ isInline = false }) {
                          <Thermometer className="w-3 h-3 text-rose-400" />
                          Temp
                        </p>
-                       <p className="text-sm font-bold text-cyan-50">{weatherSnapshot.temperature}°C</p>
+                       <p className="text-sm font-bold text-cyan-50">{weatherSnapshot.temperature}Â°C</p>
                      </div>
                      <div className="w-px h-7 bg-cyan-800" />
                      <div>

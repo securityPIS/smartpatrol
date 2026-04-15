@@ -1,11 +1,10 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { usePatrol } from '../../context/AppContextRuntime';
 import PatrolFormView from '../views/PatrolFormView';
 
 export default function PatrolFormModal() {
-  const { activePatrolItem, activePatrolState } = useApp();
-  const modalRef = useFocusTrap(!!activePatrolItem && !!activePatrolState);
+  const { activePatrolItem, activePatrolState } = usePatrol();
+  const modalRef = React.useRef(null);
   
   if (!activePatrolItem || !activePatrolState) return null;
 

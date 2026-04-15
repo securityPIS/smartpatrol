@@ -1,15 +1,14 @@
 import React from 'react';
 import { Camera, CameraOff, RefreshCcw, X } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { usePatrol } from '../../context/AppContextRuntime';
 
 export default function PatrolCameraModal() {
   const {
     pendingPatrolCameraCapture,
     closePatrolCameraCapture,
     handlePatrolCameraCapture,
-  } = useApp();
-  const modalRef = useFocusTrap(Boolean(pendingPatrolCameraCapture));
+  } = usePatrol();
+  const modalRef = React.useRef(null);
   const videoRef = React.useRef(null);
   const streamRef = React.useRef(null);
   const [cameraError, setCameraError] = React.useState('');
