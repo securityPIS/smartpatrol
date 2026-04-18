@@ -8,8 +8,12 @@ import {
 import AsyncImage from '../components/AsyncImage';
 import HistoryDetailView from '../components/views/HistoryDetailView';
 
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function getPatrolSummary(checkpoints) {
-  return checkpoints.reduce((summary, checkpoint) => {
+  return ensureArray(checkpoints).reduce((summary, checkpoint) => {
     summary.total += 1;
     if (checkpoint.status === 'completed') {
       summary.completed += 1;
@@ -132,7 +136,10 @@ const PatrolPage = React.memo(function PatrolPage() {
   );
 
   const isHistoryMode = Boolean(selectedHistoryEntry);
-  const activeCheckpoints = isHistoryMode ? (selectedHistoryEntry?.checkpoints || []) : checkpoints;
+  const activeCheckpoints = React.useMemo(
+    () => (isHistoryMode ? ensureArray(selectedHistoryEntry?.checkpoints) : ensureArray(checkpoints)),
+    [checkpoints, isHistoryMode, selectedHistoryEntry?.checkpoints],
+  );
   const patrolSummary = React.useMemo(() => getPatrolSummary(activeCheckpoints), [activeCheckpoints]);
   const timeStatusMeta = React.useMemo(
     () => getTimeStatusMeta(trustedTime.tone),
@@ -140,8 +147,9 @@ const PatrolPage = React.memo(function PatrolPage() {
   );
   
   // Check if any form or detail is active
-  const hasActiveForm = Object.keys(activeForms).length > 0;
+  const hasActiveForm = Object.keys(activeForms && typeof activeForms === 'object' ? activeForms : {}).length > 0;
   const showRightPane = hasActiveForm || (selectedIncident && selectedIncident.isPatrol) || selectedReportDetail;
+  const visibleCheckpoints = React.useMemo(() => ensureArray(filteredCheckpoints), [filteredCheckpoints]);
 
   const summaryCards = React.useMemo(() => ([
     { type: 'aman', count: patrolSummary.aman },
@@ -163,9 +171,11 @@ const PatrolPage = React.memo(function PatrolPage() {
   const displayShiftTime = isHistoryMode ? selectedHistoryEntry?.time : currentShiftMeta?.timeRange;
   const displayWeather = isHistoryMode ? selectedHistoryEntry?.weatherSnapshot : weatherInfo;
   const displayWeatherLoading = isHistoryMode ? false : weatherLoading;
-  const displayCrew = isHistoryMode
-    ? (selectedHistoryEntry?.crewSnapshot || []).filter(user => user.role === ACCESS_ROLES.PETUGAS)
-    : activeShiftGuardSnapshot;
+  const displayCrew = React.useMemo(() => (
+    isHistoryMode
+      ? ensureArray(selectedHistoryEntry?.crewSnapshot).filter(user => user?.role === ACCESS_ROLES.PETUGAS)
+      : ensureArray(activeShiftGuardSnapshot)
+  ), [activeShiftGuardSnapshot, isHistoryMode, selectedHistoryEntry?.crewSnapshot]);
   const infoEntryData = React.useMemo(() => (
     isHistoryMode
       ? selectedHistoryEntry
@@ -222,6 +232,9 @@ const PatrolPage = React.memo(function PatrolPage() {
     const isTemuan = item.resultType === 'temuan';
     const isMissed = item.status === 'missed' || item.resultType === 'missed';
     const meta = getSummaryCardMeta(isMissed ? 'missed' : isTemuan ? 'temuan' : 'aman');
+    const completedByLabel = typeof item?.completedBy === 'string'
+      ? item.completedBy.split(' ')[0]
+      : '-';
 
     return (
       <div
@@ -241,7 +254,7 @@ const PatrolPage = React.memo(function PatrolPage() {
           <div className="flex items-center gap-1.5 text-[11px] text-cyan-200/60 mt-1">
             {meta.itemIcon}
             <span className="truncate">
-              {isMissed ? `Tidak dipatroli - ${item.time || displayShiftTime || '-'}` : `oleh ${item.completedBy?.split(' ')[0] || '-'} - ${item.time || '-'}`}
+              {isMissed ? `Tidak dipatroli - ${item.time || displayShiftTime || '-'}` : `oleh ${completedByLabel} - ${item.time || '-'}`}
             </span>
           </div>
         </div>
@@ -368,12 +381,12 @@ const PatrolPage = React.memo(function PatrolPage() {
                 </div>
 
                 <div className="space-y-3 flex-1">
-                  {filteredCheckpoints.length === 0 && (
+                  {visibleCheckpoints.length === 0 && (
                     <p className="text-xs text-cyan-700 italic border border-dashed border-cyan-900/50 p-4 rounded-xl text-center">
                       {searchQuery ? `Titik patroli "${searchQuery}" tidak ditemukan.` : 'Belum ada titik patroli yang tersedia.'}
                     </p>
                   )}
-                  {filteredCheckpoints.map((item) => {
+                  {visibleCheckpoints.map((item) => {
                     if (item.status === 'completed') return renderSummaryListItem(item);
 
                     return (

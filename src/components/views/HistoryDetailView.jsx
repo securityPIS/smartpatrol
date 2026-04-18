@@ -7,6 +7,10 @@ import {
 import AsyncImage from '../AsyncImage';
 import { TimeAuditSummaryCard } from '../TimeAuditStatus';
 
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function createGuardNameKey(name) {
   return String(name || '').trim().toLowerCase();
 }
@@ -93,7 +97,21 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
   }
 
   // Derived values (Logic moved from PatrolPage)
-  const checkpointEntries = entry.checkpoints || checkpoints;
+  const checkpointEntries = React.useMemo(
+    () => ensureArray(entry?.checkpoints).length > 0 ? ensureArray(entry?.checkpoints) : ensureArray(checkpoints),
+    [checkpoints, entry?.checkpoints],
+  );
+  const safeSummary = React.useMemo(() => {
+    const entrySummary = entry?.summary;
+    if (entrySummary && typeof entrySummary === 'object') return entrySummary;
+    return {
+      aman: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'aman').length,
+      temuan: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'temuan').length,
+      missed: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'missed' || checkpoint?.resultType === 'missed').length,
+      completed: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed').length,
+      total: checkpointEntries.length,
+    };
+  }, [checkpointEntries, entry?.summary]);
   const latestCompletedCheckpoint = React.useMemo(
     () => getLatestCompletedCheckpoint(checkpointEntries),
     [checkpointEntries],
@@ -107,15 +125,22 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
   const displayMapLocation = latestCompletedCheckpoint?.gpsSnapshot
     || latestCompletedCheckpoint?.shipSnapshot
     || displayShip;
-  const displayWeather = latestCompletedCheckpoint?.weatherSnapshot || entry.weatherSnapshot || weatherInfo;
+  const displayWeather = (
+    latestCompletedCheckpoint?.weatherSnapshot
+    && typeof latestCompletedCheckpoint.weatherSnapshot === 'object'
+  )
+    ? latestCompletedCheckpoint.weatherSnapshot
+    : (entry?.weatherSnapshot && typeof entry.weatherSnapshot === 'object')
+      ? entry.weatherSnapshot
+      : (weatherInfo && typeof weatherInfo === 'object' ? weatherInfo : null);
   const displayWeatherLoading = isLiveEntry && !latestCompletedCheckpoint?.weatherSnapshot && !entry.weatherSnapshot && weatherLoading;
 
   const summaryCards = [
-    { type: 'aman', count: entry.summary?.aman || 0 },
-    { type: 'temuan', count: entry.issue || 0 },
-    { type: 'missed', count: entry.missed || 0 },
+    { type: 'aman', count: safeSummary.aman || 0 },
+    { type: 'temuan', count: safeSummary.temuan || entry.issue || 0 },
+    { type: 'missed', count: safeSummary.missed || entry.missed || 0 },
   ];
-  const completionPercentage = getCompletionPercentage(entry.summary);
+  const completionPercentage = getCompletionPercentage(safeSummary);
   const completedAuditRecords = React.useMemo(
     () => checkpointEntries.filter((checkpoint) => checkpoint.status === 'completed'),
     [checkpointEntries],
@@ -123,7 +148,9 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
 
   const displayCrew = React.useMemo(() => {
     const scoreMaps = buildGuardScoreMaps(checkpointEntries);
-    const baseCrew = entry.crewSnapshot || usersData.filter(u => u.shipAssigned === displayShipName && u.status === 'active');
+    const baseCrew = ensureArray(entry?.crewSnapshot).length > 0
+      ? ensureArray(entry?.crewSnapshot)
+      : ensureArray(usersData).filter(u => u.shipAssigned === displayShipName && u.status === 'active');
 
     return baseCrew
       .filter(user => user.role === ACCESS_ROLES.PETUGAS)
@@ -133,7 +160,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
           ? user.score
           : (scoreMaps.byId.get(user.id) || scoreMaps.byName.get(createGuardNameKey(user.name)) || 0),
       }));
-  }, [checkpointEntries, displayShipName, entry.crewSnapshot, usersData]);
+  }, [checkpointEntries, displayShipName, entry?.crewSnapshot, usersData]);
 
   const getSummaryCardMeta = (type) => {
     switch(type) {
@@ -219,7 +246,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
             <div className="text-right bg-[#0b1229] px-3 py-2 rounded-xl border border-cyan-800/50 shadow-sm">
               <p className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold">Selesai</p>
               <p className="text-lg font-black text-cyan-50">{completionPercentage}%</p>
-              <p className="text-[10px] text-cyan-600">{entry.summary?.completed || 0}/{entry.summary?.total || 0} titik</p>
+              <p className="text-[10px] text-cyan-600">{safeSummary.completed || 0}/{safeSummary.total || 0} titik</p>
             </div>
           </div>
 

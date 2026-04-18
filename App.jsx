@@ -43,15 +43,24 @@ const ConfirmModal = lazy(() => import('./src/components/modals/ConfirmModal'));
 class PageErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, errorMessage: '' };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return {
+      hasError: true,
+      errorMessage: error?.message || 'Render halaman gagal',
+    };
   }
 
   componentDidCatch(error) {
     console.error('Page render failed', error);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, errorMessage: '' });
+    }
   }
 
   render() {
@@ -62,8 +71,20 @@ class PageErrorBoundary extends React.Component {
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">SmartPatrol</p>
             <h2 className="mt-3 text-2xl font-black text-white">Halaman Sedang Dipulihkan</h2>
             <p className="mt-3 text-sm leading-relaxed text-cyan-200/75">
-              Tampilan utama sempat gagal dimuat, tetapi aplikasi masih aktif. Refresh biasa sekarang seharusnya sudah lebih aman.
+              Tampilan utama sempat gagal dimuat, tetapi aplikasi masih aktif. Coba muat ulang panel ini untuk mengambil state terbaru.
             </p>
+            {this.state.errorMessage ? (
+              <p className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-left text-xs text-rose-100/90">
+                {this.state.errorMessage}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => this.setState({ hasError: false, errorMessage: '' })}
+              className="mt-4 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-xs font-black uppercase tracking-widest text-cyan-200 hover:bg-cyan-500/20"
+            >
+              Coba Muat Ulang
+            </button>
           </div>
         </div>
       );
@@ -87,6 +108,14 @@ function AppShell() {
   if (!sessionUserId) return <LoginPage />;
 
   const themeClass = theme === 'light' ? 'pertamina-light' : '';
+  const pageRecoveryKey = [
+    currentPage,
+    selectedIncident?.id || '',
+    selectedReportDetail?.id || '',
+    activePatrolItem?.id || '',
+    showIncidentModal ? 'incident-open' : 'incident-closed',
+    pendingPatrolCameraCapture ? 'camera-open' : 'camera-closed',
+  ].join(':');
 
   return (
     <div
@@ -103,7 +132,7 @@ function AppShell() {
         <Header />
 
         <main className="flex-1 overflow-y-auto pb-24 lg:pb-0 relative scrollbar-thin scrollbar-thumb-cyan-900/50">
-          <PageErrorBoundary>
+          <PageErrorBoundary resetKey={pageRecoveryKey}>
             {currentPage === 'home' && <PatrolPage />}
             {currentPage === 'incidents' && <IncidentsPage />}
             {currentPage === 'history' && <HistoryPage />}
