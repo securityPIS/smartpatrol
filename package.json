@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "firebase:emulate": "firebase emulators:start --only hosting",
-    "firebase:deploy": "npm run build && firebase deploy --only hosting,firestore:rules",
+    "firebase:emulate": "firebase emulators:start --only hosting,functions",
+    "firebase:deploy": "npm run build && firebase deploy --only hosting,functions,firestore:rules",
     "firebase:deploy:storage": "firebase deploy --only storage"
   },
   "devDependencies": {

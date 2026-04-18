@@ -2,6 +2,7 @@ import React from 'react';
 import { usePatrol, useReports, useWeather } from '../../context/AppContextRuntime';
 import { ChevronDown, Trash2, AlertTriangle, CheckCircle2, MapPin, ExternalLink, Thermometer, Wind, Camera, Images } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
+import { TimeAuditRecordCard } from '../TimeAuditStatus';
 
 function getReportGalleryItems(reportDetail) {
   const items = [];
@@ -67,11 +68,14 @@ export default function ReportDetailView({ isInline = false }) {
   const gpsSourceLabel = gpsSnapshot?.source === 'device' ? 'GPS perangkat saat sync' : gpsSnapshot?.source === 'ship' ? 'Koordinat kapal saat sync' : 'Snapshot sync laporan';
   const galleryItems = React.useMemo(() => getReportGalleryItems(selectedReportDetail), [selectedReportDetail]);
   const canUploadGallery = selectedReportDetail.resultType === 'aman' && !isReadOnly;
+  const syncDateLabel = selectedReportDetail.date || '-';
+  const syncTimeLabel = selectedReportDetail.time || '-';
+  const syncDateTimeLabel = `${syncDateLabel} ${syncTimeLabel} WIB`;
 
   return (
     <div className={`flex flex-col h-full bg-[#070b19] ${isInline ? 'border-l border-cyan-900/50' : 'fixed inset-0 z-[100] sm:max-w-md sm:mx-auto sm:border-x sm:border-cyan-900/50'}`}>
       {selectedReportDetail.photoUrl ? (
-        <div className="w-full h-64 bg-[#0b1229] relative shrink-0 cursor-pointer group" onClick={() => setPreviewPhoto({url: selectedReportDetail.photoUrl, author: selectedReportDetail.completedBy, time: `${selectedReportDetail.time || '-'} WIB`})}>
+        <div className="w-full h-64 bg-[#0b1229] relative shrink-0 cursor-pointer group" onClick={() => setPreviewPhoto({url: selectedReportDetail.photoUrl, author: selectedReportDetail.completedBy, time: syncDateTimeLabel})}>
            <AsyncImage src={selectedReportDetail.photoUrl} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" alt="Bukti" />
            <div className="absolute inset-0 bg-gradient-to-b from-[#070b19]/80 via-transparent to-[#070b19]"></div>
            {!isInline && (
@@ -80,11 +84,12 @@ export default function ReportDetailView({ isInline = false }) {
            {!isReadOnly && (
              <button onClick={(e) => { e.stopPropagation(); handleDeleteReport(selectedReportDetail.id); }} className="absolute top-4 right-4 p-2 bg-rose-500/80 text-white rounded-full backdrop-blur-md border border-rose-500/50 hover:bg-rose-600 transition-colors z-10" aria-label="Hapus laporan"><Trash2 className="w-5 h-5"/></button>
            )}
-           <div className="absolute bottom-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs text-white/90 text-right border border-cyan-900/50 z-10 shadow-lg"><p className="font-bold text-cyan-400">{selectedReportDetail.completedBy || '-'}</p><p className="text-[10px] text-cyan-100/70">{selectedReportDetail.time || '-'} WIB</p></div>
+           <div className="absolute bottom-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs text-white/90 text-right border border-cyan-900/50 z-10 shadow-lg"><p className="font-bold text-cyan-400">{selectedReportDetail.completedBy || '-'}</p><p className="text-[10px] text-cyan-100/70">{syncDateLabel}</p><p className="text-[10px] text-cyan-100/70">{syncTimeLabel} WIB</p></div>
            <div className="absolute bottom-4 left-4 right-36 z-10">
               <span className={`text-[10px] px-2 py-1 border rounded font-bold mb-2 inline-block shadow-sm ${headerToneClass}`}>{isMissed ? 'MISSED' : selectedReportDetail.resultType === 'temuan' ? 'TEMUAN' : 'AMAN'}</span>
               <span className="text-[10px] px-2 py-1 ml-2 border border-cyan-500/50 rounded font-bold text-cyan-400 bg-cyan-900/40 inline-block shadow-sm">{isReadOnly ? 'Riwayat Shift' : 'Laporan Titik'}</span>
               <h2 className="text-2xl font-black text-white drop-shadow-md leading-tight line-clamp-2 mt-1">{selectedReportDetail.name}</h2>
+              <p className="text-[10px] text-cyan-100/80 mt-2 font-semibold tracking-wide">{syncDateTimeLabel}</p>
            </div>
         </div>
       ) : (
@@ -96,6 +101,7 @@ export default function ReportDetailView({ isInline = false }) {
             <div>
               <span className="text-[10px] text-cyan-500 uppercase tracking-widest font-bold">{isReadOnly ? 'Riwayat Shift' : 'Laporan Titik'}</span>
               <h3 className="font-bold text-xl text-cyan-50 line-clamp-1">{selectedReportDetail.name}</h3>
+              <p className="text-[10px] text-cyan-400/80 mt-1 font-semibold tracking-wide">{syncDateTimeLabel}</p>
             </div>
           </div>
           {!isReadOnly && (
@@ -145,10 +151,18 @@ export default function ReportDetailView({ isInline = false }) {
                  <span className="block">{selectedReportDetail.time || '-'}</span>
                </p>
              ) : (
-               <p className="text-sm font-bold text-cyan-50">{selectedReportDetail.time || '-'} WIB</p>
+               <p className="text-sm font-bold text-cyan-50">
+                 <span className="block">{syncDateLabel}</span>
+                 <span className="block">{syncTimeLabel} WIB</span>
+               </p>
              )}
            </div>
          </div>
+         <TimeAuditRecordCard
+           record={selectedReportDetail}
+           title="Audit Timestamp Laporan"
+           fallbackTimestampKeys={['completedAt', 'updatedAt', 'createdAt']}
+         />
          {isMissed ? (
            <div className="bg-rose-950/20 p-4 rounded-xl border border-rose-900/30">
              <p className="text-[10px] text-rose-600 font-bold mb-1.5 flex items-center gap-1.5 uppercase tracking-widest"><AlertTriangle className="w-3 h-3" /> Keterangan</p>

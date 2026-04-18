@@ -1,6 +1,7 @@
 import React from 'react';
 import { useHistory, useIncidents, usePatrol, useShips, useSOS, useUI } from '../context/AppContextRuntime';
 import AsyncImage from '../components/AsyncImage';
+import { TimeAuditPills } from '../components/TimeAuditStatus';
 import {
   Activity,
   AlertTriangle,
@@ -180,18 +181,31 @@ function getProgressTone(rate) {
 }
 
 function normalizeIncidentTimestamp(incident) {
-  const timestamp = new Date(
-    incident?.completedAt
-    || incident?.createdAt
-    || '',
-  ).getTime();
+  const timestamp = (
+    Number.isFinite(incident?.occurredAtTrustedMs)
+      ? incident.occurredAtTrustedMs
+      : new Date(
+        incident?.occurredAtTrustedIso
+        || incident?.completedAt
+        || incident?.createdAt
+        || '',
+      ).getTime()
+  );
 
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
 function buildProgressTimestamp(progressItem) {
   if (!progressItem) return 0;
-  const timestamp = new Date(`${progressItem.date || ''} ${progressItem.time || ''}`).getTime();
+  const timestamp = (
+    Number.isFinite(progressItem?.occurredAtTrustedMs)
+      ? progressItem.occurredAtTrustedMs
+      : new Date(
+        progressItem?.occurredAtTrustedIso
+        || progressItem?.createdAt
+        || `${progressItem.date || ''} ${progressItem.time || ''}`
+      ).getTime()
+  );
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
@@ -733,6 +747,7 @@ const DailyReportPage = React.memo(function DailyReportPage() {
         senderRole: item.senderRole || 'Petugas',
         triggeredAt: item.triggeredAt || item.createdAt || null,
         status: item.status || 'active',
+        ...item,
       }))
       .sort((left, right) => new Date(right.triggeredAt || 0).getTime() - new Date(left.triggeredAt || 0).getTime());
   }, [filteredSos]);
@@ -1076,6 +1091,11 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                         {incident.isPatrol ? 'Patroli' : 'Manual'}
                       </span>
                     </div>
+                    <TimeAuditPills
+                      record={incident}
+                      fallbackTimestampKeys={['completedAt', 'createdAt']}
+                      className="mt-2"
+                    />
 
                     <h4 className="mt-3 text-lg font-black text-white">{incident.location || 'Lokasi temuan'}</h4>
                     <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-cyan-100/75">
@@ -1152,6 +1172,11 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-black text-white">{item.shipName}</p>
                         <p className="mt-1 truncate text-xs text-cyan-300/80">{item.senderName}</p>
+                        <TimeAuditPills
+                          record={item}
+                          fallbackTimestampKeys={['triggeredAt', 'createdAt']}
+                          className="mt-2"
+                        />
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-black text-rose-200">{timeLabel}</p>

@@ -23,6 +23,17 @@ import {
   subscribeToCloudAppState,
   uploadCloudDataUrlAsset,
 } from '../services/firebase/cloudState';
+import {
+  createTrustedTimestampRecord,
+  getTrustedDate,
+  getTrustedNowMs,
+  initializeTrustedTime,
+} from '../services/time/trustedTime';
+import {
+  extractTimeAuditFields,
+  markTimeAuditRecordReceived,
+  normalizeTimeAuditRecord,
+} from '../services/time/timeAudit';
 
 // --- DATA MOCKUP ---
 const ACCESS_ROLES = {
@@ -498,7 +509,7 @@ function shiftMetaFromParts(dateKey, shiftId) {
   };
 }
 
-function getShiftMeta(date = new Date()) {
+function getShiftMeta(date = getTrustedDate()) {
   const parts = getJakartaDateParts(date);
   const definition = getCurrentShiftDefinitionByParts(parts);
   const currentDateKey = toDateKey(parts);
@@ -580,7 +591,7 @@ function createShipCheckpointCollection(ship) {
 }
 
 function resetCheckpointForShift(checkpoint, options = {}) {
-  const { updatedAt = new Date().toISOString(), shiftKey = null } = options;
+  const { updatedAt = getTrustedDate().toISOString(), shiftKey = null } = options;
   return {
     id: checkpoint.id,
     name: checkpoint.name,
@@ -594,15 +605,19 @@ function resetCheckpointForShift(checkpoint, options = {}) {
 }
 
 function createCheckpointGalleryPhotoRecord(photoUrl, options = {}) {
-  const createdAt = options.createdAt || new Date().toISOString();
-  return {
-    id: options.id || `checkpoint-gallery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  const trustedTimestamp = options.trustedTimestamp || createTrustedTimestampRecord();
+  const createdAt = options.createdAt || trustedTimestamp.occurredAtTrustedIso;
+  return normalizeTimeAuditRecord({
+    id: options.id || `checkpoint-gallery-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
     photoUrl,
     author: sanitizeText(options.author || '', 80) || '-',
     date: options.date || formatAppDate(new Date(createdAt)),
     time: options.time || formatAppTime(new Date(createdAt)),
     createdAt,
-  };
+    ...trustedTimestamp,
+  }, {
+    fallbackTimestampKeys: ['createdAt'],
+  });
 }
 
 function resetCheckpointCollection(checkpoints, options = {}) {
@@ -719,12 +734,17 @@ function getIncidentDateLabel(value) {
 }
 
 function getIncidentSortTimestamp(incident) {
-  const directTimestamp = new Date(
-    incident?.completedAt
-    || incident?.createdAt
-    || incident?.reportedAt
-    || '',
-  ).getTime();
+  const directTimestamp = (
+    Number.isFinite(incident?.occurredAtTrustedMs)
+      ? incident.occurredAtTrustedMs
+      : new Date(
+        incident?.occurredAtTrustedIso
+        || incident?.completedAt
+        || incident?.createdAt
+        || incident?.reportedAt
+        || '',
+      ).getTime()
+  );
 
   if (!Number.isNaN(directTimestamp) && directTimestamp > 0) {
     return directTimestamp;
@@ -744,7 +764,7 @@ function createPatrolIncidentRecord(checkpoint, options = {}) {
     readOnly = false,
   } = options;
 
-  return {
+  return normalizeTimeAuditRecord({
     id: createPatrolIncidentId(checkpoint),
     date: checkpoint?.date || getIncidentDateLabel(checkpoint?.completedAt || fallbackDate),
     time: checkpoint?.time || '-',
@@ -759,7 +779,10 @@ function createPatrolIncidentRecord(checkpoint, options = {}) {
     readOnly: readOnly || Boolean(checkpoint?.readOnly),
     completedAt: checkpoint?.completedAt || null,
     checkpointId: checkpoint?.id || null,
-  };
+    ...extractTimeAuditFields(checkpoint),
+  }, {
+    fallbackTimestampKeys: ['completedAt', 'updatedAt', 'createdAt'],
+  });
 }
 
 function formatSOSCoordinate(value) {
@@ -792,7 +815,7 @@ function createSOSIncidentRecord(sos) {
     ? `SOS telah ditangani oleh ${sanitizeText(sos.resolvedBy || '', 80) || 'Sistem'}${resolvedAt ? ` pada ${getIncidentDateLabel(resolvedAt)} ${formatAppTime(new Date(resolvedAt))}` : ''}.`
     : `Menunggu tindak lanjut darurat${confirmedCount > 0 ? ` dan sudah dikonfirmasi ${confirmedCount} petugas` : ''}.`;
 
-  return {
+  return normalizeTimeAuditRecord({
     id: sos.id,
     date: getIncidentDateLabel(triggeredAt),
     time: triggeredAt ? formatAppTime(new Date(triggeredAt)) : '-',
@@ -810,7 +833,10 @@ function createSOSIncidentRecord(sos) {
     targetShipNames,
     lat: sos.lat ?? null,
     lng: sos.lng ?? null,
-  };
+    ...extractTimeAuditFields(sos),
+  }, {
+    fallbackTimestampKeys: ['triggeredAt', 'createdAt'],
+  });
 }
 
 function createMissedCheckpoint(checkpoint, shiftMeta) {
@@ -993,8 +1019,7 @@ async function fetchWeatherSnapshotForCoordinates(gpsSnapshot) {
   }
 }
 
-async function capturePatrolEnvironmentSnapshot(ship) {
-  const capturedAt = new Date().toISOString();
+async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDate().toISOString()) {
   const shipSnapshot = createShipLocationSnapshot(ship);
   const deviceLocation = await requestCurrentGeolocation();
 
@@ -1057,12 +1082,17 @@ function getCheckpointPriority(checkpoint) {
 }
 
 function getCheckpointEffectiveTimestamp(checkpoint) {
-  const directTimestamp = new Date(
-    checkpoint?.updatedAt
-    || checkpoint?.completedAt
-    || checkpoint?.createdAt
-    || '',
-  ).getTime();
+  const directTimestamp = (
+    Number.isFinite(checkpoint?.occurredAtTrustedMs)
+      ? checkpoint.occurredAtTrustedMs
+      : new Date(
+        checkpoint?.occurredAtTrustedIso
+        || checkpoint?.updatedAt
+        || checkpoint?.completedAt
+        || checkpoint?.createdAt
+        || '',
+      ).getTime()
+  );
 
   if (!Number.isNaN(directTimestamp) && directTimestamp > 0) return directTimestamp;
   return getCheckpointPriority(checkpoint);
@@ -1485,7 +1515,25 @@ function createFirebaseBackedUserRecord(authUser, users = []) {
   }, users.length);
 }
 
-function loadPersistedState() { try { const raw = window.localStorage.getItem(APP_STORAGE_KEY); if (!raw) return null; const parsed = JSON.parse(raw); return parsed?.version === 1 ? parsed.data : null; } catch { return null; } }
+function loadPersistedState() {
+  try {
+    const raw = window.localStorage.getItem(APP_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (parsed?.version !== 1 || !parsed?.data || typeof parsed.data !== 'object') {
+      return null;
+    }
+
+    const normalizedData = normalizeSharedStateTimeAudit(parsed.data);
+    return {
+      ...parsed.data,
+      ...normalizedData,
+    };
+  } catch {
+    return null;
+  }
+}
 function savePersistedState(data) { try { window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify({ version: 1, savedAt: new Date().toISOString(), data })); checkStorageQuota(); } catch (error) { console.error('Gagal menyimpan data lokal', error); } }
 function loadWeatherCache() { try { const raw = window.localStorage.getItem(WEATHER_STORAGE_KEY); if (!raw) return null; const parsed = JSON.parse(raw); if (!parsed?.savedAt || !parsed?.data) return null; if (Date.now() - new Date(parsed.savedAt).getTime() > WEATHER_TTL_MS) return null; return parsed.data; } catch { return null; } }
 function saveWeatherCache(data) { try { window.localStorage.setItem(WEATHER_STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data })); } catch (error) { console.error('Gagal menyimpan cache cuaca', error); } }
@@ -1529,6 +1577,116 @@ function createSharedStateSnapshot({
     activeSOSAlert,
     sosHistory,
   };
+}
+
+function mapAuditableRecord(record, mapper, options = {}) {
+  if (!record || typeof record !== 'object') return record;
+  return mapper(record, options);
+}
+
+function mapAuditableRecordList(records = [], mapper, options = {}) {
+  return Array.isArray(records)
+    ? records.map((record) => mapAuditableRecord(record, mapper, options))
+    : [];
+}
+
+function mapCheckpointAuditRecord(checkpoint, mapper) {
+  if (!checkpoint || typeof checkpoint !== 'object') return checkpoint;
+
+  return {
+    ...mapAuditableRecord(checkpoint, mapper, {
+      fallbackTimestampKeys: ['completedAt', 'updatedAt', 'createdAt'],
+    }),
+    galleryPhotos: mapAuditableRecordList(checkpoint.galleryPhotos || [], mapper, {
+      fallbackTimestampKeys: ['createdAt'],
+    }),
+  };
+}
+
+function mapIncidentMetaAuditCollection(incidentMeta = {}, mapper) {
+  return Object.fromEntries(
+    Object.entries(incidentMeta || {}).map(([incidentId, meta]) => ([
+      incidentId,
+      {
+        ...meta,
+        documentation: mapAuditableRecordList(meta?.documentation || [], mapper, {
+          fallbackTimestampKeys: ['createdAt'],
+        }),
+        progress: mapAuditableRecordList(meta?.progress || [], mapper, {
+          fallbackTimestampKeys: ['createdAt'],
+        }),
+      },
+    ])),
+  );
+}
+
+function mapSharedStateTimeAudit(stateSnapshot = {}, mapper) {
+  const snapshot = stateSnapshot && typeof stateSnapshot === 'object' ? stateSnapshot : {};
+
+  return createSharedStateSnapshot({
+    activeShiftKey: snapshot.activeShiftKey,
+    checkpointsByShip: Object.fromEntries(
+      Object.entries(snapshot.checkpointsByShip || {}).map(([shipId, shipCheckpoints]) => ([
+        shipId,
+        mapAuditableRecordList(shipCheckpoints || [], (record) => mapCheckpointAuditRecord(record, mapper)),
+      ])),
+    ),
+    deletedRecords: snapshot.deletedRecords,
+    historyEntries: mapAuditableRecordList(snapshot.historyEntries || [], (entry) => ({
+      ...entry,
+      checkpoints: mapAuditableRecordList(entry?.checkpoints || [], (record) => mapCheckpointAuditRecord(record, mapper)),
+      crewSnapshot: Array.isArray(entry?.crewSnapshot) ? entry.crewSnapshot : [],
+    })),
+    incidentMeta: mapIncidentMetaAuditCollection(snapshot.incidentMeta, mapper),
+    incidentsData: mapAuditableRecordList(snapshot.incidentsData || [], mapper, {
+      fallbackTimestampKeys: ['completedAt', 'createdAt'],
+    }),
+    notifications: snapshot.notifications || [],
+    shipsData: snapshot.shipsData || [],
+    usersData: snapshot.usersData || [],
+    activeSOSAlert: mapAuditableRecord(snapshot.activeSOSAlert, mapper, {
+      fallbackTimestampKeys: ['triggeredAt', 'createdAt'],
+    }),
+    sosHistory: mapAuditableRecordList(snapshot.sosHistory || [], mapper, {
+      fallbackTimestampKeys: ['triggeredAt', 'createdAt'],
+    }),
+  });
+}
+
+function normalizeSharedStateTimeAudit(stateSnapshot = {}) {
+  return mapSharedStateTimeAudit(stateSnapshot, (record, options) => normalizeTimeAuditRecord(record, options));
+}
+
+function markSharedStateTimeAuditReceived(stateSnapshot = {}, receivedAtServerMs) {
+  if (!Number.isFinite(receivedAtServerMs)) {
+    return normalizeSharedStateTimeAudit(stateSnapshot);
+  }
+
+  return mapSharedStateTimeAudit(
+    normalizeSharedStateTimeAudit(stateSnapshot),
+    (record, options) => markTimeAuditRecordReceived(record, receivedAtServerMs, options),
+  );
+}
+
+function resolveExternalTimestampMs(value) {
+  if (Number.isFinite(value)) return value;
+
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
+  if (typeof value?.toMillis === 'function') {
+    const timestamp = value.toMillis();
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const timestamp = new Date(value).getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
+  return null;
 }
 
 function serializeSharedStateSnapshot(snapshot) {
@@ -1740,6 +1898,8 @@ export function AppProvider({ children }) {
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, []);
 
+  useEffect(() => initializeTrustedTime(), []);
+
   useEffect(() => {
     if (theme === 'light') {
       document.documentElement.classList.add('pertamina-light');
@@ -1759,7 +1919,7 @@ export function AppProvider({ children }) {
   const [authForm, setAuthForm] = useState(() => createAuthFormState());
 
   // Core data
-  const [activeShiftKey, setActiveShiftKey] = useState(() => persistedState?.activeShiftKey || getShiftMeta().key);
+  const [activeShiftKey, setActiveShiftKey] = useState(() => persistedState?.activeShiftKey || getShiftMeta(getTrustedDate()).key);
   const [checkpointsByShip, setCheckpointsByShip] = useState(() => initialCheckpointsByShip);
   const [shipsData, setShipsData] = useState(() => initialShipsCollection);
   const [usersData, setUsersData] = useState(() => initialUsersCollection);
@@ -1767,7 +1927,7 @@ export function AppProvider({ children }) {
   const [historyEntries, setHistoryEntries] = useState(() => sortHistoryEntries(persistedState?.historyEntries || createSeedHistoryEntries()));
   const [notifications, setNotifications] = useState(() => sortNotifications(persistedState?.notifications || []));
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
-  const [shiftClock, setShiftClock] = useState(() => Date.now());
+  const [shiftClock, setShiftClock] = useState(() => getTrustedNowMs());
   const [activeSOSAlert, setActiveSOSAlert] = useState(() => persistedState?.activeSOSAlert || null);
   const [sosHistory, setSosHistory] = useState(() => persistedState?.sosHistory || []);
   const hasAppliedRoleLandingRef = useRef(false);
@@ -1775,7 +1935,7 @@ export function AppProvider({ children }) {
   // Crew migration effect
   useEffect(() => {
     if (shipsData.length === 0) return;
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTrustedDate().toISOString().split('T')[0];
     let shipsChanged = false;
     let usersToUpdate = [];
     const updatedShips = shipsData.map(ship => {
@@ -1932,6 +2092,7 @@ export function AppProvider({ children }) {
 
   const handleSOSTrigger = useCallback((lat, lng) => {
     if (!currentUserRecord) return;
+    const trustedTimestamp = createTrustedTimestampRecord();
     const senderShipName = sanitizeText(currentUserRecord.shipAssigned || '', 80) || 'Tidak diketahui';
     const sourceShip = shipsData.find((ship) => ship.name === senderShipName) || null;
     const targetShipIds = Array.from(new Set([
@@ -1943,24 +2104,25 @@ export function AppProvider({ children }) {
       .filter(Boolean);
     const targetUserIds = getSOSRecipientUserIds(senderShipName);
     const rawSOS = {
-      id: `sos-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+      id: `sos-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
       senderUserId: currentUserRecord.id || 'unknown',
       senderName: currentUserRecord.name || 'Unknown',
       senderRole: currentUserRecord.role || 'petugas',
       shipName: senderShipName,
       lat: lat !== undefined ? lat : null,
       lng: lng !== undefined ? lng : null,
-      triggeredAt: new Date().toISOString(),
+      triggeredAt: trustedTimestamp.occurredAtTrustedIso,
       targetUserIds,
       targetShipIds,
       targetShipNames,
       confirmedBy: [],
-      status: 'active'
+      status: 'active',
+      ...trustedTimestamp,
     };
     
     // Default broad notification implementation
     const rawNotif = {
-      id: `notif-sos-${Date.now()}`,
+      id: `notif-sos-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 6)}`,
       type: 'sos',
       title: '🚨 DARURAT SOS',
       message: `Tanda darurat dikirim oleh ${currentUserRecord.name || 'Seseorang'} dari ${senderShipName}.`,
@@ -1972,7 +2134,9 @@ export function AppProvider({ children }) {
       routeParams: { incidentId: rawSOS.id },
       incidentId: rawSOS.id,
       shipName: senderShipName,
-      createdAt: new Date().toISOString(),
+      createdAt: trustedTimestamp.occurredAtTrustedIso,
+      timeTrustLevel: trustedTimestamp.timeTrustLevel,
+      clockTamperDetected: trustedTimestamp.clockTamperDetected,
     };
 
     // Spread is sufficient — SOS and notification objects are flat (no nested Date/Map/circular refs)
@@ -1999,12 +2163,16 @@ export function AppProvider({ children }) {
 
   const handleSOSDismiss = useCallback(() => {
     if (!activeSOSAlert) return;
+    const trustedTimestamp = createTrustedTimestampRecord();
     
     const updatedSOS = {
       ...activeSOSAlert,
       status: 'resolved',
-      resolvedAt: new Date().toISOString(),
+      resolvedAt: trustedTimestamp.occurredAtTrustedIso,
       resolvedBy: currentUserRecord?.name || 'Sistem',
+      resolvedAtClientMs: trustedTimestamp.occurredAtClientMs,
+      resolvedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
+      resolvedClockTamperDetected: trustedTimestamp.clockTamperDetected,
     };
     
     setActiveSOSAlert(null); // Clear active alert
@@ -2088,7 +2256,7 @@ export function AppProvider({ children }) {
     return Boolean(assignedShipForCurrentUser && incident.shipName === assignedShipForCurrentUser.name);
   }, [assignedShipForCurrentUser, currentUserRecord, isAdmin, isPic, isPetugas]);
   const canCloseIncident = useCallback((incident) => Boolean(currentUserRecord && incident && (isAdmin || isPic)), [currentUserRecord, isAdmin, isPic]);
-  const sharedState = useMemo(() => createSharedStateSnapshot({
+  const sharedState = useMemo(() => normalizeSharedStateTimeAudit(createSharedStateSnapshot({
     activeShiftKey,
     checkpointsByShip,
     deletedRecords,
@@ -2100,7 +2268,7 @@ export function AppProvider({ children }) {
     usersData,
     activeSOSAlert,
     sosHistory,
-  }), [
+  })), [
     activeShiftKey,
     checkpointsByShip,
     deletedRecords,
@@ -2245,8 +2413,9 @@ export function AppProvider({ children }) {
       sosHistory: stateSnapshot.sosHistory || [],
     });
   }, [prepareCloudPhotoUrl]);
-  const applyCloudSharedState = useCallback((nextState) => {
+  const applyCloudSharedState = useCallback((nextState, options = {}) => {
     if (!nextState || typeof nextState !== 'object') return null;
+    const receivedAtServerMs = resolveExternalTimestampMs(options.receivedAtServerMs);
 
     const nextShips = normalizeShipsCollection(nextState.shipsData || getInitialShipsData());
     const nextUsers = applyAdminCredentialReset(
@@ -2258,7 +2427,7 @@ export function AppProvider({ children }) {
       nextState.checkpoints,
       normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
     );
-    const incomingState = createSharedStateSnapshot({
+    const incomingState = normalizeSharedStateTimeAudit(createSharedStateSnapshot({
       activeShiftKey: normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
       checkpointsByShip: nextCheckpointsByShip,
       deletedRecords: nextState.deletedRecords,
@@ -2270,12 +2439,20 @@ export function AppProvider({ children }) {
       usersData: nextUsers,
       activeSOSAlert: nextState.activeSOSAlert || null,
       sosHistory: nextState.sosHistory || [],
-    });
-    const normalizedState = mergeSharedStateSnapshots({}, incomingState);
+    }));
+    const auditedIncomingState = receivedAtServerMs !== null
+      ? markSharedStateTimeAuditReceived(incomingState, receivedAtServerMs)
+      : incomingState;
+    const normalizedState = mergeSharedStateSnapshots({}, auditedIncomingState);
     const serializedState = serializeSharedStateSnapshot(normalizedState);
     latestCloudSharedStateRef.current = normalizedState;
 
     if (serializedState === lastSharedStateRef.current) return normalizedState;
+
+    const flattenedCheckpoints = [
+      ...Object.values(normalizedState.checkpointsByShip || {}).flat(),
+      ...normalizedState.historyEntries.flatMap((entry) => entry.checkpoints || []),
+    ];
 
     logCloudSyncDebug('apply-shared-state', {
       activeShiftKey: normalizedState.activeShiftKey,
@@ -2302,6 +2479,66 @@ export function AppProvider({ children }) {
     setNotifications(normalizedState.notifications);
     setActiveSOSAlert(normalizedState.activeSOSAlert);
     setSosHistory(normalizedState.sosHistory);
+    setSelectedReportDetail((previousReport) => {
+      if (!previousReport) return previousReport;
+
+      const matchedCheckpoint = flattenedCheckpoints.find((checkpoint) => (
+        String(checkpoint?.id) === String(previousReport.id)
+      ));
+
+      if (!matchedCheckpoint) return previousReport;
+
+      return {
+        ...previousReport,
+        ...matchedCheckpoint,
+        shipName: matchedCheckpoint.shipName || previousReport.shipName,
+        date: matchedCheckpoint.date || previousReport.date,
+        shipSnapshot: matchedCheckpoint.shipSnapshot ?? previousReport.shipSnapshot ?? null,
+        gpsSnapshot: matchedCheckpoint.gpsSnapshot ?? previousReport.gpsSnapshot ?? null,
+        weatherSnapshot: matchedCheckpoint.weatherSnapshot ?? previousReport.weatherSnapshot ?? null,
+      };
+    });
+    setSelectedIncident((previousIncident) => {
+      if (!previousIncident) return previousIncident;
+
+      if (previousIncident.isSOS) {
+        const matchedSOS = (
+          normalizedState.activeSOSAlert?.id === previousIncident.id
+            ? normalizedState.activeSOSAlert
+            : normalizedState.sosHistory.find((entry) => entry.id === previousIncident.id)
+        );
+
+        if (!matchedSOS) return previousIncident;
+        return {
+          ...previousIncident,
+          ...createSOSIncidentRecord(matchedSOS),
+        };
+      }
+
+      if (previousIncident.isPatrol) {
+        const matchedCheckpoint = flattenedCheckpoints.find((checkpoint) => (
+          createPatrolIncidentId(checkpoint) === previousIncident.id
+        ));
+
+        if (!matchedCheckpoint) return previousIncident;
+        return {
+          ...previousIncident,
+          ...createPatrolIncidentRecord(matchedCheckpoint, {
+            fallbackShipName: matchedCheckpoint.shipName || previousIncident.shipName,
+            fallbackDate: matchedCheckpoint.date || previousIncident.date,
+            readOnly: previousIncident.readOnly,
+          }),
+        };
+      }
+
+      const matchedIncident = normalizedState.incidentsData.find((incident) => (
+        String(incident?.id) === String(previousIncident.id)
+      ));
+
+      return matchedIncident
+        ? { ...previousIncident, ...matchedIncident }
+        : previousIncident;
+    });
     return normalizedState;
   }, []);
   const getUsersByRole = useCallback((roles) => (
@@ -2598,7 +2835,7 @@ export function AppProvider({ children }) {
   }, [allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry]);
 
   useEffect(() => {
-    const timerId = window.setInterval(() => setShiftClock(Date.now()), 60 * 1000);
+    const timerId = window.setInterval(() => setShiftClock(getTrustedNowMs()), 60 * 1000);
     return () => window.clearInterval(timerId);
   }, []);
 
@@ -2750,7 +2987,7 @@ export function AppProvider({ children }) {
     const nextHistoryBatch = [];
     let workingShiftMeta = persistedShiftMeta;
     let workingCheckpointsByShip = { ...checkpointsByShip };
-    const resetTimestamp = new Date().toISOString();
+    const resetTimestamp = getTrustedDate().toISOString();
 
     let iterations = 0;
     while (workingShiftMeta.key !== currentShiftMeta.key) {
@@ -2878,57 +3115,64 @@ export function AppProvider({ children }) {
     setSubmittingPatrolId(id);
 
     try {
-      const now = new Date();
-      const timeString = formatAppTime(now);
-      const environmentSnapshot = await capturePatrolEnvironmentSnapshot(operationalShip);
+      const trustedTimestamp = createTrustedTimestampRecord();
+      const trustedNow = new Date(trustedTimestamp.occurredAtTrustedMs);
+      const timeString = formatAppTime(trustedNow);
+      const dateString = formatAppDate(trustedNow);
+      const environmentSnapshot = await capturePatrolEnvironmentSnapshot(
+        operationalShip,
+        trustedTimestamp.occurredAtTrustedIso,
+      );
 
-    const submittedItem = {
-      ...currentCheckpoint,
-      incidentId: formState.type === 'temuan'
-        ? `p-${currentCheckpoint.id}-${now.toISOString().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
-        : null,
-      status: 'completed',
-      completedBy: currentUser,
-      completedByUserId: currentUserRecord.id,
-      time: timeString,
-      completedAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      shiftKey: currentShiftMeta.key,
-      shipName: operationalShipName,
-      shipSnapshot: environmentSnapshot.shipSnapshot,
-      gpsSnapshot: environmentSnapshot.gpsSnapshot,
-      weatherSnapshot: environmentSnapshot.weatherSnapshot,
-      photoUrl: formState.photoUrl,
-      resultType: formState.type,
-      penyebab: sanitizeMultilineText(formState.penyebab, 240),
-      kejadian: sanitizeMultilineText(formState.kejadian, 280),
-      tindakLanjut: sanitizeMultilineText(formState.tindakLanjut, 240),
-    };
-    setActiveForms(prev => {
-      updateOperationalShipCheckpoints(shipCheckpoints => shipCheckpoints.map((checkpoint) => (
-        String(checkpoint.id) === String(id) ? submittedItem : checkpoint
-      )));
-      const newForms = { ...prev };
-      delete newForms[id];
-      return newForms;
-    });
-    setPendingPatrolCameraCapture(null);
-
-    if (submittedItem?.resultType === 'temuan') {
-      appendNotifications([{
-        type: 'incident_created',
-        title: 'Temuan patroli baru',
-        message: `${submittedItem.name} dilaporkan sebagai temuan oleh ${currentUser}.`,
-        senderName: currentUser,
-        senderRole: currentUserRole,
-        targetUserIds: getShipRecipients(operationalShipName, { includeAdmins: true, includePic: true, includePetugas: true }),
-        route: 'incidents/detail',
-        routeParams: { incidentId: submittedItem.incidentId },
-        incidentId: submittedItem.incidentId,
+      const submittedItem = {
+        ...currentCheckpoint,
+        incidentId: formState.type === 'temuan'
+          ? `p-${currentCheckpoint.id}-${trustedTimestamp.occurredAtTrustedIso.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+          : null,
+        status: 'completed',
+        completedBy: currentUser,
+        completedByUserId: currentUserRecord.id,
+        date: dateString,
+        time: timeString,
+        completedAt: trustedTimestamp.occurredAtTrustedIso,
+        updatedAt: trustedTimestamp.occurredAtTrustedIso,
+        shiftKey: currentShiftMeta.key,
         shipName: operationalShipName,
-        createdAt: submittedItem.completedAt,
-      }]);
-    }
+        shipSnapshot: environmentSnapshot.shipSnapshot,
+        gpsSnapshot: environmentSnapshot.gpsSnapshot,
+        weatherSnapshot: environmentSnapshot.weatherSnapshot,
+        photoUrl: formState.photoUrl,
+        resultType: formState.type,
+        penyebab: sanitizeMultilineText(formState.penyebab, 240),
+        kejadian: sanitizeMultilineText(formState.kejadian, 280),
+        tindakLanjut: sanitizeMultilineText(formState.tindakLanjut, 240),
+        ...trustedTimestamp,
+      };
+      setActiveForms(prev => {
+        updateOperationalShipCheckpoints(shipCheckpoints => shipCheckpoints.map((checkpoint) => (
+          String(checkpoint.id) === String(id) ? submittedItem : checkpoint
+        )));
+        const newForms = { ...prev };
+        delete newForms[id];
+        return newForms;
+      });
+      setPendingPatrolCameraCapture(null);
+
+      if (submittedItem?.resultType === 'temuan') {
+        appendNotifications([{
+          type: 'incident_created',
+          title: 'Temuan patroli baru',
+          message: `${submittedItem.name} dilaporkan sebagai temuan oleh ${currentUser}.`,
+          senderName: currentUser,
+          senderRole: currentUserRole,
+          targetUserIds: getShipRecipients(operationalShipName, { includeAdmins: true, includePic: true, includePetugas: true }),
+          route: 'incidents/detail',
+          routeParams: { incidentId: submittedItem.incidentId },
+          incidentId: submittedItem.incidentId,
+          shipName: operationalShipName,
+          createdAt: submittedItem.completedAt,
+        }]);
+      }
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
@@ -2986,20 +3230,11 @@ export function AppProvider({ children }) {
     const isReadOnly = Boolean(item?.readOnly || item?.historyId || selectedHistoryEntry);
     if (item.resultType === 'temuan') {
       setSelectedReportDetail(null);
-      setSelectedIncident({
-        id: createPatrolIncidentId(item),
-        date: item.date || selectedHistoryEntry?.date || formatAppDate(),
-        time: item.time,
-        location: item.name,
-        shipName: item.shipName || selectedHistoryEntry?.ship || operationalShipName,
-        deskripsi: item.kejadian,
-        penyebab: item.penyebab,
-        tindakLanjut: item.tindakLanjut,
-        reportedBy: item.completedBy,
-        photoUrl: item.photoUrl,
-        isPatrol: true,
+      setSelectedIncident(createPatrolIncidentRecord(item, {
+        fallbackShipName: selectedHistoryEntry?.ship || operationalShipName,
+        fallbackDate: selectedHistoryEntry?.date || formatAppDate(),
         readOnly: isReadOnly,
-      });
+      }));
       return;
     }
     setSelectedIncident(null);
@@ -3067,9 +3302,25 @@ export function AppProvider({ children }) {
     if (!currentUserRecord) return;
     const loc = incidentForm.locType === 'custom' ? sanitizeText(incidentForm.customLocation, 80) : sanitizeText(incidentForm.location, 80);
     if (!loc || !sanitizeMultilineText(incidentForm.deskripsi, 320)) return;
-    const now = new Date();
-    const createdAt = now.toISOString();
-    const newIncident = { ...incidentForm, id: Date.now(), createdAt, time: formatAppTime(now), date: formatAppDate(now), reportedBy: currentUser, shipName: operationalShipName, location: loc, customLocation: incidentForm.locType === 'custom' ? loc : '', photoUrl: incidentForm.photoUrl, penyebab: sanitizeMultilineText(incidentForm.penyebab, 240), deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320), tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240) };
+    const trustedTimestamp = createTrustedTimestampRecord();
+    const trustedNow = new Date(trustedTimestamp.occurredAtTrustedMs);
+    const createdAt = trustedTimestamp.occurredAtTrustedIso;
+    const newIncident = {
+      ...incidentForm,
+      id: `incident-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt,
+      time: formatAppTime(trustedNow),
+      date: formatAppDate(trustedNow),
+      reportedBy: currentUser,
+      shipName: operationalShipName,
+      location: loc,
+      customLocation: incidentForm.locType === 'custom' ? loc : '',
+      photoUrl: incidentForm.photoUrl,
+      penyebab: sanitizeMultilineText(incidentForm.penyebab, 240),
+      deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320),
+      tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240),
+      ...trustedTimestamp,
+    };
     setIncidentsData(prev => [newIncident, ...prev]);
     appendNotifications([{
       type: 'incident_created',
@@ -3501,11 +3752,12 @@ export function AppProvider({ children }) {
   const handleAddProgress = useCallback((incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
-    const now = new Date();
-    const createdAt = now.toISOString();
-    const time = formatAppTime(now);
-    const date = formatAppDate(now);
-    setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: newProgress.photoUrl, time, date, author: currentUser }] } }));
+    const trustedTimestamp = createTrustedTimestampRecord();
+    const trustedNow = new Date(trustedTimestamp.occurredAtTrustedMs);
+    const createdAt = trustedTimestamp.occurredAtTrustedIso;
+    const time = formatAppTime(trustedNow);
+    const date = formatAppDate(trustedNow);
+    setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { id: `progress-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`, ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: newProgress.photoUrl, time, date, author: currentUser, createdAt, ...trustedTimestamp }] } }));
     appendNotifications([{
       type: 'incident_progress_updated',
       title: 'Update temuan baru',
@@ -3529,10 +3781,11 @@ export function AppProvider({ children }) {
     const photoUrl = await saveImageToDB(dataUrl);
     if (!photoUrl) return;
 
-    const now = new Date();
-    const createdAt = now.toISOString();
-    const time = formatAppTime(now);
-    const date = formatAppDate(now);
+    const trustedTimestamp = createTrustedTimestampRecord();
+    const trustedNow = new Date(trustedTimestamp.occurredAtTrustedMs);
+    const createdAt = trustedTimestamp.occurredAtTrustedIso;
+    const time = formatAppTime(trustedNow);
+    const date = formatAppDate(trustedNow);
 
     setIncidentMeta((previousMeta) => ({
       ...previousMeta,
@@ -3541,12 +3794,13 @@ export function AppProvider({ children }) {
         status: previousMeta[incidentId]?.status || 'open',
         documentation: [
           {
-            id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            id: `doc-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
             photoUrl,
             createdAt,
             date,
             time,
             author: currentUser,
+            ...trustedTimestamp,
           },
           ...(previousMeta[incidentId]?.documentation || []),
         ],
@@ -3618,7 +3872,8 @@ export function AppProvider({ children }) {
       confirmText: 'YA, TUTUP',
       cancelText: 'BELUM',
       onConfirm: () => {
-        const createdAt = new Date().toISOString();
+        const trustedTimestamp = createTrustedTimestampRecord();
+        const createdAt = trustedTimestamp.occurredAtTrustedIso;
         setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...(prev[incidentId] || {}), status: 'closed' } }));
         if (incident?.isSOS) {
           const resolvedSOS = {
@@ -3626,6 +3881,9 @@ export function AppProvider({ children }) {
             status: 'resolved',
             resolvedAt: createdAt,
             resolvedBy: currentUser || 'Sistem',
+            resolvedAtClientMs: trustedTimestamp.occurredAtClientMs,
+            resolvedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
+            resolvedClockTamperDetected: trustedTimestamp.clockTamperDetected,
           };
           setActiveSOSAlert((previousAlert) => (
             previousAlert?.id === incidentId ? null : previousAlert
@@ -4041,7 +4299,14 @@ export function AppProvider({ children }) {
         latestCloudSharedStateRef.current = null;
         return;
       }
-      applyCloudSharedState(cloudPayload.state);
+
+      const cloudReceivedAtMs = resolveExternalTimestampMs(cloudPayload.updatedAt)
+        || resolveExternalTimestampMs(cloudPayload.clientUpdatedAt)
+        || getTrustedNowMs();
+
+      applyCloudSharedState(cloudPayload.state, {
+        receivedAtServerMs: cloudReceivedAtMs,
+      });
     }, (error) => {
       setCloudSyncBootstrapped(true);
       console.error('Gagal subscribe data patroli cloud', error);
@@ -4091,13 +4356,17 @@ export function AppProvider({ children }) {
           const savedState = await saveCloudAppState(preparedState, {
             mergeState: (cloudState, pendingState) => mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
           });
-          const committedState = mergeSharedStateSnapshots({}, savedState || preparedState);
+          const committedState = markSharedStateTimeAuditReceived(
+            mergeSharedStateSnapshots({}, savedState || preparedState),
+            getTrustedNowMs(),
+          );
           const committedSerializedState = serializeSharedStateSnapshot(committedState);
 
           if (!committedSerializedState) return;
 
-          latestCloudSharedStateRef.current = committedState;
-          lastSharedStateRef.current = committedSerializedState;
+          applyCloudSharedState(committedState, {
+            receivedAtServerMs: getTrustedNowMs(),
+          });
         })
         .catch((error) => {
           console.error('Gagal mengirim laporan patroli ke cloud', error);
@@ -4105,7 +4374,7 @@ export function AppProvider({ children }) {
     }, 2000); // Debounce cloud sync 2s
 
     return () => clearTimeout(timerId);
-  }, [cloudSyncBootstrapped, currentShiftMeta.key, isOffline, prepareSharedStateForCloudSync, sharedState]);
+  }, [applyCloudSharedState, cloudSyncBootstrapped, currentShiftMeta.key, isOffline, prepareSharedStateForCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
@@ -4531,9 +4800,11 @@ export function AppProvider({ children }) {
     openHistoryEntry,
     closeHistoryEntry,
     handleDeleteHistoryEntry,
+    handleOpenPatrolResult,
   }), [
     closeHistoryEntry,
     handleDeleteHistoryEntry,
+    handleOpenPatrolResult,
     openHistoryEntry,
     selectedHistoryEntry,
     visibleHistoryEntries,

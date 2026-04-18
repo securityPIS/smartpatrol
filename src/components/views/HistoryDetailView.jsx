@@ -1,10 +1,11 @@
 import React from 'react';
 import { ACCESS_ROLES, useHistory, usePatrol, useShips, useUI, useUsers, useWeather } from '../../context/AppContextRuntime';
-import { 
+import {
   Ship, MapPin, ExternalLink, CalendarDays, Thermometer, Wind, User, 
   CheckCircle2, AlertTriangle, CircleOff, Check, ArrowRight
 } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
+import { TimeAuditSummaryCard } from '../TimeAuditStatus';
 
 function createGuardNameKey(name) {
   return String(name || '').trim().toLowerCase();
@@ -43,12 +44,17 @@ function getCompletionPercentage(summary = {}) {
 }
 
 function getCheckpointSortTimestamp(checkpoint) {
-  const timestamp = new Date(
-    checkpoint?.completedAt
-    || checkpoint?.updatedAt
-    || checkpoint?.createdAt
-    || 0,
-  ).getTime();
+  const timestamp = (
+    Number.isFinite(checkpoint?.occurredAtTrustedMs)
+      ? checkpoint.occurredAtTrustedMs
+      : new Date(
+        checkpoint?.occurredAtTrustedIso
+        || checkpoint?.completedAt
+        || checkpoint?.updatedAt
+        || checkpoint?.createdAt
+        || 0,
+      ).getTime()
+  );
 
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
@@ -110,6 +116,10 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
     { type: 'missed', count: entry.missed || 0 },
   ];
   const completionPercentage = getCompletionPercentage(entry.summary);
+  const completedAuditRecords = React.useMemo(
+    () => checkpointEntries.filter((checkpoint) => checkpoint.status === 'completed'),
+    [checkpointEntries],
+  );
 
   const displayCrew = React.useMemo(() => {
     const scoreMaps = buildGuardScoreMaps(checkpointEntries);
@@ -193,6 +203,12 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
             <p className="text-xs text-cyan-500 w-full text-center">Data cuaca tidak tersedia.</p>
           )}
         </div>
+
+        <TimeAuditSummaryCard
+          records={completedAuditRecords}
+          title="Audit Timestamp Shift"
+          fallbackTimestampKeys={['completedAt', 'updatedAt', 'createdAt']}
+        />
 
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">

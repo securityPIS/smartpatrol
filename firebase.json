@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "runtime": "nodejs20"
+  },
   "firestore": {
     "rules": "firestore.rules"
   },
@@ -24,6 +27,13 @@
       }
     ],
     "rewrites": [
+      {
+        "source": "/api/server-time",
+        "function": {
+          "functionId": "getServerTime",
+          "region": "asia-southeast2"
+        }
+      },
       {
         "source": "**",
         "destination": "/index.html"

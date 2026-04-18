@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useIncidents, useReports, useRole } from '../../context/AppContextRuntime';
 import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, Trash2, Images, Pencil, Save } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
+import { TimeAuditPills, TimeAuditRecordCard } from '../TimeAuditStatus';
 
 function getIncidentStatus(selectedIncident, incidentMeta) {
   const metaStatus = incidentMeta[selectedIncident?.id]?.status;
@@ -145,6 +146,12 @@ export default function IncidentDetailView({ isInline = false }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6 text-cyan-50">
+        <TimeAuditRecordCard
+          record={selectedIncident}
+          title={isSOSIncident ? 'Audit Timestamp SOS' : 'Audit Timestamp Temuan'}
+          fallbackTimestampKeys={['completedAt', 'createdAt', 'triggeredAt']}
+        />
+
         {activeTab === 'info' ? (
           <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
             {canEditInfo && (
@@ -238,7 +245,7 @@ export default function IncidentDetailView({ isInline = false }) {
                 <p className="text-xs text-cyan-700 mt-2">{isSOSIncident ? 'Data SOS belum memiliki dokumentasi foto.' : 'Upload foto dokumentasi temuan untuk melengkapi bukti lapangan.'}</p>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 {documentationItems.map((item) => (
                   <button
                     key={item.id || item.createdAt}
@@ -248,6 +255,10 @@ export default function IncidentDetailView({ isInline = false }) {
                   >
                     <div className="aspect-square bg-[#070b19] overflow-hidden">
                       <AsyncImage src={item.photoUrl} className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300" alt="Dokumentasi temuan" />
+                    </div>
+                    <div className="space-y-2 border-t border-cyan-900/40 p-3">
+                      <p className="text-[11px] font-bold text-cyan-100">{item.date || '-'} {item.time || '-'}</p>
+                      <TimeAuditPills record={item} fallbackTimestampKeys={['createdAt']} />
                     </div>
                   </button>
                 ))}
@@ -270,6 +281,7 @@ export default function IncidentDetailView({ isInline = false }) {
                   <div key={idx} className="relative">
                     <div className="absolute -left-[25px] top-0 w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] border-2 border-[#070b19]"></div>
                     <p className="text-[10px] font-mono text-cyan-500 mb-1.5">{prog.date} {prog.time} {' · '} <span className="text-emerald-400 font-bold">{prog.author}</span></p>
+                    <TimeAuditPills record={prog} fallbackTimestampKeys={['createdAt']} className="mb-2" />
                     <div className="flex gap-3 items-start bg-[#0b1229] p-3.5 rounded-xl border border-cyan-900/50 shadow-sm hover:border-cyan-700 transition-colors">
                       <p className="text-sm text-cyan-50 flex-1 whitespace-pre-wrap leading-relaxed">{prog.comment}</p>
                       {prog.photoUrl && <div className="w-20 h-20 rounded-lg overflow-hidden border border-cyan-800 flex-shrink-0 cursor-pointer hover:opacity-80 transition-all relative group" onClick={() => setPreviewPhoto({ url: prog.photoUrl, author: prog.author, time: `${prog.date} ${prog.time}` })}><AsyncImage src={prog.photoUrl} className="w-full h-full object-cover" alt="Progress" /></div>}

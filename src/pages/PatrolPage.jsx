@@ -1,5 +1,6 @@
 import React from 'react';
 import { ACCESS_ROLES, useHistory, useIncidents, usePatrol, useReports, useShips, useWeather } from '../context/AppContextRuntime';
+import { getTrustedTimeSnapshot, subscribeTrustedTime } from '../services/time/trustedTime';
 import {
   CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft, Plus,
   CalendarDays, User, Thermometer, Wind, FileText, CircleOff, TimerReset,
@@ -76,6 +77,36 @@ function formatShiftCountdown(remainingMs) {
     .join(':');
 }
 
+function getTimeStatusMeta(tone) {
+  if (tone === 'success') {
+    return {
+      cardClass: 'border-emerald-500/30 bg-emerald-950/20',
+      titleClass: 'text-emerald-300',
+      labelClass: 'text-emerald-100',
+      bodyClass: 'text-emerald-200/80',
+      metaClass: 'text-emerald-300/70',
+    };
+  }
+
+  if (tone === 'warning') {
+    return {
+      cardClass: 'border-yellow-500/30 bg-yellow-950/20',
+      titleClass: 'text-yellow-300',
+      labelClass: 'text-yellow-100',
+      bodyClass: 'text-yellow-200/80',
+      metaClass: 'text-yellow-300/70',
+    };
+  }
+
+  return {
+    cardClass: 'border-rose-500/30 bg-rose-950/20',
+    titleClass: 'text-rose-300',
+    labelClass: 'text-rose-100',
+    bodyClass: 'text-rose-200/80',
+    metaClass: 'text-rose-300/70',
+  };
+}
+
 import PatrolFormView from '../components/views/PatrolFormView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
@@ -94,11 +125,19 @@ const PatrolPage = React.memo(function PatrolPage() {
   const { setPreviewPhoto, selectedReportDetail } = useReports();
   const { selectedHistoryEntry, closeHistoryEntry } = useHistory();
   const { selectedIncident } = useIncidents();
-  const [countdownNow, setCountdownNow] = React.useState(() => Date.now());
+  const trustedTime = React.useSyncExternalStore(
+    subscribeTrustedTime,
+    getTrustedTimeSnapshot,
+    getTrustedTimeSnapshot,
+  );
 
   const isHistoryMode = Boolean(selectedHistoryEntry);
   const activeCheckpoints = isHistoryMode ? (selectedHistoryEntry?.checkpoints || []) : checkpoints;
   const patrolSummary = React.useMemo(() => getPatrolSummary(activeCheckpoints), [activeCheckpoints]);
+  const timeStatusMeta = React.useMemo(
+    () => getTimeStatusMeta(trustedTime.tone),
+    [trustedTime.tone],
+  );
   
   // Check if any form or detail is active
   const hasActiveForm = Object.keys(activeForms).length > 0;
@@ -157,20 +196,14 @@ const PatrolPage = React.memo(function PatrolPage() {
     displayCrew,
   ]);
 
-  React.useEffect(() => {
-    if (isHistoryMode) return undefined;
-    const intervalId = window.setInterval(() => setCountdownNow(Date.now()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, [isHistoryMode]);
-
   const shiftCountdown = React.useMemo(() => {
     if (isHistoryMode || !currentShiftSchedule?.endAt) return null;
 
     const endTimestamp = new Date(currentShiftSchedule.endAt).getTime();
     if (Number.isNaN(endTimestamp)) return null;
 
-    return formatShiftCountdown(Math.max(0, endTimestamp - countdownNow));
-  }, [countdownNow, currentShiftSchedule, isHistoryMode]);
+    return formatShiftCountdown(Math.max(0, endTimestamp - trustedTime.nowMs));
+  }, [currentShiftSchedule, isHistoryMode, trustedTime.nowMs]);
 
   React.useEffect(() => {
     setSummaryDetailType(null);
@@ -288,14 +321,33 @@ const PatrolPage = React.memo(function PatrolPage() {
                 </div>
               </div>
             ) : (
-              <div className="flex bg-[#0b1229] p-1 rounded-xl border border-cyan-800/50 shadow-sm shrink-0">
-                <button onClick={() => setPatrolTab('checkpoint')} className={`flex-1 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${patrolTab === 'checkpoint' ? 'bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 shadow-sm' : 'text-cyan-700 hover:text-cyan-500'}`}>
-                  <CheckCircle2 className="w-4 h-4" /> Checkpoint
-                </button>
-                <button onClick={() => setPatrolTab('info')} className={`flex-1 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${patrolTab === 'info' ? 'bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 shadow-sm' : 'text-cyan-700 hover:text-cyan-500'}`}>
-                  <FileText className="w-4 h-4" /> Info
-                </button>
-              </div>
+              <>
+                <div className="flex bg-[#0b1229] p-1 rounded-xl border border-cyan-800/50 shadow-sm shrink-0">
+                  <button onClick={() => setPatrolTab('checkpoint')} className={`flex-1 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${patrolTab === 'checkpoint' ? 'bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 shadow-sm' : 'text-cyan-700 hover:text-cyan-500'}`}>
+                    <CheckCircle2 className="w-4 h-4" /> Checkpoint
+                  </button>
+                  <button onClick={() => setPatrolTab('info')} className={`flex-1 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${patrolTab === 'info' ? 'bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 shadow-sm' : 'text-cyan-700 hover:text-cyan-500'}`}>
+                    <FileText className="w-4 h-4" /> Info
+                  </button>
+                </div>
+
+                <div className={`rounded-xl border px-4 py-3 ${timeStatusMeta.cardClass}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className={`text-[10px] font-bold uppercase tracking-widest ${timeStatusMeta.titleClass}`}>Status Waktu</p>
+                      <p className={`mt-1 text-sm font-black ${timeStatusMeta.labelClass}`}>{trustedTime.label}</p>
+                    </div>
+                    {trustedTime.anchorSyncedAtMs ? (
+                      <p className={`text-[10px] text-right leading-relaxed ${timeStatusMeta.metaClass}`}>
+                        Anchor
+                        <br />
+                        {new Date(trustedTime.anchorSyncedAtMs).toLocaleString('id-ID')}
+                      </p>
+                    ) : null}
+                  </div>
+                  <p className={`mt-2 text-xs leading-relaxed ${timeStatusMeta.bodyClass}`}>{trustedTime.warningMessage}</p>
+                </div>
+              </>
             )}
 
             <div className="lg:hidden">

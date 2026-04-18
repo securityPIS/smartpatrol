@@ -1,5 +1,6 @@
 import React from 'react';
 import { usePatrol } from '../../context/AppContextRuntime';
+import { getTrustedTimeSnapshot, subscribeTrustedTime } from '../../services/time/trustedTime';
 import { X, Camera, Send, Lock } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
@@ -22,15 +23,35 @@ function formatPatrolFormTimestamp(value = new Date()) {
   };
 }
 
-export default function PatrolFormView({ isInline = false }) {
-  const { activePatrolItem, activePatrolState, activePatrolId, setActiveForms, handleFormChange, handlePhotoUpload, handleSubmitPatrol, shouldForcePatrolCameraCapture, submittingPatrolId } = usePatrol();
-  const [formClock, setFormClock] = React.useState(() => Date.now());
+function getTrustMessage(snapshot) {
+  if (snapshot.trustLevel === 'offline-trusted') {
+    return 'Laporan tetap masuk antrian offline dan akan sinkron otomatis saat koneksi kembali.';
+  }
 
-  React.useEffect(() => {
-    if (activePatrolState?.type !== 'temuan') return undefined;
-    const timerId = window.setInterval(() => setFormClock(Date.now()), 1000);
-    return () => window.clearInterval(timerId);
-  }, [activePatrolState?.type]);
+  if (snapshot.trustLevel === 'offline-interrupted' || snapshot.trustLevel === 'unverified') {
+    return 'Laporan tetap disimpan, tetapi timestamp akan ditandai untuk verifikasi.';
+  }
+
+  return '';
+}
+
+export default function PatrolFormView({ isInline = false }) {
+  const {
+    activePatrolItem,
+    activePatrolState,
+    activePatrolId,
+    setActiveForms,
+    handleFormChange,
+    handlePhotoUpload,
+    handleSubmitPatrol,
+    shouldForcePatrolCameraCapture,
+    submittingPatrolId,
+  } = usePatrol();
+  const trustedTime = React.useSyncExternalStore(
+    subscribeTrustedTime,
+    getTrustedTimeSnapshot,
+    getTrustedTimeSnapshot,
+  );
 
   if (!activePatrolItem || !activePatrolState) {
     if (isInline) return (
@@ -45,11 +66,12 @@ export default function PatrolFormView({ isInline = false }) {
     return null;
   }
 
-  const formTimestamp = formatPatrolFormTimestamp(formClock);
+  const formTimestamp = formatPatrolFormTimestamp(trustedTime.nowMs);
   const isSubmitting = submittingPatrolId === activePatrolItem.id;
+  const trustMessage = getTrustMessage(trustedTime);
 
   return (
-    <div className={`flex flex-col h-full bg-[#0b1229] ${isInline ? 'border-l border-cyan-900/50' : 'max-w-md w-full border rounded-2xl shadow-2xl overflow-hidden' } transition-all ${activePatrolState.type === 'temuan' ? 'border-yellow-500/50 shadow-[0_0_50px_rgba(250,204,21,0.1)]' : 'border-emerald-500/50 shadow-[0_0_50px_rgba(16,185,129,0.1)]'}`}>
+    <div className={`flex flex-col h-full bg-[#0b1229] ${isInline ? 'border-l border-cyan-900/50' : 'max-w-md w-full border rounded-2xl shadow-2xl overflow-hidden'} transition-all ${activePatrolState.type === 'temuan' ? 'border-yellow-500/50 shadow-[0_0_50px_rgba(250,204,21,0.1)]' : 'border-emerald-500/50 shadow-[0_0_50px_rgba(16,185,129,0.1)]'}`}>
       <div className="p-4 border-b border-cyan-900/50 flex justify-between items-center bg-[#070b19]">
         <div>
           <span className="text-[10px] uppercase tracking-widest font-bold text-cyan-500">Formulir Patroli</span>
@@ -60,18 +82,26 @@ export default function PatrolFormView({ isInline = false }) {
             {activePatrolState.type === 'temuan' ? 'TEMUAN' : 'AMAN'}
           </span>
           {!isInline && (
-            <button onClick={() => setActiveForms({})} className="p-1.5 rounded-full hover:bg-rose-900/50 text-rose-400 transition-colors" aria-label="Tutup"><X className="w-5 h-5"/></button>
+            <button onClick={() => setActiveForms({})} className="p-1.5 rounded-full hover:bg-rose-900/50 text-rose-400 transition-colors" aria-label="Tutup"><X className="w-5 h-5" /></button>
           )}
         </div>
       </div>
-      
+
       <div className="p-5 overflow-y-auto flex-1 space-y-4">
         {activePatrolState.type === 'temuan' ? (
           <>
             <div className="bg-[#070b19] border border-yellow-500/20 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
-              <p className="text-[10px] uppercase tracking-widest text-yellow-500 font-bold">Waktu Temuan</p>
-              <p className="text-sm font-black text-yellow-200 tabular-nums text-right">{formTimestamp.date} Â· {formTimestamp.time}</p>
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-yellow-500 font-bold">Waktu Temuan</p>
+                <p className="mt-1 text-[10px] uppercase tracking-widest text-cyan-500 font-bold">{trustedTime.label}</p>
+              </div>
+              <p className="text-sm font-black text-yellow-200 tabular-nums text-right">{formTimestamp.date} - {formTimestamp.time}</p>
             </div>
+            {(trustedTime.trustLevel !== 'server-trusted' || trustedTime.clockTamperDetected) && (
+              <p className="text-[11px] leading-relaxed text-yellow-200/80">
+                {trustedTime.warningMessage}
+              </p>
+            )}
             {!activePatrolState.photoUrl ? (
               <button onClick={() => handlePhotoUpload(activePatrolId, false, { cameraOnly: shouldForcePatrolCameraCapture })} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-yellow-500/40 bg-yellow-950/20 text-yellow-400 hover:bg-yellow-900/40">
                 <Camera className="w-8 h-8" />
@@ -85,21 +115,21 @@ export default function PatrolFormView({ isInline = false }) {
             )}
             <div>
               <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Deskripsi Temuan</label>
-              <textarea placeholder="Jelaskan detail temuan..." rows={3} value={activePatrolState.kejadian} onChange={(e) => handleFormChange(activePatrolId, 'kejadian', e.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none" />
+              <textarea placeholder="Jelaskan detail temuan..." rows={3} value={activePatrolState.kejadian} onChange={(event) => handleFormChange(activePatrolId, 'kejadian', event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none" />
             </div>
             <div>
               <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Penyebab Kejadian</label>
-              <textarea placeholder="Apa indikasi penyebabnya..." rows={3} value={activePatrolState.penyebab} onChange={(e) => handleFormChange(activePatrolId, 'penyebab', e.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none" />
+              <textarea placeholder="Apa indikasi penyebabnya..." rows={3} value={activePatrolState.penyebab} onChange={(event) => handleFormChange(activePatrolId, 'penyebab', event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-yellow-500 outline-none resize-none" />
             </div>
             <div>
               <label className="text-[10px] uppercase tracking-widest text-cyan-500 mb-1.5 block font-bold">Tindak Lanjut</label>
-              <textarea placeholder="Tindakan / Update..." rows={3} value={activePatrolState.tindakLanjut} onChange={(e) => handleFormChange(activePatrolId, 'tindakLanjut', e.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-emerald-500 outline-none resize-none" />
+              <textarea placeholder="Tindakan / Update..." rows={3} value={activePatrolState.tindakLanjut} onChange={(event) => handleFormChange(activePatrolId, 'tindakLanjut', event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-emerald-500 outline-none resize-none" />
             </div>
           </>
         ) : (
           !activePatrolState.photoUrl ? (
             <button onClick={() => handlePhotoUpload(activePatrolId, false, { cameraOnly: shouldForcePatrolCameraCapture })} className="w-full py-8 rounded-xl border-2 border-dashed flex flex-col items-center gap-2 transition-colors border-emerald-500/40 bg-emerald-950/20 text-emerald-400 hover:bg-emerald-900/40">
-              <Camera className="w-8 h-8" /> 
+              <Camera className="w-8 h-8" />
               <span className="text-sm font-bold uppercase tracking-wider">{shouldForcePatrolCameraCapture ? 'Ambil Foto Aman' : 'Unggah Visual Aman'}</span>
             </button>
           ) : (
@@ -110,11 +140,16 @@ export default function PatrolFormView({ isInline = false }) {
           )
         )}
       </div>
-      
+
       <div className="p-4 bg-[#070b19] border-t border-cyan-900/50">
-        <button 
-          disabled={!activePatrolState.photoUrl || isSubmitting} 
-          onClick={() => handleSubmitPatrol(activePatrolItem.id)} 
+        {trustMessage && (
+          <p className="mb-3 text-[11px] leading-relaxed text-yellow-200/80">
+            {trustMessage}
+          </p>
+        )}
+        <button
+          disabled={!activePatrolState.photoUrl || isSubmitting}
+          onClick={() => handleSubmitPatrol(activePatrolItem.id)}
           className={`w-full py-4 rounded-xl font-black tracking-widest uppercase text-xs flex items-center justify-center gap-2 transition-all ${activePatrolState.photoUrl && !isSubmitting ? (activePatrolState.type === 'temuan' ? 'bg-yellow-600 hover:bg-yellow-500 text-black shadow-[0_0_15px_rgba(250,204,21,0.3)]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)]') : 'bg-[#0b1229] border border-cyan-900 text-cyan-700 cursor-not-allowed'}`}
         >
           {activePatrolState.photoUrl && !isSubmitting ? <Send className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
