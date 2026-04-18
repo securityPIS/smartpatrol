@@ -4522,19 +4522,24 @@ export function AppProvider({ children }) {
           });
 
           const preparedState = await prepareSharedStateForCloudSync(latestStateForWrite);
-          const savedState = await saveCloudAppState(preparedState, {
+          const receivedAtServerMs = getTrustedNowMs();
+          const verifiedPreparedState = markSharedStateTimeAuditReceived(
+            mergeSharedStateSnapshots({}, preparedState),
+            receivedAtServerMs,
+          );
+          const savedState = await saveCloudAppState(verifiedPreparedState, {
             mergeState: (cloudState, pendingState) => mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
           });
           const committedState = markSharedStateTimeAuditReceived(
-            mergeSharedStateSnapshots({}, savedState || preparedState),
-            getTrustedNowMs(),
+            mergeSharedStateSnapshots({}, savedState || verifiedPreparedState),
+            receivedAtServerMs,
           );
           const committedSerializedState = serializeSharedStateSnapshot(committedState);
 
           if (!committedSerializedState) return;
 
           applyCloudSharedState(committedState, {
-            receivedAtServerMs: getTrustedNowMs(),
+            receivedAtServerMs,
           });
         })
         .catch((error) => {
