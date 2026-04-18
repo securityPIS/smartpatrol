@@ -2075,6 +2075,7 @@ export function AppProvider({ children }) {
   const [cloudSyncBootstrapped, setCloudSyncBootstrapped] = useState(() => !isCloudSyncEnabled);
   const previousUsersDataRef = useRef(usersData);
   const lastSharedStateRef = useRef('');
+  const lastCloudSharedStateRef = useRef('');
   const latestCloudSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
@@ -2518,17 +2519,20 @@ export function AppProvider({ children }) {
     const auditedIncomingState = receivedAtServerMs !== null
       ? markSharedStateTimeAuditReceived(incomingState, receivedAtServerMs)
       : incomingState;
+    const normalizedCloudState = mergeSharedStateSnapshots({}, auditedIncomingState);
+    const serializedCloudState = serializeSharedStateSnapshot(normalizedCloudState);
     const currentLocalState = localSharedStateRef.current || {};
     const resolvedActiveShiftKey = resolveLatestShiftKey(
-      [currentLocalState.activeShiftKey, auditedIncomingState.activeShiftKey],
+      [currentLocalState.activeShiftKey, normalizedCloudState.activeShiftKey],
       getShiftMeta(),
     );
     const normalizedState = createSharedStateSnapshot({
-      ...mergeSharedStateSnapshots(currentLocalState, auditedIncomingState),
+      ...mergeSharedStateSnapshots(currentLocalState, normalizedCloudState),
       activeShiftKey: resolvedActiveShiftKey,
     });
     const serializedState = serializeSharedStateSnapshot(normalizedState);
-    latestCloudSharedStateRef.current = normalizedState;
+    latestCloudSharedStateRef.current = normalizedCloudState;
+    lastCloudSharedStateRef.current = serializedCloudState;
 
     if (serializedState === lastSharedStateRef.current) return normalizedState;
 
@@ -2643,6 +2647,7 @@ export function AppProvider({ children }) {
     if (!payloadState) {
       if (shouldClearState) {
         latestCloudSharedStateRef.current = null;
+        lastCloudSharedStateRef.current = '';
       }
       return null;
     }
@@ -4525,7 +4530,7 @@ export function AppProvider({ children }) {
         }),
       );
       const serializedState = serializeSharedStateSnapshot(cloudReadyState);
-      if (!serializedState || serializedState === lastSharedStateRef.current) return;
+      if (!serializedState || serializedState === lastCloudSharedStateRef.current) return;
 
       cloudSaveQueueRef.current = cloudSaveQueueRef.current
         .catch(() => {})
@@ -4538,7 +4543,7 @@ export function AppProvider({ children }) {
             }),
           );
           const latestSerializedState = serializeSharedStateSnapshot(latestStateForWrite);
-          if (!latestSerializedState || latestSerializedState === lastSharedStateRef.current) return;
+          if (!latestSerializedState || latestSerializedState === lastCloudSharedStateRef.current) return;
 
           logCloudSyncDebug('save-shared-state', {
             activeShiftKey: latestStateForWrite.activeShiftKey,
