@@ -59,6 +59,7 @@ let syncTimerId = null;
 let visibilityListenerAttached = false;
 let lastLocalNowMs = readDeviceNow();
 let lastPerfNowMs = readPerfNow();
+let cachedSnapshot = null;
 
 function canUseWindow() {
   return typeof window !== 'undefined';
@@ -178,7 +179,12 @@ function persistState() {
   }
 }
 
+function invalidateSnapshotCache() {
+  cachedSnapshot = null;
+}
+
 function notifyListeners() {
+  invalidateSnapshotCache();
   listeners.forEach((listener) => {
     try {
       listener();
@@ -194,6 +200,7 @@ function commitState(patch, options = {}) {
     ...state,
     ...patch,
   };
+  invalidateSnapshotCache();
 
   if (persist) persistState();
   if (notify) notifyListeners();
@@ -292,7 +299,7 @@ export function getTimeTrustStatus() {
   };
 }
 
-export function getTrustedTimeSnapshot() {
+function buildTrustedTimeSnapshot() {
   const nowMs = getTrustedNowMs();
   const nowDate = new Date(nowMs);
   const status = getTimeTrustStatus();
@@ -309,8 +316,17 @@ export function getTrustedTimeSnapshot() {
   };
 }
 
+export function getTrustedTimeSnapshot() {
+  if (cachedSnapshot) {
+    return cachedSnapshot;
+  }
+
+  cachedSnapshot = buildTrustedTimeSnapshot();
+  return cachedSnapshot;
+}
+
 export function createTrustedTimestampRecord() {
-  const snapshot = getTrustedTimeSnapshot();
+  const snapshot = buildTrustedTimeSnapshot();
 
   return {
     occurredAtTrustedMs: snapshot.nowMs,
@@ -441,6 +457,7 @@ export function initializeTrustedTime() {
 
   initialized = true;
   state = loadPersistedState();
+  invalidateSnapshotCache();
   lastLocalNowMs = readDeviceNow();
   lastPerfNowMs = readPerfNow();
   persistState();
