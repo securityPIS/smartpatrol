@@ -4,6 +4,7 @@ const TRUSTED_TIME_FUNCTION_REGION = 'asia-southeast2';
 const SERVER_TIME_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const CLOCK_TAMPER_CHECK_INTERVAL_MS = 15 * 1000;
 const CLOCK_TAMPER_DRIFT_THRESHOLD_MS = 5000;
+const CLOCK_TAMPER_RECOVERY_STABLE_SAMPLE_COUNT = 2;
 const REQUEST_TIMEOUT_MS = 8000;
 const TICK_INTERVAL_MS = 1000;
 
@@ -60,6 +61,8 @@ let visibilityListenerAttached = false;
 let lastLocalNowMs = readDeviceNow();
 let lastPerfNowMs = readPerfNow();
 let cachedSnapshot = null;
+let stableClockSampleCount = 0;
+let tamperRecoverySyncInFlight = false;
 
 function canUseWindow() {
   return typeof window !== 'undefined';
@@ -183,6 +186,10 @@ function invalidateSnapshotCache() {
   cachedSnapshot = null;
 }
 
+function resetClockTamperRecoveryState() {
+  stableClockSampleCount = 0;
+}
+
 function notifyListeners() {
   invalidateSnapshotCache();
   listeners.forEach((listener) => {
@@ -234,6 +241,7 @@ function resolveServerTimeUrls() {
 
 function applyServerAnchor(serverNowMs, source) {
   const deviceNowMs = readDeviceNow();
+  resetClockTamperRecoveryState();
   commitState({
     anchorServerEpochMs: serverNowMs,
     anchorPerfNowMs: readPerfNow(),
@@ -373,15 +381,43 @@ export function detectClockTampering() {
   lastLocalNowMs = currentLocalNowMs;
   lastPerfNowMs = currentPerfNowMs;
 
-  if (driftMs <= CLOCK_TAMPER_DRIFT_THRESHOLD_MS || state.clockTamperDetected) {
-    return state.clockTamperDetected;
+  if (driftMs > CLOCK_TAMPER_DRIFT_THRESHOLD_MS) {
+    resetClockTamperRecoveryState();
+
+    if (state.clockTamperDetected) {
+      return true;
+    }
+
+    commitState({
+      clockTamperDetected: true,
+    });
+
+    return true;
   }
 
-  commitState({
-    clockTamperDetected: true,
-  });
+  if (!state.clockTamperDetected) {
+    resetClockTamperRecoveryState();
+    return false;
+  }
 
-  return true;
+  stableClockSampleCount += 1;
+
+  if (
+    stableClockSampleCount >= CLOCK_TAMPER_RECOVERY_STABLE_SAMPLE_COUNT
+    && getOnlineStatus()
+    && !tamperRecoverySyncInFlight
+  ) {
+    tamperRecoverySyncInFlight = true;
+    syncServerTime({ reason: 'clock-recovery' })
+      .catch((error) => {
+        console.error('Sinkronisasi trusted time saat pemulihan clock gagal', error);
+      })
+      .finally(() => {
+        tamperRecoverySyncInFlight = false;
+      });
+  }
+
+  return state.clockTamperDetected;
 }
 
 export function subscribeTrustedTime(listener) {
@@ -458,6 +494,8 @@ export function initializeTrustedTime() {
   initialized = true;
   state = loadPersistedState();
   invalidateSnapshotCache();
+  resetClockTamperRecoveryState();
+  tamperRecoverySyncInFlight = false;
   lastLocalNowMs = readDeviceNow();
   lastPerfNowMs = readPerfNow();
   persistState();

@@ -131,17 +131,25 @@ export function extractTimeAuditFields(record = {}) {
 export function resolveTimeVerificationStatus(record, options = {}) {
   const hasAuditMetadata = options.hasAuditMetadata ?? hasTimeAuditMetadata(record);
   if (!hasAuditMetadata) return 'legacy';
-  if (record?.clockTamperDetected) return 'suspicious';
 
   const trustLevel = VALID_TRUST_LEVELS.has(record?.timeTrustLevel)
     ? record.timeTrustLevel
     : 'unverified';
+  const hasServerReceipt = resolveTimestampMs(record?.receivedAtServerMs) !== null;
+
+  if (record?.clockTamperDetected) {
+    if (!hasServerReceipt) return 'suspicious';
+    if (trustLevel === 'offline-interrupted' || trustLevel === 'unverified') {
+      return 'needs-review';
+    }
+    return 'verified';
+  }
 
   if (trustLevel === 'offline-interrupted' || trustLevel === 'unverified') {
     return 'needs-review';
   }
 
-  if (resolveTimestampMs(record?.receivedAtServerMs) !== null) {
+  if (hasServerReceipt) {
     return 'verified';
   }
 
@@ -225,7 +233,11 @@ export function buildTimeAuditInfo(record, options = {}) {
 
   let warningMessage = verificationMeta.description;
   if (normalizedRecord.clockTamperDetected) {
-    warningMessage = 'Perubahan jam perangkat terdeteksi. Record perlu audit manual.';
+    warningMessage = verificationStatus === 'suspicious'
+      ? 'Perubahan jam perangkat terdeteksi. Record perlu audit manual.'
+      : verificationStatus === 'needs-review'
+        ? 'Perubahan jam perangkat sempat terdeteksi. Record sudah tersimpan, tetapi tetap perlu review.'
+        : 'Perubahan jam perangkat sempat terdeteksi, tetapi record ini sudah diverifikasi ulang setelah sinkronisasi server.';
   } else if (trustLevel === 'offline-interrupted') {
     warningMessage = 'Sesi aplikasi sempat terputus saat offline. Record ini wajib direview.';
   } else if (trustLevel === 'offline-trusted' && verificationStatus === 'verified') {
