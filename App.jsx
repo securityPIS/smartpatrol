@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from 'react';
+import React from 'react';
 import {
   AppProvider,
   useAuth,
@@ -24,21 +24,23 @@ import NotificationsPage from './src/pages/NotificationsPage';
 import UsersPage from './src/pages/UsersPage';
 import ShipsPage from './src/pages/ShipsPage';
 import DailyReportPage from './src/pages/DailyReportPage';
-
-// Modals: lazy-loaded and only mounted when visible.
-const PatrolCameraModal = lazy(() => import('./src/components/modals/PatrolCameraModal'));
-const PatrolFormModal = lazy(() => import('./src/components/modals/PatrolFormModal'));
-const IncidentFormModal = lazy(() => import('./src/components/modals/IncidentFormModal'));
-const IncidentDetailModal = lazy(() => import('./src/components/modals/IncidentDetailModal'));
-const AssignDueDatePopup = lazy(() => import('./src/components/modals/AssignDueDatePopup'));
-const SOSAlertModal = lazy(() => import('./src/components/modals/SOSAlertModal'));
-const ShipFormModal = lazy(() => import('./src/components/modals/FormModals').then(module => ({ default: module.ShipFormModal })));
-const ShipDocumentFormModal = lazy(() => import('./src/components/modals/FormModals').then(module => ({ default: module.ShipDocumentFormModal })));
-const UserFormModal = lazy(() => import('./src/components/modals/FormModals').then(module => ({ default: module.UserFormModal })));
-const UserDetailModal = lazy(() => import('./src/components/modals/DetailModals').then(module => ({ default: module.UserDetailModal })));
-const ReportDetailModal = lazy(() => import('./src/components/modals/DetailModals').then(module => ({ default: module.ReportDetailModal })));
-const PhotoPreviewModal = lazy(() => import('./src/components/modals/DetailModals').then(module => ({ default: module.PhotoPreviewModal })));
-const ConfirmModal = lazy(() => import('./src/components/modals/ConfirmModal'));
+import PatrolCameraModal from './src/components/modals/PatrolCameraModal';
+import PatrolFormModal from './src/components/modals/PatrolFormModal';
+import IncidentFormModal from './src/components/modals/IncidentFormModal';
+import IncidentDetailModal from './src/components/modals/IncidentDetailModal';
+import AssignDueDatePopup from './src/components/modals/AssignDueDatePopup';
+import SOSAlertModal from './src/components/modals/SOSAlertModal';
+import ConfirmModal from './src/components/modals/ConfirmModal';
+import {
+  ShipFormModal,
+  ShipDocumentFormModal,
+  UserFormModal,
+} from './src/components/modals/FormModals';
+import {
+  UserDetailModal,
+  ReportDetailModal,
+  PhotoPreviewModal,
+} from './src/components/modals/DetailModals';
 
 class PageErrorBoundary extends React.Component {
   constructor(props) {
@@ -149,32 +151,30 @@ function AppShell() {
         <BottomNav />
       </div>
 
-      <Suspense fallback={null}>
-        {pendingPatrolCameraCapture && <PatrolCameraModal />}
-        {activePatrolItem && <PatrolFormModal />}
-        {showIncidentModal && <IncidentFormModal />}
-        {selectedIncident && <IncidentDetailModal />}
-        {showShipForm && <ShipFormModal />}
-        {showShipDocForm && <ShipDocumentFormModal />}
-        {showUserForm && <UserFormModal />}
-        {selectedUser && <UserDetailModal />}
-        {selectedReportDetail && <ReportDetailModal />}
-        {previewPhoto && <PhotoPreviewModal />}
-        {confirmDialog && (
-          <ConfirmModal
-            isOpen={!!confirmDialog}
-            title={confirmDialog?.title}
-            message={confirmDialog?.message}
-            onConfirm={() => confirmDialog?.onConfirm?.()}
-            onCancel={() => setConfirmDialog(null)}
-            confirmText={confirmDialog?.confirmText}
-            cancelText={confirmDialog?.cancelText}
-            isAlert={confirmDialog?.isAlert}
-          />
-        )}
-        {showAssignPopup && <AssignDueDatePopup />}
-        {activeSOSAlert && <SOSAlertModal />}
-      </Suspense>
+      {pendingPatrolCameraCapture && <PatrolCameraModal />}
+      {activePatrolItem && <PatrolFormModal />}
+      {showIncidentModal && <IncidentFormModal />}
+      {selectedIncident && <IncidentDetailModal />}
+      {showShipForm && <ShipFormModal />}
+      {showShipDocForm && <ShipDocumentFormModal />}
+      {showUserForm && <UserFormModal />}
+      {selectedUser && <UserDetailModal />}
+      {selectedReportDetail && <ReportDetailModal />}
+      {previewPhoto && <PhotoPreviewModal />}
+      {confirmDialog && (
+        <ConfirmModal
+          isOpen={!!confirmDialog}
+          title={confirmDialog?.title}
+          message={confirmDialog?.message}
+          onConfirm={() => confirmDialog?.onConfirm?.()}
+          onCancel={() => setConfirmDialog(null)}
+          confirmText={confirmDialog?.confirmText}
+          cancelText={confirmDialog?.cancelText}
+          isAlert={confirmDialog?.isAlert}
+        />
+      )}
+      {showAssignPopup && <AssignDueDatePopup />}
+      {activeSOSAlert && <SOSAlertModal />}
     </div>
   );
 }

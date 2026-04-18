@@ -6,15 +6,18 @@ import "./styles.css";
 class AppBootBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, errorMessage: "" };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return {
+      hasError: true,
+      errorMessage: error?.message || "App gagal dimuat",
+    };
   }
 
-  componentDidCatch(error) {
-    console.error("App boot failed", error);
+  componentDidCatch(error, info) {
+    console.error("App boot failed", error, info);
   }
 
   render() {
@@ -27,6 +30,11 @@ class AppBootBoundary extends React.Component {
             <p className="mt-3 text-sm leading-relaxed text-cyan-200/75">
               Terjadi gangguan saat memuat tampilan awal. Silakan refresh sekali lagi. Jika masih berulang, console browser sekarang akan menampilkan error yang lebih jelas.
             </p>
+            {this.state.errorMessage ? (
+              <p className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-left text-xs text-rose-100/90">
+                {this.state.errorMessage}
+              </p>
+            ) : null}
           </div>
         </div>
       );

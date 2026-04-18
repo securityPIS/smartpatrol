@@ -374,6 +374,19 @@ function arraysEqual(a, b) {
   return a.every((val, i) => val === b[i]);
 }
 
+function ensureArray(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+function ensureObject(value) {
+  return value && typeof value === 'object' ? value : null;
+}
+
+function isNavigatorOnline() {
+  if (typeof navigator === 'undefined') return true;
+  return navigator.onLine !== false;
+}
+
 // --- UTILITY FUNCTIONS ---
 function getJakartaDateParts(date = new Date()) {
   // Reuses module-level cached formatter — avoids recreating Intl instance on every call
@@ -587,7 +600,9 @@ function createBaseCheckpointRecord(ship, checkpoint, index) {
 
 function createShipCheckpointCollection(ship) {
   if (!ship) return [];
-  return (ship.customCheckpoints || []).map((checkpoint, index) => createBaseCheckpointRecord(ship, checkpoint, index));
+  return ensureArray(ship.customCheckpoints).map((checkpoint, index) => (
+    createBaseCheckpointRecord(ship, checkpoint, index)
+  ));
 }
 
 function resetCheckpointForShift(checkpoint, options = {}) {
@@ -621,7 +636,7 @@ function createCheckpointGalleryPhotoRecord(photoUrl, options = {}) {
 }
 
 function resetCheckpointCollection(checkpoints, options = {}) {
-  return checkpoints
+  return ensureArray(checkpoints)
     .filter(checkpoint => !checkpoint.isTemporaryShiftNode)
     .map(checkpoint => resetCheckpointForShift(checkpoint, options));
 }
@@ -652,8 +667,9 @@ function shouldResetCheckpointForActiveShift(checkpoint, activeShiftKey) {
 
 function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey = null) {
   const baseCheckpoints = createShipCheckpointCollection(ship);
-  const checkpointsById = new Map((checkpoints || []).map(checkpoint => [String(checkpoint.id), checkpoint]));
-  const checkpointsByName = new Map((checkpoints || []).map(checkpoint => [createCheckpointNameKey(checkpoint.name), checkpoint]));
+  const safeCheckpoints = ensureArray(checkpoints).filter(checkpoint => ensureObject(checkpoint));
+  const checkpointsById = new Map(safeCheckpoints.map(checkpoint => [String(checkpoint.id), checkpoint]));
+  const checkpointsByName = new Map(safeCheckpoints.map(checkpoint => [createCheckpointNameKey(checkpoint.name), checkpoint]));
 
   return baseCheckpoints.map((baseCheckpoint) => {
     const matchedCheckpoint = checkpointsById.get(String(baseCheckpoint.id))
@@ -857,7 +873,7 @@ function createMissedCheckpoint(checkpoint, shiftMeta) {
 }
 
 function summarizePatrolCheckpoints(checkpoints) {
-  return checkpoints.reduce((summary, checkpoint) => {
+  return ensureArray(checkpoints).reduce((summary, checkpoint) => {
     summary.total += 1;
     if (checkpoint.status === 'completed') {
       summary.completed += 1;
@@ -900,7 +916,7 @@ function buildGuardScoreMaps(checkpoints = []) {
 
 function buildGuardShiftSnapshot(users, shipName, checkpoints = []) {
   const scoreMaps = buildGuardScoreMaps(checkpoints);
-  return users
+  return ensureArray(users)
     .filter(user => user.shipAssigned === shipName && user.status === 'active' && user.role === ACCESS_ROLES.PETUGAS)
     .map(user => ({
       id: user.id,
@@ -996,15 +1012,31 @@ function requestCurrentGeolocation() {
   });
 }
 
-async function fetchWeatherSnapshotForCoordinates(gpsSnapshot) {
+function createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot) {
+  const safeFallbackWeather = ensureObject(fallbackWeather);
+  if (!safeFallbackWeather || gpsSnapshot?.lat == null || gpsSnapshot?.lng == null) return null;
+
+  return {
+    ...safeFallbackWeather,
+    capturedAt: gpsSnapshot.capturedAt,
+    source: `${gpsSnapshot.source || 'cache'}-cache`,
+    lat: gpsSnapshot.lat,
+    lng: gpsSnapshot.lng,
+  };
+}
+
+async function fetchWeatherSnapshotForCoordinates(gpsSnapshot, fallbackWeather = null) {
   if (gpsSnapshot?.lat == null || gpsSnapshot?.lng == null) return null;
+  if (!isNavigatorOnline()) {
+    return createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot);
+  }
 
   try {
     const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${gpsSnapshot.lat}&longitude=${gpsSnapshot.lng}&current_weather=true`);
-    if (!response.ok) return null;
+    if (!response.ok) return createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot);
 
     const payload = await response.json();
-    if (!payload?.current_weather) return null;
+    if (!payload?.current_weather) return createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot);
 
     return {
       ...payload.current_weather,
@@ -1015,11 +1047,12 @@ async function fetchWeatherSnapshotForCoordinates(gpsSnapshot) {
     };
   } catch (error) {
     console.error('Gagal mengambil snapshot cuaca patroli', error);
-    return null;
+    return createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot);
   }
 }
 
-async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDate().toISOString()) {
+async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDate().toISOString(), options = {}) {
+  const { fallbackWeather = null } = options;
   const shipSnapshot = createShipLocationSnapshot(ship);
   const deviceLocation = await requestCurrentGeolocation();
 
@@ -1039,7 +1072,7 @@ async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDat
         }
       : null;
 
-  const weatherSnapshot = await fetchWeatherSnapshotForCoordinates(gpsSnapshot);
+  const weatherSnapshot = await fetchWeatherSnapshotForCoordinates(gpsSnapshot, fallbackWeather);
 
   return {
     shipSnapshot,
@@ -1049,7 +1082,9 @@ async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDat
 }
 
 function sortHistoryEntries(entries) {
-  return [...entries].sort((left, right) => {
+  return ensureArray(entries)
+    .filter(entry => ensureObject(entry))
+    .sort((left, right) => {
     const leftTimestamp = new Date(left.createdAt || '').getTime();
     const rightTimestamp = new Date(right.createdAt || '').getTime();
 
@@ -1057,14 +1092,16 @@ function sortHistoryEntries(entries) {
       return rightTimestamp - leftTimestamp;
     }
 
-    if (left.dateKey !== right.dateKey) return right.dateKey.localeCompare(left.dateKey);
+    const leftDateKey = String(left.dateKey || '');
+    const rightDateKey = String(right.dateKey || '');
+    if (leftDateKey !== rightDateKey) return rightDateKey.localeCompare(leftDateKey);
     return String(right.shift || '').localeCompare(String(left.shift || ''));
   });
 }
 
 function mergeHistoryEntries(previousEntries, nextEntries) {
-  const merged = new Map(previousEntries.map(entry => [entry.key || entry.id, entry]));
-  nextEntries.forEach(entry => {
+  const merged = new Map(ensureArray(previousEntries).map(entry => [entry.key || entry.id, entry]));
+  ensureArray(nextEntries).forEach(entry => {
     merged.set(entry.key || entry.id, entry);
   });
   return sortHistoryEntries(Array.from(merged.values()));
@@ -1390,7 +1427,9 @@ function createNotificationRecord(notification) {
 }
 
 function sortNotifications(notifications) {
-  return [...notifications].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  return ensureArray(notifications)
+    .filter(notification => ensureObject(notification))
+    .sort((left, right) => new Date(right.createdAt || '').getTime() - new Date(left.createdAt || '').getTime());
 }
 
 function isShiftNotificationDebugEnabled() {
@@ -2203,13 +2242,14 @@ export function AppProvider({ children }) {
     : (operationalShip?.name || (isPetugas ? null : currentUserRecord?.shipAssigned || shipsData[0]?.name || null));
   const checkpoints = useMemo(() => {
     if (!operationalShip?.id) return [];
-    return checkpointsByShip[operationalShip.id] || [];
+    return ensureArray(checkpointsByShip[operationalShip.id]).filter(checkpoint => ensureObject(checkpoint));
   }, [checkpointsByShip, operationalShip?.id]);
   const visibleHistoryEntries = useMemo(() => {
     if (!currentUserRecord) return [];
-    if (isAdmin || isPic) return historyEntries;
+    const safeHistoryEntries = ensureArray(historyEntries).filter(entry => ensureObject(entry));
+    if (isAdmin || isPic) return safeHistoryEntries;
     if (!assignedShipForCurrentUser) return [];
-    return historyEntries.filter(entry => (
+    return safeHistoryEntries.filter(entry => (
       entry.shipSnapshot?.id === assignedShipForCurrentUser.id
       || entry.ship === assignedShipForCurrentUser.name
     ));
@@ -2217,13 +2257,22 @@ export function AppProvider({ children }) {
   const selectedHistoryEntry = useMemo(() => visibleHistoryEntries.find(entry => entry.id === selectedHistoryId) || null, [visibleHistoryEntries, selectedHistoryId]);
   const visibleNotifications = useMemo(() => {
     if (!currentUserId) return [];
-    return notifications.filter(notification => notification.targetUserIds.includes(currentUserId));
+    return ensureArray(notifications).filter((notification) => (
+      ensureObject(notification)
+      && Array.isArray(notification.targetUserIds)
+      && notification.targetUserIds.includes(currentUserId)
+    ));
   }, [notifications, currentUserId]);
   const unreadNotificationCount = useMemo(() => {
     if (!currentUserId) return 0;
-    return visibleNotifications.filter(notification => !notification.readByUserIds.includes(currentUserId)).length;
+    return visibleNotifications.filter((notification) => !(
+      Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []
+    ).includes(currentUserId)).length;
   }, [visibleNotifications, currentUserId]);
-  const filteredCheckpoints = useMemo(() => checkpoints.filter(cp => cp.name.toLowerCase().includes(deferredSearchQuery.toLowerCase())), [checkpoints, deferredSearchQuery]);
+  const filteredCheckpoints = useMemo(() => {
+    const safeLookup = String(deferredSearchQuery || '').toLowerCase();
+    return checkpoints.filter(checkpoint => String(checkpoint?.name || '').toLowerCase().includes(safeLookup));
+  }, [checkpoints, deferredSearchQuery]);
   const incidentLocationOptions = useMemo(() => {
     const checkpointDefinitions = (
       operationalShip?.customCheckpoints?.length
@@ -2239,10 +2288,10 @@ export function AppProvider({ children }) {
         .filter(Boolean),
     ));
   }, [assignedShipForCurrentUser, operationalShip, shipsData]);
-  const completedCount = useMemo(() => checkpoints.filter(c => c.status === 'completed').length, [checkpoints]);
+  const completedCount = useMemo(() => checkpoints.filter(checkpoint => checkpoint?.status === 'completed').length, [checkpoints]);
   const totalCount = checkpoints.length;
   const progressPercentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-  const activePatrolId = useMemo(() => Object.keys(activeForms)[0], [activeForms]);
+  const activePatrolId = useMemo(() => Object.keys(ensureObject(activeForms) || {})[0], [activeForms]);
   const activePatrolState = useMemo(() => activePatrolId ? activeForms[activePatrolId] : null, [activeForms, activePatrolId]);
   const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => String(c.id) === String(activePatrolId)) : null, [activePatrolId, checkpoints]);
   const canPatrolCurrentShip = Boolean(currentUserRecord && operationalShip && (isPic || (isPetugas && assignedShipForCurrentUser?.id === operationalShip.id)));
@@ -2657,16 +2706,19 @@ export function AppProvider({ children }) {
   }, []);
   const markNotificationAsRead = useCallback((notificationId) => {
     if (!currentUserId) return;
-    setNotifications(previousNotifications => previousNotifications.map((notification) => {
-      if (notification.id !== notificationId || notification.readByUserIds.includes(currentUserId)) return notification;
-      return { ...notification, readByUserIds: [...notification.readByUserIds, currentUserId] };
+    setNotifications(previousNotifications => ensureArray(previousNotifications).map((notification) => {
+      const readByUserIds = Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : [];
+      if (notification?.id !== notificationId || readByUserIds.includes(currentUserId)) return notification;
+      return { ...notification, readByUserIds: [...readByUserIds, currentUserId] };
     }));
   }, [currentUserId]);
   const markAllNotificationsAsRead = useCallback(() => {
     if (!currentUserId) return;
-    setNotifications(previousNotifications => previousNotifications.map((notification) => (
-      notification.targetUserIds.includes(currentUserId) && !notification.readByUserIds.includes(currentUserId)
-        ? { ...notification, readByUserIds: [...notification.readByUserIds, currentUserId] }
+    setNotifications(previousNotifications => ensureArray(previousNotifications).map((notification) => (
+      Array.isArray(notification?.targetUserIds)
+      && notification.targetUserIds.includes(currentUserId)
+      && !(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []).includes(currentUserId)
+        ? { ...notification, readByUserIds: [...(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []), currentUserId] }
         : notification
     )));
   }, [currentUserId]);
@@ -3122,6 +3174,7 @@ export function AppProvider({ children }) {
       const environmentSnapshot = await capturePatrolEnvironmentSnapshot(
         operationalShip,
         trustedTimestamp.occurredAtTrustedIso,
+        { fallbackWeather: weatherInfo },
       );
 
       const submittedItem = {
@@ -3176,7 +3229,7 @@ export function AppProvider({ children }) {
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, submittingPatrolId, updateOperationalShipCheckpoints]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -4482,7 +4535,57 @@ export function AppProvider({ children }) {
   }, [appendNotifications, getShipRecipients, usersData]);
 
   // Weather
-  useEffect(() => { const fetchWeather = async () => { try { const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=-6.1021&longitude=106.8833&current_weather=true'); const data = await response.json(); setWeatherInfo(data.current_weather); saveWeatherCache(data.current_weather); } catch (error) { console.error(error); } finally { setWeatherLoading(false); } }; if (!weatherInfo) fetchWeather(); else setWeatherLoading(false); }, []);
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateWeather = async () => {
+      const cachedWeather = loadWeatherCache();
+
+      if (weatherInfo) {
+        if (!cancelled) setWeatherLoading(false);
+        return;
+      }
+
+      if (!isNavigatorOnline()) {
+        if (!cancelled && ensureObject(cachedWeather)) {
+          setWeatherInfo(cachedWeather);
+        }
+        if (!cancelled) setWeatherLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=-6.1021&longitude=106.8833&current_weather=true');
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const currentWeather = ensureObject(data?.current_weather);
+
+        if (cancelled) return;
+
+        if (currentWeather) {
+          setWeatherInfo(currentWeather);
+          saveWeatherCache(currentWeather);
+        } else if (ensureObject(cachedWeather)) {
+          setWeatherInfo(cachedWeather);
+        }
+      } catch (error) {
+        console.error('Gagal memuat cuaca operasional', error);
+        if (!cancelled && ensureObject(cachedWeather)) {
+          setWeatherInfo(cachedWeather);
+        }
+      } finally {
+        if (!cancelled) setWeatherLoading(false);
+      }
+    };
+
+    hydrateWeather();
+    return () => {
+      cancelled = true;
+    };
+  }, [weatherInfo]);
   const getWeatherDetail = useCallback((code) => { if (code === 0) return { text: 'Cerah', icon: <Sun className="w-5 h-5 text-cyan-400" /> }; if (code >= 1 && code <= 3) return { text: 'Berawan', icon: <Cloud className="w-5 h-5 text-cyan-200" /> }; if (code >= 51 && code <= 67) return { text: 'Hujan Ringan', icon: <CloudRain className="w-5 h-5 text-cyan-500" /> }; if (code >= 80 && code <= 99) return { text: 'Hujan Badai', icon: <CloudRain className="w-5 h-5 text-yellow-500" /> }; return { text: 'Tidak Diketahui', icon: <Cloud className="w-5 h-5 text-slate-500" /> }; }, []);
 
   const uiValue = useMemo(() => ({
