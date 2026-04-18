@@ -17,6 +17,7 @@ import {
   subscribeToFirebaseAuthChanges,
 } from '../services/firebase/auth';
 import {
+  fetchCloudAppState,
   isCloudSyncEnabled,
   isCloudWriteEnabled,
   saveCloudAppState,
@@ -2057,6 +2058,7 @@ export function AppProvider({ children }) {
   const latestCloudSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
+  const cloudFetchInFlightRef = useRef(false);
 
 // SOS Hooks moved to resolve TDZ
 
@@ -2590,6 +2592,59 @@ export function AppProvider({ children }) {
     });
     return normalizedState;
   }, []);
+  const handleIncomingCloudPayload = useCallback((cloudPayload, options = {}) => {
+    const shouldClearState = options.clearWhenEmpty !== false;
+    const payloadState = cloudPayload?.state && typeof cloudPayload.state === 'object'
+      ? cloudPayload.state
+      : null;
+
+    setCloudSyncBootstrapped(true);
+
+    logCloudSyncDebug('snapshot-received', {
+      source: options.source || 'snapshot',
+      hasState: Boolean(payloadState),
+      activeShiftKey: payloadState?.activeShiftKey || null,
+      notifications: Array.isArray(payloadState?.notifications) ? payloadState.notifications.length : 0,
+      historyEntries: Array.isArray(payloadState?.historyEntries) ? payloadState.historyEntries.length : 0,
+    });
+
+    if (!payloadState) {
+      if (shouldClearState) {
+        latestCloudSharedStateRef.current = null;
+      }
+      return null;
+    }
+
+    const cloudReceivedAtMs = resolveExternalTimestampMs(cloudPayload?.updatedAt)
+      || resolveExternalTimestampMs(cloudPayload?.clientUpdatedAt)
+      || resolveExternalTimestampMs(options.receivedAtServerMs)
+      || getTrustedNowMs();
+
+    return applyCloudSharedState(payloadState, {
+      receivedAtServerMs: cloudReceivedAtMs,
+    });
+  }, [applyCloudSharedState]);
+  const refreshCloudSharedState = useCallback(async (options = {}) => {
+    if (!isCloudSyncEnabled || cloudFetchInFlightRef.current) return null;
+
+    cloudFetchInFlightRef.current = true;
+    try {
+      const cloudPayload = await fetchCloudAppState({
+        preferServer: options.preferServer !== false,
+      });
+      return handleIncomingCloudPayload(cloudPayload, {
+        source: options.source || 'manual-refresh',
+        clearWhenEmpty: options.clearWhenEmpty,
+        receivedAtServerMs: options.receivedAtServerMs,
+      });
+    } catch (error) {
+      setCloudSyncBootstrapped(true);
+      console.error('Gagal menarik state patroli cloud', error);
+      return null;
+    } finally {
+      cloudFetchInFlightRef.current = false;
+    }
+  }, [handleIncomingCloudPayload]);
   const getUsersByRole = useCallback((roles) => (
     usersData.filter(user => roles.includes(user.role)).map(user => user.id)
   ), [usersData]);
@@ -4339,32 +4394,93 @@ export function AppProvider({ children }) {
     if (!isCloudSyncEnabled) return () => {};
 
     return subscribeToCloudAppState((cloudPayload) => {
-      setCloudSyncBootstrapped(true);
-
-      logCloudSyncDebug('snapshot-received', {
-        hasState: Boolean(cloudPayload?.state),
-        activeShiftKey: cloudPayload?.state?.activeShiftKey || null,
-        notifications: Array.isArray(cloudPayload?.state?.notifications) ? cloudPayload.state.notifications.length : 0,
-        historyEntries: Array.isArray(cloudPayload?.state?.historyEntries) ? cloudPayload.state.historyEntries.length : 0,
-      });
-
-      if (!cloudPayload?.state) {
-        latestCloudSharedStateRef.current = null;
-        return;
-      }
-
-      const cloudReceivedAtMs = resolveExternalTimestampMs(cloudPayload.updatedAt)
-        || resolveExternalTimestampMs(cloudPayload.clientUpdatedAt)
-        || getTrustedNowMs();
-
-      applyCloudSharedState(cloudPayload.state, {
-        receivedAtServerMs: cloudReceivedAtMs,
+      handleIncomingCloudPayload(cloudPayload, {
+        source: 'realtime-snapshot',
+        clearWhenEmpty: true,
       });
     }, (error) => {
       setCloudSyncBootstrapped(true);
       console.error('Gagal subscribe data patroli cloud', error);
     });
-  }, [applyCloudSharedState]);
+  }, [handleIncomingCloudPayload]);
+  useEffect(() => {
+    if (!isCloudSyncEnabled) return () => {};
+
+    let isDisposed = false;
+
+    const runRefresh = (source, options = {}) => {
+      if (isDisposed) return;
+      refreshCloudSharedState({
+        source,
+        ...options,
+      });
+    };
+
+    runRefresh('bootstrap', {
+      preferServer: isNavigatorOnline(),
+      clearWhenEmpty: true,
+    });
+
+    const handleOnline = () => {
+      runRefresh('online', {
+        preferServer: true,
+        clearWhenEmpty: false,
+      });
+    };
+
+    const handleFocus = () => {
+      runRefresh('focus', {
+        preferServer: isNavigatorOnline(),
+        clearWhenEmpty: false,
+      });
+    };
+
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+      runRefresh('visibility-visible', {
+        preferServer: isNavigatorOnline(),
+        clearWhenEmpty: false,
+      });
+    };
+
+    const refreshIntervalId = typeof window !== 'undefined'
+      ? window.setInterval(() => {
+          if (!isNavigatorOnline()) return;
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+
+          runRefresh('interval', {
+            preferServer: true,
+            clearWhenEmpty: false,
+          });
+        }, 45000)
+      : null;
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('focus', handleFocus);
+    }
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      isDisposed = true;
+
+      if (refreshIntervalId !== null && typeof window !== 'undefined') {
+        window.clearInterval(refreshIntervalId);
+      }
+
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('focus', handleFocus);
+      }
+
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [refreshCloudSharedState]);
   useEffect(() => {
     if (!isCloudSyncEnabled || !isCloudWriteEnabled || isOffline || !cloudSyncBootstrapped) return;
 

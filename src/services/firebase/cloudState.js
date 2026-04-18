@@ -1,4 +1,12 @@
-import { doc, onSnapshot, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  getDocFromServer,
+  onSnapshot,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+} from 'firebase/firestore';
 import { getDownloadURL, ref, uploadString } from 'firebase/storage';
 import { firebaseDb, firebaseStorage } from './app';
 
@@ -30,6 +38,28 @@ export function subscribeToCloudAppState(callback, onError) {
     },
     onError,
   );
+}
+
+export async function fetchCloudAppState(options = {}) {
+  const { preferServer = true } = options;
+
+  if (!cloudStateRef) return null;
+
+  const readSnapshot = async (reader) => {
+    const snapshot = await reader(cloudStateRef);
+    if (!snapshot.exists()) return null;
+    return snapshot.data();
+  };
+
+  if (!preferServer) {
+    return readSnapshot(getDoc);
+  }
+
+  try {
+    return await readSnapshot(getDocFromServer);
+  } catch {
+    return readSnapshot(getDoc);
+  }
 }
 
 export async function saveCloudAppState(state, options = {}) {
