@@ -554,6 +554,26 @@ function normalizeShiftKeyForCloudSync(shiftKey, fallbackMeta = getShiftMeta()) 
   return persistedShiftMeta.key;
 }
 
+function resolveLatestShiftKey(shiftKeys = [], fallbackMeta = getShiftMeta()) {
+  const safeFallbackMeta = fallbackMeta || getShiftMeta();
+  let latestShiftMeta = getShiftMetaFromKey(safeFallbackMeta.key) || safeFallbackMeta;
+  let latestShiftStartAt = getShiftScheduleTimes(latestShiftMeta).startAt.getTime();
+
+  ensureArray(Array.isArray(shiftKeys) ? shiftKeys : [shiftKeys]).forEach((shiftKey) => {
+    const normalizedShiftKey = normalizeShiftKeyForCloudSync(shiftKey, safeFallbackMeta);
+    const candidateShiftMeta = getShiftMetaFromKey(normalizedShiftKey);
+    if (!candidateShiftMeta) return;
+
+    const candidateShiftStartAt = getShiftScheduleTimes(candidateShiftMeta).startAt.getTime();
+    if (candidateShiftStartAt >= latestShiftStartAt) {
+      latestShiftMeta = candidateShiftMeta;
+      latestShiftStartAt = candidateShiftStartAt;
+    }
+  });
+
+  return latestShiftMeta?.key || safeFallbackMeta.key;
+}
+
 function addDaysToDateKey(dateKey, days) {
   const { year, month, day } = parseDateKey(dateKey);
   const safeDate = new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0));
@@ -2059,6 +2079,7 @@ export function AppProvider({ children }) {
   const cloudAssetCacheRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
   const cloudFetchInFlightRef = useRef(false);
+  const localSharedStateRef = useRef(null);
 
 // SOS Hooks moved to resolve TDZ
 
@@ -2332,6 +2353,9 @@ export function AppProvider({ children }) {
     activeSOSAlert,
     sosHistory,
   ]);
+  useEffect(() => {
+    localSharedStateRef.current = sharedState;
+  }, [sharedState]);
   const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
     if (!photoUrl.startsWith('idb://')) return photoUrl;
@@ -2494,7 +2518,15 @@ export function AppProvider({ children }) {
     const auditedIncomingState = receivedAtServerMs !== null
       ? markSharedStateTimeAuditReceived(incomingState, receivedAtServerMs)
       : incomingState;
-    const normalizedState = mergeSharedStateSnapshots({}, auditedIncomingState);
+    const currentLocalState = localSharedStateRef.current || {};
+    const resolvedActiveShiftKey = resolveLatestShiftKey(
+      [currentLocalState.activeShiftKey, auditedIncomingState.activeShiftKey],
+      getShiftMeta(),
+    );
+    const normalizedState = createSharedStateSnapshot({
+      ...mergeSharedStateSnapshots(currentLocalState, auditedIncomingState),
+      activeShiftKey: resolvedActiveShiftKey,
+    });
     const serializedState = serializeSharedStateSnapshot(normalizedState);
     latestCloudSharedStateRef.current = normalizedState;
 
