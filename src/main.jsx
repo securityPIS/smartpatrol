@@ -3,6 +3,21 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 
+if (typeof window !== "undefined") {
+  window.addEventListener("vite:preloadError", (event) => {
+    console.error("Chunk aplikasi gagal dimuat", event);
+    event.preventDefault();
+
+    if (navigator.onLine !== true) {
+      return;
+    }
+
+    const latestUrl = new URL(window.location.href);
+    latestUrl.searchParams.set("_chunkfix", Date.now().toString());
+    window.location.replace(latestUrl.toString());
+  });
+}
+
 class AppBootBoundary extends React.Component {
   constructor(props) {
     super(props);
