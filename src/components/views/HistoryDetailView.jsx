@@ -74,7 +74,7 @@ function getLatestCompletedCheckpoint(checkpoints = []) {
   }, null);
 }
 
-export default function HistoryDetailView({ isInline = false, entryData = null, onSummaryCardClick = null }) {
+export default function HistoryDetailView({ isInline = false, entryData = null, onSummaryCardClick = null, hideTimeAudit = false }) {
   const { selectedHistoryEntry } = useHistory();
   const { operationalShip, operationalShipName } = useShips();
   const { weatherInfo, weatherLoading, getWeatherDetail } = useWeather();
@@ -231,11 +231,13 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
           )}
         </div>
 
-        <TimeAuditSummaryCard
-          records={completedAuditRecords}
-          title="Audit Timestamp Shift"
-          fallbackTimestampKeys={['completedAt', 'updatedAt', 'createdAt']}
-        />
+        {!hideTimeAudit && (
+          <TimeAuditSummaryCard
+            records={completedAuditRecords}
+            title="Audit Timestamp Shift"
+            fallbackTimestampKeys={['completedAt', 'updatedAt', 'createdAt']}
+          />
+        )}
 
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">

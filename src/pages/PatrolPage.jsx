@@ -1,6 +1,7 @@
 import React from 'react';
 import { ACCESS_ROLES, useHistory, useIncidents, usePatrol, useReports, useShips, useWeather } from '../context/AppContextRuntime';
 import { getTrustedTimeSnapshot, subscribeTrustedTime } from '../services/time/trustedTime';
+import { summarizeTimeAudit } from '../services/time/timeAudit';
 import {
   CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft, Plus,
   CalendarDays, User, Thermometer, Wind, FileText, CircleOff, TimerReset,
@@ -145,6 +146,10 @@ const PatrolPage = React.memo(function PatrolPage() {
     () => getTimeStatusMeta(trustedTime.tone),
     [trustedTime.tone],
   );
+  const timeAuditSummary = React.useMemo(() => {
+    const completed = activeCheckpoints.filter(c => c.status === 'completed');
+    return summarizeTimeAudit(completed, { fallbackTimestampKeys: ['completedAt', 'updatedAt', 'createdAt'] });
+  }, [activeCheckpoints]);
   
   // Check if any form or detail is active
   const hasActiveForm = Object.keys(activeForms && typeof activeForms === 'object' ? activeForms : {}).length > 0;
@@ -283,6 +288,7 @@ const PatrolPage = React.memo(function PatrolPage() {
       isInline={true}
       entryData={infoEntryData}
       onSummaryCardClick={handleOpenSummaryDetail}
+      hideTimeAudit={true}
     />
   );
 
@@ -344,21 +350,25 @@ const PatrolPage = React.memo(function PatrolPage() {
                   </button>
                 </div>
 
-                <div className={`rounded-xl border px-4 py-3 ${timeStatusMeta.cardClass}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className={`text-[10px] font-bold uppercase tracking-widest ${timeStatusMeta.titleClass}`}>Status Waktu</p>
-                      <p className={`mt-1 text-sm font-black ${timeStatusMeta.labelClass}`}>{trustedTime.label}</p>
-                    </div>
-                    {trustedTime.anchorSyncedAtMs ? (
-                      <p className={`text-[10px] text-right leading-relaxed ${timeStatusMeta.metaClass}`}>
-                        Anchor
-                        <br />
-                        {new Date(trustedTime.anchorSyncedAtMs).toLocaleString('id-ID')}
-                      </p>
-                    ) : null}
+                <div className="flex flex-wrap items-center gap-2 p-3 bg-[#0b1229] border border-cyan-800/50 rounded-xl shadow-sm mt-3">
+                  <div className={`flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-full border bg-opacity-10 ${trustedTime.tone === 'success' ? 'bg-emerald-500 border-emerald-500/30' : trustedTime.tone === 'warning' ? 'bg-yellow-500 border-yellow-500/30' : 'bg-rose-500 border-rose-500/30'}`}>
+                    <span className="relative flex h-2 w-2">
+                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${trustedTime.tone === 'success' ? 'bg-emerald-400' : trustedTime.tone === 'warning' ? 'bg-yellow-400' : 'bg-rose-400'}`}></span>
+                      <span className={`relative inline-flex rounded-full h-2 w-2 ${trustedTime.tone === 'success' ? 'bg-emerald-500' : trustedTime.tone === 'warning' ? 'bg-yellow-500' : 'bg-rose-500'}`}></span>
+                    </span>
+                    <span className={`text-[10px] font-bold uppercase tracking-widest ${timeStatusMeta.titleClass}`}>Time:</span>
+                    <span className={`text-xs font-black ${timeStatusMeta.labelClass} leading-none`}>{trustedTime.label}</span>
                   </div>
-                  <p className={`mt-2 text-xs leading-relaxed ${timeStatusMeta.bodyClass}`}>{trustedTime.warningMessage}</p>
+
+                  {timeAuditSummary.total > 0 && (
+                    <>
+                      <div className="w-1.5 h-1.5 rounded-full bg-cyan-800/50 hidden sm:block"></div>
+                      <div className={`flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-full border ${timeAuditSummary.tone === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : timeAuditSummary.tone === 'warning' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300' : timeAuditSummary.tone === 'danger' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-[#0b1229] border-cyan-800/50 text-cyan-200'}`}>
+                        <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">Audit:</span>
+                        <span className="text-xs font-black leading-none">{timeAuditSummary.label}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </>
             )}
