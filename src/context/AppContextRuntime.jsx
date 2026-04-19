@@ -59,13 +59,44 @@ const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71
 const MINUTE_IN_MS = 60 * 1000;
 const SHIFT_SEQUENCE = [
   {
+    id: 'shift-1-active',
+    label: 'Shift 1',
+    startHour: 6,
+    startMinute: 0,
+    endHour: 12,
+    endMinute: 0,
+    timeRange: '06:00 - 12:00',
+  },
+  {
+    id: 'shift-2-active',
+    label: 'Shift 2',
+    startHour: 12,
+    startMinute: 0,
+    endHour: 18,
+    endMinute: 0,
+    timeRange: '12:00 - 18:00',
+  },
+  {
+    id: 'shift-3-active',
+    label: 'Shift 3',
+    startHour: 18,
+    startMinute: 0,
+    endHour: 6,
+    endMinute: 0,
+    crossesMidnight: true,
+    timeRange: '18:00 - 06:00',
+  },
+];
+const COMPAT_SHIFT_SEQUENCE = [
+  {
     id: 'shift-pagi',
     label: 'Shift Pagi',
     startHour: 6,
     startMinute: 0,
     endHour: 10,
     endMinute: 0,
-    timeRange: '06:00 - <10:00',
+    compat: true,
+    timeRange: '06:00 - 10:00',
   },
   {
     id: 'shift-siang',
@@ -74,7 +105,8 @@ const SHIFT_SEQUENCE = [
     startMinute: 0,
     endHour: 14,
     endMinute: 0,
-    timeRange: '10:00 - <14:00',
+    compat: true,
+    timeRange: '10:00 - 14:00',
   },
   {
     id: 'shift-sore',
@@ -83,7 +115,8 @@ const SHIFT_SEQUENCE = [
     startMinute: 0,
     endHour: 18,
     endMinute: 0,
-    timeRange: '14:00 - <18:00',
+    compat: true,
+    timeRange: '14:00 - 18:00',
   },
   {
     id: 'shift-malam',
@@ -93,7 +126,8 @@ const SHIFT_SEQUENCE = [
     endHour: 6,
     endMinute: 0,
     crossesMidnight: true,
-    timeRange: '18:00 - <06:00 hari berikutnya',
+    compat: true,
+    timeRange: '18:00 - 06:00',
   },
 ];
 const LEGACY_SHIFT_SEQUENCE = [
@@ -104,8 +138,9 @@ const LEGACY_SHIFT_SEQUENCE = [
     startMinute: 0,
     endHour: 6,
     endMinute: 0,
+    compat: true,
     legacy: true,
-    timeRange: '00:00 - <06:00',
+    timeRange: '00:00 - 06:00',
   },
   {
     id: 'shift-1',
@@ -114,8 +149,9 @@ const LEGACY_SHIFT_SEQUENCE = [
     startMinute: 0,
     endHour: 12,
     endMinute: 0,
+    compat: true,
     legacy: true,
-    timeRange: '06:00 - <12:00',
+    timeRange: '06:00 - 12:00',
   },
   {
     id: 'shift-2',
@@ -124,8 +160,9 @@ const LEGACY_SHIFT_SEQUENCE = [
     startMinute: 0,
     endHour: 18,
     endMinute: 0,
+    compat: true,
     legacy: true,
-    timeRange: '12:00 - <18:00',
+    timeRange: '12:00 - 18:00',
   },
   {
     id: 'shift-3',
@@ -135,11 +172,12 @@ const LEGACY_SHIFT_SEQUENCE = [
     endHour: 0,
     endMinute: 0,
     crossesMidnight: true,
+    compat: true,
     legacy: true,
-    timeRange: '18:00 - <00:00',
+    timeRange: '18:00 - 00:00',
   },
 ];
-const SHIFT_DEFINITION_MAP = [...SHIFT_SEQUENCE, ...LEGACY_SHIFT_SEQUENCE].reduce((accumulator, shift) => ({
+const SHIFT_DEFINITION_MAP = [...SHIFT_SEQUENCE, ...COMPAT_SHIFT_SEQUENCE, ...LEGACY_SHIFT_SEQUENCE].reduce((accumulator, shift) => ({
   ...accumulator,
   [shift.id]: shift,
 }), {});
@@ -485,6 +523,27 @@ function isLegacyShiftDefinition(shift) {
   return Boolean(shift?.legacy);
 }
 
+function isCompatShiftDefinition(shift) {
+  return Boolean(shift?.compat || shift?.legacy);
+}
+
+function getCheckpointShiftTimestamp(checkpoint) {
+  const candidates = [
+    checkpoint?.completedAt,
+    checkpoint?.updatedAt,
+    checkpoint?.createdAt,
+  ];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const timestamp = new Date(candidates[index] || '').getTime();
+    if (!Number.isNaN(timestamp) && timestamp > 0) {
+      return timestamp;
+    }
+  }
+
+  return null;
+}
+
 function getShiftScheduleTimes(meta) {
   const safeMeta = meta || getShiftMeta();
   const definition = getShiftDefinition(safeMeta.id);
@@ -540,17 +599,41 @@ function getShiftMetaFromKey(key) {
   return shiftMetaFromParts(dateKey, shiftId);
 }
 
-function normalizeShiftKeyForCloudSync(shiftKey, fallbackMeta = getShiftMeta()) {
-  const persistedShiftMeta = getShiftMetaFromKey(shiftKey);
-  if (!persistedShiftMeta) return fallbackMeta.key;
+function getCanonicalShiftMeta(meta) {
+  if (!meta) return null;
+  const definition = getShiftDefinition(meta.id);
+  if (!definition) return null;
+  if (!isCompatShiftDefinition(definition)) return meta;
 
-  const persistedShiftDefinition = getShiftDefinition(persistedShiftMeta.id);
-  if (isLegacyShiftDefinition(persistedShiftDefinition)) return fallbackMeta.key;
+  const { startAt } = getShiftScheduleTimes(meta);
+  return getShiftMeta(new Date(startAt.getTime() + 1000));
+}
+
+function getCanonicalShiftMetaFromKey(key) {
+  return getCanonicalShiftMeta(getShiftMetaFromKey(key));
+}
+
+function getCanonicalShiftMetaForCheckpoint(checkpoint, fallbackMeta = null) {
+  const checkpointTimestamp = getCheckpointShiftTimestamp(checkpoint);
+  if (checkpointTimestamp) {
+    return getShiftMeta(new Date(checkpointTimestamp));
+  }
+
+  const checkpointShiftMeta = getCanonicalShiftMetaFromKey(checkpoint?.shiftKey);
+  if (checkpointShiftMeta) return checkpointShiftMeta;
+
+  return getCanonicalShiftMeta(fallbackMeta);
+}
+
+function normalizeShiftKeyForCloudSync(shiftKey, fallbackMeta = getShiftMeta()) {
+  const safeFallbackMeta = getCanonicalShiftMeta(fallbackMeta) || fallbackMeta || getShiftMeta();
+  const persistedShiftMeta = getCanonicalShiftMetaFromKey(shiftKey);
+  if (!persistedShiftMeta) return safeFallbackMeta.key;
 
   const persistedShiftStartAt = getShiftScheduleTimes(persistedShiftMeta).startAt.getTime();
-  const fallbackShiftStartAt = getShiftScheduleTimes(fallbackMeta).startAt.getTime();
+  const fallbackShiftStartAt = getShiftScheduleTimes(safeFallbackMeta).startAt.getTime();
 
-  if (persistedShiftStartAt > fallbackShiftStartAt) return fallbackMeta.key;
+  if (persistedShiftStartAt > fallbackShiftStartAt) return safeFallbackMeta.key;
   return persistedShiftMeta.key;
 }
 
@@ -591,12 +674,9 @@ function addDaysToDateKey(dateKey, days) {
 }
 
 function getNextShiftMeta(meta) {
-  const currentIndex = SHIFT_SEQUENCE.findIndex(shift => shift.id === meta?.id);
-  if (currentIndex === -1) return shiftMetaFromParts(meta?.dateKey || toDateKey(getJakartaDateParts()), SHIFT_SEQUENCE[0].id);
-  if (currentIndex === SHIFT_SEQUENCE.length - 1) {
-    return shiftMetaFromParts(addDaysToDateKey(meta.dateKey, 1), SHIFT_SEQUENCE[0].id);
-  }
-  return shiftMetaFromParts(meta.dateKey, SHIFT_SEQUENCE[currentIndex + 1].id);
+  const safeMeta = getCanonicalShiftMeta(meta) || meta || getShiftMeta();
+  const { endAt } = getShiftScheduleTimes(safeMeta);
+  return getShiftMeta(new Date(endAt.getTime() + 1000));
 }
 
 function createCheckpointNameKey(name) {
@@ -677,23 +757,20 @@ function shouldResetCheckpointForActiveShift(checkpoint, activeShiftKey) {
   if (!checkpoint || checkpoint.status === 'pending' || checkpoint.isTemporaryShiftNode) return false;
   if (!activeShiftKey) return false;
 
-  if (checkpoint.shiftKey && checkpoint.shiftKey !== activeShiftKey) {
-    return true;
-  }
-
-  const activeShiftMeta = getShiftMetaFromKey(activeShiftKey);
+  const activeShiftMeta = getCanonicalShiftMetaFromKey(activeShiftKey) || getShiftMetaFromKey(activeShiftKey);
   if (!activeShiftMeta) return false;
 
-  const checkpointTimestamp = new Date(
-    checkpoint?.updatedAt
-    || checkpoint?.completedAt
-    || checkpoint?.createdAt
-    || '',
-  ).getTime();
+  const checkpointShiftMeta = getCanonicalShiftMetaForCheckpoint(checkpoint, activeShiftMeta);
+  const checkpointTimestamp = getCheckpointShiftTimestamp(checkpoint);
+  const activeShiftStartTimestamp = getShiftScheduleTimes(activeShiftMeta).startAt.getTime();
+
+  if (checkpointShiftMeta?.key && checkpointShiftMeta.key !== activeShiftMeta.key) {
+    const checkpointShiftStartTimestamp = getShiftScheduleTimes(checkpointShiftMeta).startAt.getTime();
+    return checkpointShiftStartTimestamp < activeShiftStartTimestamp;
+  }
 
   if (Number.isNaN(checkpointTimestamp) || checkpointTimestamp <= 0) return false;
 
-  const activeShiftStartTimestamp = getShiftScheduleTimes(activeShiftMeta).startAt.getTime();
   return checkpointTimestamp < activeShiftStartTimestamp;
 }
 
@@ -837,6 +914,8 @@ function createPatrolIncidentRecord(checkpoint, options = {}) {
     readOnly: readOnly || Boolean(checkpoint?.readOnly),
     completedAt: checkpoint?.completedAt || null,
     checkpointId: checkpoint?.id || null,
+    gpsSnapshot: checkpoint?.gpsSnapshot || null,
+    shipSnapshot: checkpoint?.shipSnapshot || null,
     ...extractTimeAuditFields(checkpoint),
   }, {
     fallbackTimestampKeys: ['completedAt', 'updatedAt', 'createdAt'],
@@ -877,6 +956,9 @@ function createSOSIncidentRecord(sos) {
     id: sos.id,
     date: getIncidentDateLabel(triggeredAt),
     time: triggeredAt ? formatAppTime(new Date(triggeredAt)) : '-',
+    reportedAt: triggeredAt,
+    triggeredAt,
+    source: 'sos',
     location: 'SOS Darurat',
     shipName,
     deskripsi: `Sinyal SOS dikirim oleh ${senderName} dari kapal ${shipName}.${formattedLat !== '-' && formattedLng !== '-' ? ` Koordinat terakhir ${formattedLat}, ${formattedLng}.` : ' Koordinat terakhir belum tersedia.'}`,
@@ -888,6 +970,10 @@ function createSOSIncidentRecord(sos) {
     readOnly: true,
     createdAt: triggeredAt,
     sosStatus: isResolved ? 'resolved' : 'active',
+    senderUserId: sos.senderUserId || null,
+    targetUserIds: Array.isArray(sos.targetUserIds) ? sos.targetUserIds : [],
+    senderAcknowledgedAt: sos.senderAcknowledgedAt || null,
+    senderAcknowledgedBy: sos.senderAcknowledgedBy || null,
     targetShipNames,
     lat: sos.lat ?? null,
     lng: sos.lng ?? null,
@@ -1064,6 +1150,136 @@ function createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot) {
     source: `${gpsSnapshot.source || 'cache'}-cache`,
     lat: gpsSnapshot.lat,
     lng: gpsSnapshot.lng,
+  };
+}
+
+function normalizeCheckpointRecordForShip(baseCheckpoint, checkpoint, ship, shiftKey = checkpoint?.shiftKey || null) {
+  if (!checkpoint) return { ...baseCheckpoint };
+
+  return {
+    ...baseCheckpoint,
+    ...checkpoint,
+    id: baseCheckpoint.id,
+    name: baseCheckpoint.name,
+    desc: baseCheckpoint.desc,
+    shipId: ship?.id || checkpoint?.shipId || null,
+    shipName: ship?.name || checkpoint?.shipName || '',
+    shiftKey,
+  };
+}
+
+function migrateCheckpointStateToCurrentShift({
+  ships = [],
+  checkpointsByShip = {},
+  historyEntries = [],
+  users = [],
+  currentShiftMeta = getShiftMeta(),
+}) {
+  const safeCurrentShiftMeta = getCanonicalShiftMeta(currentShiftMeta) || currentShiftMeta || getShiftMeta();
+  const currentShiftStartAt = getShiftScheduleTimes(safeCurrentShiftMeta).startAt.getTime();
+  let nextHistoryEntries = sortHistoryEntries(historyEntries);
+  let didMigrate = false;
+
+  const nextCheckpointsByShip = ensureArray(ships).reduce((collection, ship) => {
+    const baseCheckpoints = createShipCheckpointCollection(ship);
+    const savedCheckpoints = ensureArray(checkpointsByShip?.[ship.id]).filter(checkpoint => ensureObject(checkpoint));
+    const checkpointsById = new Map(savedCheckpoints.map(checkpoint => [String(checkpoint.id), checkpoint]));
+    const checkpointsByName = new Map(savedCheckpoints.map(checkpoint => [createCheckpointNameKey(checkpoint.name), checkpoint]));
+    const matchedCheckpoints = baseCheckpoints.map((baseCheckpoint) => (
+      checkpointsById.get(String(baseCheckpoint.id))
+      || checkpointsByName.get(createCheckpointNameKey(baseCheckpoint.name))
+      || null
+    ));
+    const pastShiftGroups = new Map();
+    const currentShiftCheckpoints = new Map();
+
+    matchedCheckpoints.forEach((matchedCheckpoint, index) => {
+      if (!matchedCheckpoint || matchedCheckpoint.status !== 'completed' || matchedCheckpoint.isTemporaryShiftNode) return;
+
+      const baseCheckpoint = baseCheckpoints[index];
+      const canonicalShiftMeta = getCanonicalShiftMetaForCheckpoint(matchedCheckpoint, safeCurrentShiftMeta);
+      if (!canonicalShiftMeta) return;
+
+      const canonicalShiftStartAt = getShiftScheduleTimes(canonicalShiftMeta).startAt.getTime();
+      const normalizedCheckpoint = normalizeCheckpointRecordForShip(
+        baseCheckpoint,
+        matchedCheckpoint,
+        ship,
+        canonicalShiftMeta.key,
+      );
+
+      if (canonicalShiftStartAt < currentShiftStartAt) {
+        const shiftGroup = pastShiftGroups.get(canonicalShiftMeta.key) || new Map();
+        shiftGroup.set(String(baseCheckpoint.id), normalizedCheckpoint);
+        pastShiftGroups.set(canonicalShiftMeta.key, shiftGroup);
+        didMigrate = true;
+        return;
+      }
+
+      const normalizedCurrentCheckpoint = canonicalShiftStartAt > currentShiftStartAt
+        ? {
+            ...normalizedCheckpoint,
+            shiftKey: safeCurrentShiftMeta.key,
+          }
+        : normalizedCheckpoint;
+
+      if (matchedCheckpoint.shiftKey !== normalizedCurrentCheckpoint.shiftKey) {
+        didMigrate = true;
+      }
+
+      currentShiftCheckpoints.set(String(baseCheckpoint.id), normalizedCurrentCheckpoint);
+    });
+
+    pastShiftGroups.forEach((shiftGroup, shiftKey) => {
+      const shiftMeta = getShiftMetaFromKey(shiftKey);
+      if (!shiftMeta) return;
+
+      const historyCheckpoints = baseCheckpoints.map((baseCheckpoint) => (
+        shiftGroup.get(String(baseCheckpoint.id)) || { ...baseCheckpoint }
+      ));
+
+      nextHistoryEntries = mergeHistoryEntries(nextHistoryEntries, [
+        buildHistoryEntry({
+          shiftMeta,
+          checkpoints: historyCheckpoints,
+          ship,
+          users,
+          weatherInfo: null,
+        }),
+      ]);
+    });
+
+    collection[ship.id] = baseCheckpoints.map((baseCheckpoint, index) => {
+      const currentShiftCheckpoint = currentShiftCheckpoints.get(String(baseCheckpoint.id));
+      if (currentShiftCheckpoint) return currentShiftCheckpoint;
+
+      const matchedCheckpoint = matchedCheckpoints[index];
+      if (matchedCheckpoint && matchedCheckpoint.status === 'pending' && !matchedCheckpoint.isTemporaryShiftNode) {
+        const normalizedPendingCheckpoint = normalizeCheckpointRecordForShip(
+          baseCheckpoint,
+          matchedCheckpoint,
+          ship,
+          safeCurrentShiftMeta.key,
+        );
+
+        if (matchedCheckpoint.shiftKey !== normalizedPendingCheckpoint.shiftKey) {
+          didMigrate = true;
+        }
+
+        return normalizedPendingCheckpoint;
+      }
+
+      return { ...baseCheckpoint };
+    });
+
+    return collection;
+  }, {});
+
+  return {
+    activeShiftKey: safeCurrentShiftMeta.key,
+    checkpointsByShip: nextCheckpointsByShip,
+    historyEntries: sortHistoryEntries(nextHistoryEntries),
+    migrated: didMigrate,
   };
 }
 
@@ -1616,6 +1832,77 @@ function pruneShipPersonnelAssignments(ships = [], users = []) {
   }));
 }
 
+function getSOSRecordTimestamp(sos) {
+  const directTimestamp = (
+    Number.isFinite(sos?.resolvedAtClientMs)
+      ? sos.resolvedAtClientMs
+      : Number.isFinite(sos?.updatedAtClientMs)
+        ? sos.updatedAtClientMs
+        : Number.isFinite(sos?.senderAcknowledgedAtClientMs)
+          ? sos.senderAcknowledgedAtClientMs
+          : Number.isFinite(sos?.occurredAtTrustedMs)
+            ? sos.occurredAtTrustedMs
+            : Number.isFinite(sos?.createdAtClientMs)
+              ? sos.createdAtClientMs
+              : new Date(
+                sos?.resolvedAt
+                || sos?.updatedAt
+                || sos?.senderAcknowledgedAt
+                || sos?.triggeredAt
+                || sos?.createdAt
+                || sos?.occurredAtTrustedIso
+                || '',
+              ).getTime()
+  );
+
+  if (!Number.isNaN(directTimestamp) && directTimestamp > 0) {
+    return directTimestamp;
+  }
+
+  if (typeof sos?.id === 'number') {
+    return sos.id;
+  }
+
+  return 0;
+}
+
+function mergeSOSRecordArrays(...collections) {
+  return Array.from(new Set(
+    collections
+      .flatMap((collection) => (Array.isArray(collection) ? collection : []))
+      .filter(Boolean),
+  ));
+}
+
+function mergeSOSRecords(baseSOS = {}, nextSOS = {}) {
+  const nextIsNewer = getSOSRecordTimestamp(nextSOS) >= getSOSRecordTimestamp(baseSOS);
+  const newerSOS = nextIsNewer ? nextSOS : baseSOS;
+  const olderSOS = nextIsNewer ? baseSOS : nextSOS;
+
+  return {
+    ...olderSOS,
+    ...newerSOS,
+    confirmedBy: mergeSOSRecordArrays(baseSOS.confirmedBy, nextSOS.confirmedBy),
+    targetUserIds: mergeSOSRecordArrays(baseSOS.targetUserIds, nextSOS.targetUserIds),
+    targetShipIds: mergeSOSRecordArrays(baseSOS.targetShipIds, nextSOS.targetShipIds),
+    targetShipNames: mergeSOSRecordArrays(baseSOS.targetShipNames, nextSOS.targetShipNames),
+  };
+}
+
+function mergeSOSHistoryCollection(baseHistory = [], nextHistory = []) {
+  return mergeEntitiesById(baseHistory, nextHistory, {
+    merge: (baseSOS, nextSOS) => mergeSOSRecords(baseSOS, nextSOS),
+  }).sort((left, right) => getSOSRecordTimestamp(right) - getSOSRecordTimestamp(left));
+}
+
+function upsertSOSHistoryEntry(previousHistory = [], nextSOS) {
+  return mergeSOSHistoryCollection(previousHistory, nextSOS ? [nextSOS] : []);
+}
+
+function resolveLatestActiveSOSAlert(sosEntries = []) {
+  return sosEntries.find((entry) => sanitizeText(entry?.status || '', 20).toLowerCase() !== 'resolved') || null;
+}
+
 function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const deletedRecords = mergeDeletedRecords(baseState.deletedRecords || {}, nextState.deletedRecords || {});
   const baseUsers = applyAdminCredentialReset(normalizeUsersCollection(baseState.usersData || []));
@@ -1639,6 +1926,16 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
     collection[shipId] = mergeCheckpointsCollection(baseCheckpoints, nextCheckpoints);
     return collection;
   }, {});
+  const mergedSOSHistory = mergeSOSHistoryCollection(
+    [
+      ...(Array.isArray(baseState.sosHistory) ? baseState.sosHistory : []),
+      baseState.activeSOSAlert,
+    ].filter(Boolean),
+    [
+      ...(Array.isArray(nextState.sosHistory) ? nextState.sosHistory : []),
+      nextState.activeSOSAlert,
+    ].filter(Boolean),
+  );
 
   return createSharedStateSnapshot({
     activeShiftKey: nextState.activeShiftKey || baseState.activeShiftKey,
@@ -1656,8 +1953,8 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
     notifications: mergeNotificationsCollection(baseState.notifications || [], nextState.notifications || []),
     shipsData: mergedShips,
     usersData: mergedUsers,
-    activeSOSAlert: nextState.activeSOSAlert || baseState.activeSOSAlert || null,
-    sosHistory: nextState.sosHistory || baseState.sosHistory || [],
+    activeSOSAlert: resolveLatestActiveSOSAlert(mergedSOSHistory),
+    sosHistory: mergedSOSHistory,
   });
 }
 
@@ -2266,14 +2563,14 @@ function createSeedHistoryEntries() {
 
   return sortHistoryEntries([
     buildHistoryEntry({
-      shiftMeta: shiftMetaFromParts('2026-04-02', 'shift-pagi'),
+      shiftMeta: shiftMetaFromParts('2026-04-02', 'shift-1-active'),
       checkpoints: firstShiftCheckpoints,
       ship,
       users: getMockUsersList(),
       weatherInfo: { temperature: 30, windspeed: 12, weathercode: 1 },
     }),
     buildHistoryEntry({
-      shiftMeta: shiftMetaFromParts('2026-04-01', 'shift-malam'),
+      shiftMeta: shiftMetaFromParts('2026-04-01', 'shift-3-active'),
       checkpoints: secondShiftCheckpoints,
       ship,
       users: getMockUsersList(),
@@ -2323,16 +2620,24 @@ export const useSOS = () => useRequiredContext(SOSContext, 'useSOS');
 export { ACCESS_ROLES, defaultLocationOptions, SHIP_STATUS_OPTIONS };
 
 export function AppProvider({ children }) {
+  const initialCurrentShiftMeta = getShiftMeta(getTrustedDate());
   const initialShipsCollection = normalizeShipsCollection(persistedState?.shipsData || getInitialShipsData());
   const initialUsersCollection = applyAdminCredentialReset(
     normalizeUsersCollection(persistedState?.usersData || getMockUsersList()),
   );
-  const initialCheckpointsByShip = createCheckpointsByShipState(
+  const initialRawCheckpointsByShip = createCheckpointsByShipState(
     initialShipsCollection,
     persistedState?.checkpointsByShip,
     persistedState?.checkpoints,
-    normalizeShiftKeyForCloudSync(persistedState?.activeShiftKey, getShiftMeta()),
+    null,
   );
+  const initialShiftState = migrateCheckpointStateToCurrentShift({
+    ships: initialShipsCollection,
+    checkpointsByShip: initialRawCheckpointsByShip,
+    historyEntries: sortHistoryEntries(persistedState?.historyEntries || createSeedHistoryEntries()),
+    users: initialUsersCollection,
+    currentShiftMeta: initialCurrentShiftMeta,
+  });
 
   // Theme & connectivity
   const [currentPage, setCurrentPage] = useState('home');
@@ -2372,12 +2677,12 @@ export function AppProvider({ children }) {
   const [authForm, setAuthForm] = useState(() => createAuthFormState());
 
   // Core data
-  const [activeShiftKey, setActiveShiftKey] = useState(() => persistedState?.activeShiftKey || getShiftMeta(getTrustedDate()).key);
-  const [checkpointsByShip, setCheckpointsByShip] = useState(() => initialCheckpointsByShip);
+  const [activeShiftKey, setActiveShiftKey] = useState(() => initialShiftState.activeShiftKey);
+  const [checkpointsByShip, setCheckpointsByShip] = useState(() => initialShiftState.checkpointsByShip);
   const [shipsData, setShipsData] = useState(() => initialShipsCollection);
   const [usersData, setUsersData] = useState(() => initialUsersCollection);
   const [incidentsData, setIncidentsData] = useState(() => persistedState?.incidentsData || []);
-  const [historyEntries, setHistoryEntries] = useState(() => sortHistoryEntries(persistedState?.historyEntries || createSeedHistoryEntries()));
+  const [historyEntries, setHistoryEntries] = useState(() => initialShiftState.historyEntries);
   const [notifications, setNotifications] = useState(() => sortNotifications(persistedState?.notifications || []));
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
   const [shiftClock, setShiftClock] = useState(() => getTrustedNowMs());
@@ -2558,6 +2863,7 @@ export function AppProvider({ children }) {
   const handleSOSTrigger = useCallback((lat, lng) => {
     if (!currentUserRecord) return;
     const trustedTimestamp = createTrustedTimestampRecord();
+    const eventTimestampIso = trustedTimestamp.occurredAtTrustedIso;
     const senderShipName = sanitizeText(currentUserRecord.shipAssigned || '', 80) || 'Tidak diketahui';
     const sourceShip = shipsData.find((ship) => ship.name === senderShipName) || null;
     const targetShipIds = Array.from(new Set([
@@ -2567,7 +2873,8 @@ export function AppProvider({ children }) {
     const targetShipNames = targetShipIds
       .map((shipId) => shipsData.find((ship) => ship.id === shipId)?.name || '')
       .filter(Boolean);
-    const targetUserIds = getSOSRecipientUserIds(senderShipName);
+    const targetUserIds = getSOSRecipientUserIds(senderShipName)
+      .filter((userId) => userId !== currentUserRecord.id);
     const rawSOS = {
       id: `sos-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
       senderUserId: currentUserRecord.id || 'unknown',
@@ -2576,7 +2883,9 @@ export function AppProvider({ children }) {
       shipName: senderShipName,
       lat: lat !== undefined ? lat : null,
       lng: lng !== undefined ? lng : null,
-      triggeredAt: trustedTimestamp.occurredAtTrustedIso,
+      triggeredAt: eventTimestampIso,
+      createdAt: eventTimestampIso,
+      updatedAt: eventTimestampIso,
       targetUserIds,
       targetShipIds,
       targetShipNames,
@@ -2599,7 +2908,7 @@ export function AppProvider({ children }) {
       routeParams: { incidentId: rawSOS.id },
       incidentId: rawSOS.id,
       shipName: senderShipName,
-      createdAt: trustedTimestamp.occurredAtTrustedIso,
+      createdAt: eventTimestampIso,
       timeTrustLevel: trustedTimestamp.timeTrustLevel,
       clockTamperDetected: trustedTimestamp.clockTamperDetected,
     };
@@ -2607,42 +2916,100 @@ export function AppProvider({ children }) {
     // Spread is sufficient — SOS and notification objects are flat (no nested Date/Map/circular refs)
     const newSOS = { ...rawSOS };
     const notification = { ...rawNotif };
+    const nextSOSIncident = createSOSIncidentRecord(newSOS);
 
     setActiveSOSAlert(newSOS);
-    setSosHistory(prev => [newSOS, ...prev]);
-    setNotifications(prev => [notification, ...prev]); 
+    setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, newSOS));
+    setNotifications(prev => [notification, ...prev]);
+    setSelectedHistoryId(null);
+    setSelectedReportDetail(null);
+    setShowIncidentModal(false);
+    setCurrentPage('incidents');
+    if (nextSOSIncident) {
+      setSelectedIncident(nextSOSIncident);
+    }
   }, [currentUserRecord, getSOSRecipientUserIds, shipsData]);
 
-  const handleSOSConfirm = useCallback(() => {
-    if (!activeSOSAlert || !currentUserId) return;
-    if (Array.isArray(activeSOSAlert.targetUserIds) && !activeSOSAlert.targetUserIds.includes(currentUserId)) return;
-    
-    const updatedSOS = {
-      ...activeSOSAlert,
-      confirmedBy: [...new Set([...activeSOSAlert.confirmedBy, currentUserId])],
-    };
-    
-    setActiveSOSAlert(updatedSOS);
-    setSosHistory(prev => prev.map(s => s.id === updatedSOS.id ? updatedSOS : s));
-  }, [activeSOSAlert, currentUserId]);
+  const resolveSOSActionTarget = useCallback((targetSOS = null) => {
+    const targetId = typeof targetSOS === 'string'
+      ? targetSOS
+      : targetSOS?.id || activeSOSAlert?.id || null;
 
-  const handleSOSDismiss = useCallback(() => {
-    if (!activeSOSAlert) return;
+    if (!targetId) return null;
+    if (activeSOSAlert?.id === targetId) return activeSOSAlert;
+    return sosHistory.find((entry) => entry.id === targetId) || (typeof targetSOS === 'object' ? targetSOS : null);
+  }, [activeSOSAlert, sosHistory]);
+
+  const handleSOSConfirm = useCallback((targetSOS = null) => {
+    const actionableSOS = resolveSOSActionTarget(targetSOS);
+    if (!actionableSOS || !currentUserId) return;
+    if (Array.isArray(actionableSOS.targetUserIds) && !actionableSOS.targetUserIds.includes(currentUserId)) return;
+
+    const trustedTimestamp = createTrustedTimestampRecord();
+    const updatedSOS = {
+      ...actionableSOS,
+      confirmedBy: [...new Set([...(actionableSOS.confirmedBy || []), currentUserId])],
+      updatedAt: trustedTimestamp.occurredAtTrustedIso,
+      updatedAtClientMs: trustedTimestamp.occurredAtClientMs,
+      updatedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
+      updatedClockTamperDetected: trustedTimestamp.clockTamperDetected,
+    };
+
+    setActiveSOSAlert((previousAlert) => (
+      previousAlert?.id === updatedSOS.id ? updatedSOS : previousAlert
+    ));
+    setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
+  }, [currentUserId, resolveSOSActionTarget]);
+
+  const handleSOSAcknowledgeSelf = useCallback((targetSOS = null) => {
+    const actionableSOS = resolveSOSActionTarget(targetSOS);
+    if (!actionableSOS || !currentUserId) return;
+    if (actionableSOS.senderUserId !== currentUserId) return;
+
+    const trustedTimestamp = createTrustedTimestampRecord();
+    const updatedSOS = {
+      ...actionableSOS,
+      senderAcknowledgedAt: trustedTimestamp.occurredAtTrustedIso,
+      senderAcknowledgedBy: currentUserId,
+      senderAcknowledgedAtClientMs: trustedTimestamp.occurredAtClientMs,
+      senderAcknowledgedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
+      senderAcknowledgedClockTamperDetected: trustedTimestamp.clockTamperDetected,
+      updatedAt: trustedTimestamp.occurredAtTrustedIso,
+      updatedAtClientMs: trustedTimestamp.occurredAtClientMs,
+      updatedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
+      updatedClockTamperDetected: trustedTimestamp.clockTamperDetected,
+    };
+
+    setActiveSOSAlert((previousAlert) => (
+      previousAlert?.id === updatedSOS.id ? updatedSOS : previousAlert
+    ));
+    setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
+  }, [currentUserId, resolveSOSActionTarget]);
+
+  const handleSOSDismiss = useCallback((targetSOS = null) => {
+    const actionableSOS = resolveSOSActionTarget(targetSOS);
+    if (!actionableSOS) return;
     const trustedTimestamp = createTrustedTimestampRecord();
     
     const updatedSOS = {
-      ...activeSOSAlert,
+      ...actionableSOS,
       status: 'resolved',
       resolvedAt: trustedTimestamp.occurredAtTrustedIso,
       resolvedBy: currentUserRecord?.name || 'Sistem',
       resolvedAtClientMs: trustedTimestamp.occurredAtClientMs,
       resolvedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
       resolvedClockTamperDetected: trustedTimestamp.clockTamperDetected,
+      updatedAt: trustedTimestamp.occurredAtTrustedIso,
+      updatedAtClientMs: trustedTimestamp.occurredAtClientMs,
+      updatedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
+      updatedClockTamperDetected: trustedTimestamp.clockTamperDetected,
     };
-    
-    setActiveSOSAlert(null); // Clear active alert
-    setSosHistory(prev => prev.map(s => s.id === updatedSOS.id ? updatedSOS : s));
-  }, [activeSOSAlert, currentUserRecord]);
+
+    setActiveSOSAlert((previousAlert) => (
+      previousAlert?.id === updatedSOS.id ? null : previousAlert
+    ));
+    setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
+  }, [currentUserRecord, resolveSOSActionTarget]);
 
   const assignedShipForCurrentUser = useMemo(() => {
     return resolveAssignedShipForUser(currentUserRecord, shipsData);
@@ -2906,13 +3273,20 @@ export function AppProvider({ children }) {
       nextShips,
       nextState.checkpointsByShip,
       nextState.checkpoints,
-      normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
+      null,
     );
-    const incomingState = normalizeSharedStateTimeAudit(createSharedStateSnapshot({
-      activeShiftKey: normalizeShiftKeyForCloudSync(nextState.activeShiftKey, getShiftMeta()),
+    const incomingShiftState = migrateCheckpointStateToCurrentShift({
+      ships: nextShips,
       checkpointsByShip: nextCheckpointsByShip,
-      deletedRecords: nextState.deletedRecords,
       historyEntries: sortHistoryEntries(nextState.historyEntries || createSeedHistoryEntries()),
+      users: nextUsers,
+      currentShiftMeta: getShiftMeta(),
+    });
+    const incomingState = normalizeSharedStateTimeAudit(createSharedStateSnapshot({
+      activeShiftKey: incomingShiftState.activeShiftKey,
+      checkpointsByShip: incomingShiftState.checkpointsByShip,
+      deletedRecords: nextState.deletedRecords,
+      historyEntries: incomingShiftState.historyEntries,
       incidentMeta: nextState.incidentMeta && typeof nextState.incidentMeta === 'object' ? nextState.incidentMeta : {},
       incidentsData: Array.isArray(nextState.incidentsData) ? nextState.incidentsData : [],
       notifications: sortNotifications(nextState.notifications || []),
@@ -2931,9 +3305,22 @@ export function AppProvider({ children }) {
       [currentLocalState.activeShiftKey, normalizedCloudState.activeShiftKey],
       getShiftMeta(),
     );
-    const normalizedState = createSharedStateSnapshot({
+    const mergedState = createSharedStateSnapshot({
       ...mergeSharedStateSnapshots(currentLocalState, normalizedCloudState),
       activeShiftKey: resolvedActiveShiftKey,
+    });
+    const normalizedShiftState = migrateCheckpointStateToCurrentShift({
+      ships: mergedState.shipsData,
+      checkpointsByShip: mergedState.checkpointsByShip,
+      historyEntries: mergedState.historyEntries,
+      users: mergedState.usersData,
+      currentShiftMeta: getShiftMeta(),
+    });
+    const normalizedState = createSharedStateSnapshot({
+      ...mergedState,
+      activeShiftKey: normalizedShiftState.activeShiftKey,
+      checkpointsByShip: normalizedShiftState.checkpointsByShip,
+      historyEntries: normalizedShiftState.historyEntries,
     });
     const serializedState = serializeSharedStateSnapshot(normalizedState);
     latestCloudSharedStateRef.current = normalizedCloudState;
@@ -3354,7 +3741,10 @@ export function AppProvider({ children }) {
     setShowNotificationsDropdown(false);
 
     if (notification.route === 'incidents/detail') {
-      const incident = allIncidents.find(item => item.id === notification.routeParams?.incidentId || item.id === notification.incidentId);
+      const incidentId = notification.routeParams?.incidentId || notification.incidentId;
+      const incident = allIncidents.find(item => item.id === incidentId)
+        || (activeSOSAlert?.id === incidentId ? createSOSIncidentRecord(activeSOSAlert) : null)
+        || createSOSIncidentRecord(sosHistory.find((entry) => entry.id === incidentId));
       setSelectedHistoryId(null);
       setCurrentPage('incidents');
       setPatrolTab('checkpoint');
@@ -3381,7 +3771,7 @@ export function AppProvider({ children }) {
     }
 
     closeHistoryEntry();
-  }, [allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry]);
+  }, [activeSOSAlert, allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry, sosHistory]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => setShiftClock(getTrustedNowMs()), 60 * 1000);
@@ -3543,21 +3933,8 @@ export function AppProvider({ children }) {
   }, [appendNotifications, checkpoints, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
 
   useEffect(() => {
-    const persistedShiftMeta = getShiftMetaFromKey(activeShiftKey);
+    const persistedShiftMeta = getCanonicalShiftMetaFromKey(activeShiftKey) || getShiftMetaFromKey(activeShiftKey);
     if (!persistedShiftMeta || persistedShiftMeta.key === currentShiftMeta.key) return;
-
-    const persistedShiftDefinition = getShiftDefinition(persistedShiftMeta.id);
-
-    if (isLegacyShiftDefinition(persistedShiftDefinition)) {
-      logCloudSyncDebug('skip-legacy-shift-history', {
-        persistedShiftKey: persistedShiftMeta.key,
-        currentShiftKey: currentShiftMeta.key,
-      });
-      setActiveShiftKey(previousKey => (
-        previousKey === currentShiftMeta.key ? previousKey : currentShiftMeta.key
-      ));
-      return;
-    }
 
     const persistedShiftStartAt = getShiftScheduleTimes(persistedShiftMeta).startAt.getTime();
     const currentShiftStartAt = getShiftScheduleTimes(currentShiftMeta).startAt.getTime();
@@ -3908,6 +4285,7 @@ export function AppProvider({ children }) {
     const trustedTimestamp = createTrustedTimestampRecord();
     const trustedNow = new Date(trustedTimestamp.occurredAtTrustedMs);
     const createdAt = trustedTimestamp.occurredAtTrustedIso;
+    const shipSnapshot = createShipLocationSnapshot(operationalShip);
     const newIncident = {
       ...incidentForm,
       id: `incident-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
@@ -3919,6 +4297,7 @@ export function AppProvider({ children }) {
       location: loc,
       customLocation: incidentForm.locType === 'custom' ? loc : '',
       photoUrl: incidentForm.photoUrl,
+      shipSnapshot,
       penyebab: sanitizeMultilineText(incidentForm.penyebab, 240),
       deskripsi: sanitizeMultilineText(incidentForm.deskripsi, 320),
       tindakLanjut: sanitizeMultilineText(incidentForm.tindakLanjut, 240),
@@ -3939,7 +4318,7 @@ export function AppProvider({ children }) {
       createdAt,
     }]);
     closeIncidentModal();
-  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShipName]);
+  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShip, operationalShipName]);
 
   // Ship handlers
   const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
@@ -4487,13 +4866,15 @@ export function AppProvider({ children }) {
             resolvedAtClientMs: trustedTimestamp.occurredAtClientMs,
             resolvedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
             resolvedClockTamperDetected: trustedTimestamp.clockTamperDetected,
+            updatedAt: createdAt,
+            updatedAtClientMs: trustedTimestamp.occurredAtClientMs,
+            updatedTimeTrustLevel: trustedTimestamp.timeTrustLevel,
+            updatedClockTamperDetected: trustedTimestamp.clockTamperDetected,
           };
           setActiveSOSAlert((previousAlert) => (
             previousAlert?.id === incidentId ? null : previousAlert
           ));
-          setSosHistory((previousHistory) => previousHistory.map((entry) => (
-            entry.id === incidentId ? { ...entry, ...resolvedSOS } : entry
-          )));
+          setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, resolvedSOS));
         }
         appendNotifications([{
           type: incident?.isSOS ? 'sos_closed' : 'incident_closed',
@@ -5559,9 +5940,11 @@ export function AppProvider({ children }) {
     sosHistory,
     handleSOSTrigger,
     handleSOSConfirm,
+    handleSOSAcknowledgeSelf,
     handleSOSDismiss,
   }), [
     activeSOSAlert,
+    handleSOSAcknowledgeSelf,
     handleSOSConfirm,
     handleSOSDismiss,
     handleSOSTrigger,

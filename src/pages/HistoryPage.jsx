@@ -26,7 +26,7 @@ export default function HistoryPage() {
       new Set(
         historyEntries
           .map(entry => entry.shift)
-          .filter(shift => shift && !/^Shift [1-4]$/i.test(String(shift)))
+          .filter(Boolean)
       )
     ).sort((left, right) => left.localeCompare(right))
   ), [historyEntries]);

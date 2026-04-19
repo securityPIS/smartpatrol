@@ -78,9 +78,10 @@ const IncidentsPage = React.memo(function IncidentsPage() {
 
   React.useEffect(() => {
     if (!selectedIncident) return;
-    if (filteredIncidents.some((incident) => incident.id === selectedIncident.id)) return;
+    if (selectedIncident.isSOS) return;
+    if (visibleIncidents.some((incident) => incident.id === selectedIncident.id)) return;
     setSelectedIncident(null);
-  }, [filteredIncidents, selectedIncident, setSelectedIncident]);
+  }, [selectedIncident, setSelectedIncident, visibleIncidents]);
 
   return (
     <div className="flex h-full overflow-hidden">
