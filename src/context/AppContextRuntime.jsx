@@ -627,7 +627,11 @@ function createShipCheckpointCollection(ship) {
 }
 
 function resetCheckpointForShift(checkpoint, options = {}) {
-  const { updatedAt = getTrustedDate().toISOString(), shiftKey = null } = options;
+  const {
+    updatedAt = getTrustedDate().toISOString(),
+    shiftKey = null,
+    pendingOrigin = 'shift-reset',
+  } = options;
   return {
     id: checkpoint.id,
     name: checkpoint.name,
@@ -635,6 +639,7 @@ function resetCheckpointForShift(checkpoint, options = {}) {
     status: 'pending',
     updatedAt,
     shiftKey,
+    pendingOrigin,
     shipId: checkpoint.shipId || null,
     shipName: checkpoint.shipName || '',
   };
@@ -686,6 +691,12 @@ function shouldResetCheckpointForActiveShift(checkpoint, activeShiftKey) {
   return checkpointTimestamp < activeShiftStartTimestamp;
 }
 
+function getShiftResetTimestamp(activeShiftKey, fallbackTimestamp = getTrustedDate().toISOString()) {
+  const activeShiftMeta = getShiftMetaFromKey(activeShiftKey);
+  if (!activeShiftMeta) return fallbackTimestamp;
+  return getShiftScheduleTimes(activeShiftMeta).startAt.toISOString();
+}
+
 function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey = null) {
   const baseCheckpoints = createShipCheckpointCollection(ship);
   const safeCheckpoints = ensureArray(checkpoints).filter(checkpoint => ensureObject(checkpoint));
@@ -699,7 +710,11 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey =
     if (!matchedCheckpoint) return baseCheckpoint;
 
     const normalizedCheckpoint = shouldResetCheckpointForActiveShift(matchedCheckpoint, activeShiftKey)
-      ? resetCheckpointForShift(matchedCheckpoint, { shiftKey: activeShiftKey })
+      ? resetCheckpointForShift(matchedCheckpoint, {
+          shiftKey: activeShiftKey,
+          updatedAt: getShiftResetTimestamp(activeShiftKey),
+          pendingOrigin: 'shift-reset',
+        })
       : matchedCheckpoint;
 
     return {
@@ -1120,11 +1135,64 @@ function sortHistoryEntries(entries) {
   });
 }
 
-function mergeHistoryEntries(previousEntries, nextEntries) {
-  const merged = new Map(ensureArray(previousEntries).map(entry => [entry.key || entry.id, entry]));
-  ensureArray(nextEntries).forEach(entry => {
-    merged.set(entry.key || entry.id, entry);
+function mergeCrewSnapshots(baseCrew = [], nextCrew = []) {
+  return mergeEntitiesById(baseCrew, nextCrew, {
+    getId: (item) => item?.id || item?.name,
+    merge: (baseItem, nextItem) => ({ ...baseItem, ...nextItem }),
   });
+}
+
+function mergeHistoryEntryRecord(baseEntry, nextEntry) {
+  if (!baseEntry) return nextEntry;
+  if (!nextEntry) return baseEntry;
+
+  const baseTimestamp = new Date(baseEntry?.createdAt || '').getTime();
+  const nextTimestamp = new Date(nextEntry?.createdAt || '').getTime();
+  const shouldUseNext = (
+    Number.isNaN(baseTimestamp)
+    || (!Number.isNaN(nextTimestamp) && nextTimestamp >= baseTimestamp)
+  );
+  const preferredEntry = shouldUseNext ? nextEntry : baseEntry;
+  const fallbackEntry = shouldUseNext ? baseEntry : nextEntry;
+  const mergedCheckpoints = mergeCheckpointsCollection(
+    baseEntry?.checkpoints || [],
+    nextEntry?.checkpoints || [],
+  ).map((checkpoint) => ({
+    ...checkpoint,
+    readOnly: true,
+    historyId: preferredEntry?.id || fallbackEntry?.id || checkpoint?.historyId || null,
+    date: preferredEntry?.date || fallbackEntry?.date || checkpoint?.date || '',
+  }));
+  const mergedSummary = summarizePatrolCheckpoints(mergedCheckpoints);
+
+  return {
+    ...fallbackEntry,
+    ...preferredEntry,
+    id: preferredEntry?.id || fallbackEntry?.id,
+    key: preferredEntry?.key || fallbackEntry?.key,
+    crewSnapshot: mergeCrewSnapshots(
+      baseEntry?.crewSnapshot || [],
+      nextEntry?.crewSnapshot || [],
+    ),
+    checkpoints: mergedCheckpoints,
+    summary: mergedSummary,
+    points: mergedSummary.total,
+    issue: mergedSummary.temuan,
+    missed: mergedSummary.missed,
+  };
+}
+
+function mergeHistoryEntries(previousEntries, nextEntries) {
+  const merged = new Map();
+
+  [...ensureArray(previousEntries), ...ensureArray(nextEntries)].forEach((entry) => {
+    const mergeKey = entry?.key || entry?.id;
+    if (!mergeKey) return;
+
+    const existingEntry = merged.get(mergeKey);
+    merged.set(mergeKey, existingEntry ? mergeHistoryEntryRecord(existingEntry, entry) : entry);
+  });
+
   return sortHistoryEntries(Array.from(merged.values()));
 }
 
@@ -1136,6 +1204,18 @@ function getCheckpointPriority(checkpoint) {
   if (checkpoint?.status === 'completed') return 3;
   if (checkpoint?.status === 'missed' || checkpoint?.resultType === 'missed') return 2;
   if (checkpoint?.status === 'pending') return 1;
+  return 0;
+}
+
+function getCheckpointVerificationPriority(checkpoint) {
+  const auditFields = extractTimeAuditFields(checkpoint || {});
+
+  if (Number.isFinite(auditFields.receivedAtServerMs) || auditFields.verificationStatus === 'verified') {
+    return 3;
+  }
+
+  if (auditFields.verificationStatus === 'needs-review') return 2;
+  if (auditFields.verificationStatus === 'pending-sync') return 1;
   return 0;
 }
 
@@ -1156,15 +1236,95 @@ function getCheckpointEffectiveTimestamp(checkpoint) {
   return getCheckpointPriority(checkpoint);
 }
 
+function getCheckpointShiftStartTimestamp(checkpoint) {
+  const shiftMeta = getShiftMetaFromKey(checkpoint?.shiftKey);
+  if (!shiftMeta) return null;
+
+  const shiftStartTimestamp = getShiftScheduleTimes(shiftMeta).startAt.getTime();
+  return Number.isNaN(shiftStartTimestamp) ? null : shiftStartTimestamp;
+}
+
+function getCheckpointPendingOrigin(checkpoint) {
+  return typeof checkpoint?.pendingOrigin === 'string'
+    ? checkpoint.pendingOrigin
+    : null;
+}
+
 function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
   if (!baseCheckpoint) return nextCheckpoint;
   if (!nextCheckpoint) return baseCheckpoint;
 
   const baseTimestamp = getCheckpointEffectiveTimestamp(baseCheckpoint);
   const nextTimestamp = getCheckpointEffectiveTimestamp(nextCheckpoint);
+  const basePriority = getCheckpointPriority(baseCheckpoint);
+  const nextPriority = getCheckpointPriority(nextCheckpoint);
+  const baseVerificationPriority = getCheckpointVerificationPriority(baseCheckpoint);
+  const nextVerificationPriority = getCheckpointVerificationPriority(nextCheckpoint);
+  const baseShiftStartTimestamp = getCheckpointShiftStartTimestamp(baseCheckpoint);
+  const nextShiftStartTimestamp = getCheckpointShiftStartTimestamp(nextCheckpoint);
+
+  if (
+    Number.isFinite(baseShiftStartTimestamp)
+    && Number.isFinite(nextShiftStartTimestamp)
+    && baseShiftStartTimestamp !== nextShiftStartTimestamp
+  ) {
+    const preferredCheckpoint = nextShiftStartTimestamp > baseShiftStartTimestamp
+      ? nextCheckpoint
+      : baseCheckpoint;
+    const fallbackCheckpoint = preferredCheckpoint === nextCheckpoint
+      ? baseCheckpoint
+      : nextCheckpoint;
+
+    return {
+      ...fallbackCheckpoint,
+      ...preferredCheckpoint,
+      id: preferredCheckpoint.id || fallbackCheckpoint.id,
+      name: preferredCheckpoint.name || fallbackCheckpoint.name,
+    };
+  }
+
+  const baseIsPending = baseCheckpoint?.status === 'pending';
+  const nextIsPending = nextCheckpoint?.status === 'pending';
+  if (baseIsPending !== nextIsPending) {
+    const pendingCheckpoint = baseIsPending ? baseCheckpoint : nextCheckpoint;
+    const nonPendingCheckpoint = baseIsPending ? nextCheckpoint : baseCheckpoint;
+    const pendingOrigin = getCheckpointPendingOrigin(pendingCheckpoint);
+    const pendingTimestamp = getCheckpointEffectiveTimestamp(pendingCheckpoint);
+    const nonPendingTimestamp = getCheckpointEffectiveTimestamp(nonPendingCheckpoint);
+    const pendingShiftKey = String(pendingCheckpoint?.shiftKey || '');
+    const nonPendingShiftKey = String(nonPendingCheckpoint?.shiftKey || '');
+    const isSameShiftKey = Boolean(
+      pendingShiftKey
+      && nonPendingShiftKey
+      && pendingShiftKey === nonPendingShiftKey
+    );
+    const shouldPreferPendingManualReset = (
+      pendingOrigin === 'manual-reset'
+      && pendingTimestamp >= nonPendingTimestamp
+    );
+
+    if (isSameShiftKey && !shouldPreferPendingManualReset) {
+      return {
+        ...pendingCheckpoint,
+        ...nonPendingCheckpoint,
+        id: nonPendingCheckpoint.id || pendingCheckpoint.id,
+        name: nonPendingCheckpoint.name || pendingCheckpoint.name,
+      };
+    }
+  }
+
   const shouldUseNext = (
     nextTimestamp > baseTimestamp
-    || (nextTimestamp === baseTimestamp && getCheckpointPriority(nextCheckpoint) >= getCheckpointPriority(baseCheckpoint))
+    || (
+      nextTimestamp === baseTimestamp
+      && (
+        nextPriority > basePriority
+        || (
+          nextPriority === basePriority
+          && nextVerificationPriority >= baseVerificationPriority
+        )
+      )
+    )
   );
 
   const preferredCheckpoint = shouldUseNext ? nextCheckpoint : baseCheckpoint;
@@ -1189,6 +1349,31 @@ function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) 
   });
 
   return Array.from(merged.values());
+}
+
+function resolveCanonicalCheckpointRecord(checkpoint, checkpointsByShip = {}, historyEntries = []) {
+  if (!checkpoint) return null;
+
+  const mergeKey = getCheckpointMergeKey(checkpoint);
+  if (!mergeKey) return checkpoint;
+
+  let bestCheckpoint = checkpoint;
+
+  Object.values(checkpointsByShip || {}).forEach((shipCheckpoints) => {
+    ensureArray(shipCheckpoints).forEach((candidateCheckpoint) => {
+      if (getCheckpointMergeKey(candidateCheckpoint) !== mergeKey) return;
+      bestCheckpoint = mergeCheckpointRecord(bestCheckpoint, candidateCheckpoint);
+    });
+  });
+
+  ensureArray(historyEntries).forEach((entry) => {
+    ensureArray(entry?.checkpoints).forEach((candidateCheckpoint) => {
+      if (getCheckpointMergeKey(candidateCheckpoint) !== mergeKey) return;
+      bestCheckpoint = mergeCheckpointRecord(bestCheckpoint, candidateCheckpoint);
+    });
+  });
+
+  return bestCheckpoint;
 }
 
 function getNotificationMergeKey(notification) {
@@ -1525,6 +1710,69 @@ function normalizeUsersCollection(users) {
   return normalized;
 }
 
+function getUserIdentityEmail(user) {
+  return sanitizeEmail(user?.email || '');
+}
+
+function getUserIdentityFirebaseUid(user) {
+  return sanitizeText(user?.firebaseUid || '', 160) || '';
+}
+
+function resolvePreferredUserRecord(users = [], options = {}) {
+  const safeUsers = ensureArray(users).filter(user => ensureObject(user));
+  if (safeUsers.length === 0) return null;
+
+  const sessionUserId = sanitizeText(options.sessionUserId || '', 160) || '';
+  const firebaseAuthEmail = getUserIdentityEmail({ email: options.firebaseAuthEmail });
+  const firebaseAuthUid = getUserIdentityFirebaseUid({ firebaseUid: options.firebaseAuthUid });
+  const sessionUser = sessionUserId
+    ? safeUsers.find((user) => String(user?.id) === sessionUserId) || null
+    : null;
+  const sessionEmail = getUserIdentityEmail(sessionUser);
+  const sessionFirebaseUid = getUserIdentityFirebaseUid(sessionUser);
+
+  let bestUser = sessionUser;
+  let bestScore = sessionUser ? 1 : -1;
+
+  safeUsers.forEach((user) => {
+    let score = 0;
+    const userEmail = getUserIdentityEmail(user);
+    const userFirebaseUid = getUserIdentityFirebaseUid(user);
+
+    if (sessionUserId && String(user?.id) === sessionUserId) score += 12;
+    if (firebaseAuthUid && userFirebaseUid && userFirebaseUid === firebaseAuthUid) score += 120;
+    if (firebaseAuthEmail && userEmail && userEmail === firebaseAuthEmail) score += 90;
+    if (sessionEmail && userEmail && userEmail === sessionEmail) score += 18;
+    if (sessionFirebaseUid && userFirebaseUid && userFirebaseUid === sessionFirebaseUid) score += 18;
+    if (user?.status === 'active') score += 24;
+    if (user?.shipAssigned) score += 24;
+    if (userFirebaseUid) score += 6;
+    if (user?.authProvider === 'firebase') score += 4;
+
+    if (score > bestScore) {
+      bestUser = user;
+      bestScore = score;
+    }
+  });
+
+  return bestUser || sessionUser || safeUsers[0] || null;
+}
+
+function resolveAssignedShipForUser(user, ships = []) {
+  if (!user || user.role === ACCESS_ROLES.ADMIN) return null;
+  if (user.status !== 'active') return null;
+
+  const safeShipAssigned = sanitizeText(user.shipAssigned || '', 80);
+  if (!safeShipAssigned) return null;
+
+  const matchingShips = ensureArray(ships).filter((ship) => ship?.name === safeShipAssigned);
+  if (matchingShips.length === 0) return null;
+
+  return matchingShips.find((ship) => (
+    Array.isArray(ship?.personnel) && ship.personnel.includes(user.id)
+  )) || matchingShips[0] || null;
+}
+
 function applyAdminCredentialReset(users = []) {
   return users.map((user) => {
     const normalizedEmail = sanitizeEmail(user?.email || '');
@@ -1637,6 +1885,45 @@ function createSharedStateSnapshot({
     activeSOSAlert,
     sosHistory,
   };
+}
+
+const CLOUD_SYNC_HISTORY_LIMIT_PER_SHIP = 12;
+const CLOUD_SYNC_HISTORY_LIMIT_TOTAL = 24;
+const CLOUD_SYNC_NOTIFICATION_LIMIT = 120;
+
+function limitHistoryEntriesForCloudSync(entries = []) {
+  const groupedEntries = new Map();
+
+  sortHistoryEntries(entries).forEach((entry) => {
+    const shipKey = String(entry?.shipId || entry?.ship || 'unknown');
+    const shipEntries = groupedEntries.get(shipKey) || [];
+    if (shipEntries.length >= CLOUD_SYNC_HISTORY_LIMIT_PER_SHIP) return;
+    shipEntries.push(entry);
+    groupedEntries.set(shipKey, shipEntries);
+  });
+
+  return sortHistoryEntries(Array.from(groupedEntries.values()).flat())
+    .slice(0, CLOUD_SYNC_HISTORY_LIMIT_TOTAL);
+}
+
+function limitNotificationsForCloudSync(notifications = []) {
+  return sortNotifications(notifications).slice(0, CLOUD_SYNC_NOTIFICATION_LIMIT);
+}
+
+function createCloudSyncStateSnapshot(stateSnapshot = {}) {
+  return createSharedStateSnapshot({
+    activeShiftKey: stateSnapshot.activeShiftKey,
+    checkpointsByShip: stateSnapshot.checkpointsByShip,
+    deletedRecords: stateSnapshot.deletedRecords,
+    historyEntries: limitHistoryEntriesForCloudSync(stateSnapshot.historyEntries || []),
+    incidentMeta: stateSnapshot.incidentMeta,
+    incidentsData: stateSnapshot.incidentsData,
+    notifications: limitNotificationsForCloudSync(stateSnapshot.notifications || []),
+    shipsData: stateSnapshot.shipsData,
+    usersData: stateSnapshot.usersData,
+    activeSOSAlert: stateSnapshot.activeSOSAlert || null,
+    sosHistory: stateSnapshot.sosHistory || [],
+  });
 }
 
 function mapAuditableRecord(record, mapper, options = {}) {
@@ -2096,15 +2383,24 @@ export function AppProvider({ children }) {
   const currentShiftSchedule = useMemo(() => getShiftScheduleTimes(currentShiftMeta), [currentShiftMeta]);
   const sessionUserRecord = useMemo(() => usersData.find(user => user.id === sessionUserId) || null, [usersData, sessionUserId]);
   const firebaseAuthEmail = sanitizeEmail(firebaseAuthUser?.email || '');
+  const firebaseAuthUid = sanitizeText(firebaseAuthUser?.uid || '', 160) || '';
   const currentUserRecord = useMemo(() => {
     if (firebaseAuthEmail) {
-      return usersData.find(user => (user.email || '').toLowerCase() === firebaseAuthEmail) || sessionUserRecord || null;
+      return resolvePreferredUserRecord(usersData, {
+        sessionUserId,
+        firebaseAuthEmail,
+        firebaseAuthUid,
+      }) || sessionUserRecord || null;
     }
     if (!firebaseAuthReady && isFirebaseManagedUser(sessionUserRecord)) {
       return null;
     }
-    return sessionUserRecord;
-  }, [firebaseAuthEmail, firebaseAuthReady, sessionUserRecord, usersData]);
+    return resolvePreferredUserRecord(usersData, {
+      sessionUserId,
+      firebaseAuthUid: sessionUserRecord?.firebaseUid || '',
+      firebaseAuthEmail: sessionUserRecord?.email || '',
+    }) || sessionUserRecord;
+  }, [firebaseAuthEmail, firebaseAuthReady, firebaseAuthUid, sessionUserId, sessionUserRecord, usersData]);
   const effectiveSessionUser = currentUserRecord || sessionUserRecord || null;
   const currentUser = effectiveSessionUser?.name || '';
   const currentUserRole = effectiveSessionUser?.role || ACCESS_ROLES.PETUGAS;
@@ -2243,14 +2539,7 @@ export function AppProvider({ children }) {
   }, [activeSOSAlert, currentUserRecord]);
 
   const assignedShipForCurrentUser = useMemo(() => {
-    if (!currentUserRecord) return null;
-    if (currentUserRecord.role === ACCESS_ROLES.ADMIN) return null;
-    return shipsData.find((ship) => (
-      ship.name === currentUserRecord.shipAssigned
-      && Array.isArray(ship.personnel)
-      && ship.personnel.includes(currentUserRecord.id)
-      && currentUserRecord.status === 'active'
-    )) || null;
+    return resolveAssignedShipForUser(currentUserRecord, shipsData);
   }, [currentUserRecord, shipsData]);
   const operationalShip = useMemo(() => {
     if (currentUserRecord?.role === ACCESS_ROLES.ADMIN) return null;
@@ -2329,6 +2618,9 @@ export function AppProvider({ children }) {
     return Boolean(assignedShipForCurrentUser && incident.shipName === assignedShipForCurrentUser.name);
   }, [assignedShipForCurrentUser, currentUserRecord, isAdmin, isPic, isPetugas]);
   const canCloseIncident = useCallback((incident) => Boolean(currentUserRecord && incident && (isAdmin || isPic)), [currentUserRecord, isAdmin, isPic]);
+  const getCanonicalCheckpointRecord = useCallback((checkpoint) => (
+    resolveCanonicalCheckpointRecord(checkpoint, checkpointsByShip, historyEntries)
+  ), [checkpointsByShip, historyEntries]);
   const sharedState = useMemo(() => normalizeSharedStateTimeAudit(createSharedStateSnapshot({
     activeShiftKey,
     checkpointsByShip,
@@ -2359,13 +2651,19 @@ export function AppProvider({ children }) {
   }, [sharedState]);
   const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
-    if (!photoUrl.startsWith('idb://')) return photoUrl;
+    if (cloudAssetCacheRef.current.has(photoUrl)) {
+      return cloudAssetCacheRef.current.get(photoUrl) || null;
+    }
 
-    const cachedUrl = cloudAssetCacheRef.current.get(photoUrl);
-    if (cachedUrl) return cachedUrl;
+    const isIndexedDbAsset = photoUrl.startsWith('idb://');
+    const isInlineDataAsset = photoUrl.startsWith('data:');
+    if (!isIndexedDbAsset && !isInlineDataAsset) return photoUrl;
 
-    const dataUrl = await loadImageFromDB(photoUrl);
-    if (!dataUrl) return null;
+    const dataUrl = isInlineDataAsset ? photoUrl : await loadImageFromDB(photoUrl);
+    if (!dataUrl) {
+      cloudAssetCacheRef.current.set(photoUrl, null);
+      return null;
+    }
 
     try {
       const uploadedUrl = await uploadCloudDataUrlAsset({
@@ -2373,18 +2671,19 @@ export function AppProvider({ children }) {
         path: createCloudAssetPath(...pathSegments),
       });
 
-      const resolvedUrl = uploadedUrl || dataUrl;
+      const resolvedUrl = uploadedUrl || null;
       cloudAssetCacheRef.current.set(photoUrl, resolvedUrl);
       return resolvedUrl;
     } catch (error) {
       console.error('Gagal upload aset patroli ke cloud', error);
-      cloudAssetCacheRef.current.set(photoUrl, dataUrl);
-      return dataUrl;
+      cloudAssetCacheRef.current.set(photoUrl, null);
+      return null;
     }
   }, []);
   const prepareSharedStateForCloudSync = useCallback(async (stateSnapshot) => {
+    const boundedStateSnapshot = createCloudSyncStateSnapshot(stateSnapshot);
     const preparedCheckpointsByShip = Object.fromEntries(await Promise.all(
-      Object.entries(stateSnapshot.checkpointsByShip || {}).map(async ([shipId, shipCheckpoints]) => ([
+      Object.entries(boundedStateSnapshot.checkpointsByShip || {}).map(async ([shipId, shipCheckpoints]) => ([
         shipId,
         await Promise.all((shipCheckpoints || []).map(async (checkpoint) => ({
           ...checkpoint,
@@ -2403,7 +2702,7 @@ export function AppProvider({ children }) {
       ])),
     ));
 
-    const preparedShipsData = await Promise.all((stateSnapshot.shipsData || []).map(async (ship) => ({
+    const preparedShipsData = await Promise.all((boundedStateSnapshot.shipsData || []).map(async (ship) => ({
       ...ship,
       photoUrl: await prepareCloudPhotoUrl(
         ship.photoUrl,
@@ -2411,7 +2710,7 @@ export function AppProvider({ children }) {
       ),
     })));
 
-    const preparedUsersData = await Promise.all((stateSnapshot.usersData || []).map(async (user) => ({
+    const preparedUsersData = await Promise.all((boundedStateSnapshot.usersData || []).map(async (user) => ({
       ...user,
       photoUrl: await prepareCloudPhotoUrl(
         user.photoUrl,
@@ -2419,7 +2718,7 @@ export function AppProvider({ children }) {
       ),
     })));
 
-    const preparedIncidentsData = await Promise.all((stateSnapshot.incidentsData || []).map(async (incident) => ({
+    const preparedIncidentsData = await Promise.all((boundedStateSnapshot.incidentsData || []).map(async (incident) => ({
       ...incident,
       photoUrl: await prepareCloudPhotoUrl(
         incident.photoUrl,
@@ -2428,7 +2727,7 @@ export function AppProvider({ children }) {
     })));
 
     const preparedIncidentMeta = Object.fromEntries(await Promise.all(
-      Object.entries(stateSnapshot.incidentMeta || {}).map(async ([incidentId, meta]) => ([
+      Object.entries(boundedStateSnapshot.incidentMeta || {}).map(async ([incidentId, meta]) => ([
         incidentId,
         {
           ...meta,
@@ -2450,7 +2749,7 @@ export function AppProvider({ children }) {
       ])),
     ));
 
-    const preparedHistoryEntries = await Promise.all((stateSnapshot.historyEntries || []).map(async (entry) => ({
+    const preparedHistoryEntries = await Promise.all((boundedStateSnapshot.historyEntries || []).map(async (entry) => ({
       ...entry,
       checkpoints: await Promise.all((entry.checkpoints || []).map(async (checkpoint) => ({
         ...checkpoint,
@@ -2475,18 +2774,18 @@ export function AppProvider({ children }) {
       }))),
     })));
 
-    return createSharedStateSnapshot({
-      activeShiftKey: stateSnapshot.activeShiftKey,
+    return createCloudSyncStateSnapshot({
+      activeShiftKey: boundedStateSnapshot.activeShiftKey,
       checkpointsByShip: preparedCheckpointsByShip,
-      deletedRecords: stateSnapshot.deletedRecords,
+      deletedRecords: boundedStateSnapshot.deletedRecords,
       historyEntries: preparedHistoryEntries,
       incidentMeta: preparedIncidentMeta,
       incidentsData: preparedIncidentsData,
-      notifications: stateSnapshot.notifications || [],
+      notifications: boundedStateSnapshot.notifications || [],
       shipsData: preparedShipsData,
       usersData: preparedUsersData,
-      activeSOSAlert: stateSnapshot.activeSOSAlert || null,
-      sosHistory: stateSnapshot.sosHistory || [],
+      activeSOSAlert: boundedStateSnapshot.activeSOSAlert || null,
+      sosHistory: boundedStateSnapshot.sosHistory || [],
     });
   }, [prepareCloudPhotoUrl]);
   const applyCloudSharedState = useCallback((nextState, options = {}) => {
@@ -2998,6 +3297,52 @@ export function AppProvider({ children }) {
   }, [selectedHistoryEntry, selectedHistoryId]);
 
   useEffect(() => {
+    setSelectedReportDetail((previousReport) => {
+      if (!previousReport) return previousReport;
+
+      const canonicalCheckpoint = getCanonicalCheckpointRecord(previousReport);
+      if (!canonicalCheckpoint) return previousReport;
+
+      const nextReport = {
+        ...previousReport,
+        ...canonicalCheckpoint,
+        shipName: canonicalCheckpoint.shipName || previousReport.shipName,
+        date: canonicalCheckpoint.date || previousReport.date,
+        shipSnapshot: canonicalCheckpoint.shipSnapshot ?? previousReport.shipSnapshot ?? null,
+        gpsSnapshot: canonicalCheckpoint.gpsSnapshot ?? previousReport.gpsSnapshot ?? null,
+        weatherSnapshot: canonicalCheckpoint.weatherSnapshot ?? previousReport.weatherSnapshot ?? null,
+      };
+
+      return serializeSharedStateSnapshot(nextReport) === serializeSharedStateSnapshot(previousReport)
+        ? previousReport
+        : nextReport;
+    });
+    setSelectedIncident((previousIncident) => {
+      if (!previousIncident?.isPatrol) return previousIncident;
+
+      const checkpointId = previousIncident?.checkpointId
+        || String(previousIncident.id || '').replace(/^p-/, '');
+      if (!checkpointId) return previousIncident;
+
+      const canonicalCheckpoint = getCanonicalCheckpointRecord({ id: checkpointId });
+      if (!canonicalCheckpoint) return previousIncident;
+
+      const nextIncident = {
+        ...previousIncident,
+        ...createPatrolIncidentRecord(canonicalCheckpoint, {
+          fallbackShipName: canonicalCheckpoint.shipName || previousIncident.shipName,
+          fallbackDate: canonicalCheckpoint.date || previousIncident.date,
+          readOnly: previousIncident.readOnly,
+        }),
+      };
+
+      return serializeSharedStateSnapshot(nextIncident) === serializeSharedStateSnapshot(previousIncident)
+        ? previousIncident
+        : nextIncident;
+    });
+  }, [getCanonicalCheckpointRecord]);
+
+  useEffect(() => {
     setUsersData((previousUsers) => {
       const nextUsers = applyAdminCredentialReset(previousUsers);
       // Reference equality is sufficient here — applyAdminCredentialReset returns same array if unchanged
@@ -3275,6 +3620,7 @@ export function AppProvider({ children }) {
           ? `p-${currentCheckpoint.id}-${trustedTimestamp.occurredAtTrustedIso.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
           : null,
         status: 'completed',
+        pendingOrigin: null,
         completedBy: currentUser,
         completedByUserId: currentUserRecord.id,
         date: dateString,
@@ -3330,7 +3676,12 @@ export function AppProvider({ children }) {
       cancelText: 'BATAL',
       onConfirm: () => { 
         updateOperationalShipCheckpoints(prev => prev.map(c => (
-          String(c.id) === String(id) ? resetCheckpointForShift(c, { shiftKey: currentShiftMeta.key }) : c
+          String(c.id) === String(id)
+            ? resetCheckpointForShift(c, {
+                shiftKey: currentShiftMeta.key,
+                pendingOrigin: 'manual-reset',
+              })
+            : c
         )));
         setSelectedReportDetail(null); 
       } 
@@ -3370,12 +3721,13 @@ export function AppProvider({ children }) {
     ));
   }, [currentUser, selectedReportDetail?.completedBy, selectedReportDetail?.readOnly, updateOperationalShipCheckpoints]);
   const handleOpenPatrolResult = useCallback((item) => {
+    const canonicalItem = getCanonicalCheckpointRecord(item) || item;
     setActiveForms({});
     setPendingPatrolCameraCapture(null);
-    const isReadOnly = Boolean(item?.readOnly || item?.historyId || selectedHistoryEntry);
-    if (item.resultType === 'temuan') {
+    const isReadOnly = Boolean(canonicalItem?.readOnly || canonicalItem?.historyId || selectedHistoryEntry);
+    if (canonicalItem.resultType === 'temuan') {
       setSelectedReportDetail(null);
-      setSelectedIncident(createPatrolIncidentRecord(item, {
+      setSelectedIncident(createPatrolIncidentRecord(canonicalItem, {
         fallbackShipName: selectedHistoryEntry?.ship || operationalShipName,
         fallbackDate: selectedHistoryEntry?.date || formatAppDate(),
         readOnly: isReadOnly,
@@ -3384,15 +3736,15 @@ export function AppProvider({ children }) {
     }
     setSelectedIncident(null);
     setSelectedReportDetail({
-      ...item,
-      shipName: item.shipName || selectedHistoryEntry?.ship || operationalShipName,
-      date: item.date || selectedHistoryEntry?.date || formatAppDate(),
-      shipSnapshot: item.shipSnapshot || null,
-      gpsSnapshot: item.gpsSnapshot || null,
-      weatherSnapshot: item.weatherSnapshot || null,
+      ...canonicalItem,
+      shipName: canonicalItem.shipName || selectedHistoryEntry?.ship || operationalShipName,
+      date: canonicalItem.date || selectedHistoryEntry?.date || formatAppDate(),
+      shipSnapshot: canonicalItem.shipSnapshot || null,
+      gpsSnapshot: canonicalItem.gpsSnapshot || null,
+      weatherSnapshot: canonicalItem.weatherSnapshot || null,
       readOnly: isReadOnly,
     });
-  }, [selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
+  }, [getCanonicalCheckpointRecord, selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
   const handleAddCustomPatrolNode = useCallback(() => {
     if (!canAddTemporaryPatrolNode || !operationalShip) return;
 
@@ -4086,7 +4438,10 @@ export function AppProvider({ children }) {
               shipCheckpoints.map((checkpoint) => {
                 if (createPatrolIncidentId(checkpoint) !== incidentId) return checkpoint;
                 removedFromActiveShift = true;
-                return resetCheckpointForShift(checkpoint, { shiftKey: currentShiftMeta.key });
+                return resetCheckpointForShift(checkpoint, {
+                  shiftKey: currentShiftMeta.key,
+                  pendingOrigin: 'manual-reset',
+                });
               }),
             ])),
           ));
@@ -4522,26 +4877,26 @@ export function AppProvider({ children }) {
     if (!isCloudSyncEnabled || !isCloudWriteEnabled || isOffline || !cloudSyncBootstrapped) return;
 
     const timerId = setTimeout(() => {
-      const cloudReadyState = mergeSharedStateSnapshots(
+      const cloudReadyState = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
         latestCloudSharedStateRef.current || {},
         createSharedStateSnapshot({
           ...sharedState,
           activeShiftKey: currentShiftMeta.key,
         }),
-      );
+      ));
       const serializedState = serializeSharedStateSnapshot(cloudReadyState);
       if (!serializedState || serializedState === lastCloudSharedStateRef.current) return;
 
       cloudSaveQueueRef.current = cloudSaveQueueRef.current
         .catch(() => {})
         .then(async () => {
-          const latestStateForWrite = mergeSharedStateSnapshots(
+          const latestStateForWrite = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
             latestCloudSharedStateRef.current || {},
             createSharedStateSnapshot({
               ...sharedState,
               activeShiftKey: currentShiftMeta.key,
             }),
-          );
+          ));
           const latestSerializedState = serializeSharedStateSnapshot(latestStateForWrite);
           if (!latestSerializedState || latestSerializedState === lastCloudSharedStateRef.current) return;
 
@@ -4565,7 +4920,9 @@ export function AppProvider({ children }) {
             receivedAtServerMs,
           );
           const savedState = await saveCloudAppState(verifiedPreparedState, {
-            mergeState: (cloudState, pendingState) => mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
+            mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
+              mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
+            ),
           });
           const committedState = markSharedStateTimeAuditReceived(
             mergeSharedStateSnapshots({}, savedState || verifiedPreparedState),
@@ -4603,7 +4960,11 @@ export function AppProvider({ children }) {
     const safeEmail = sanitizeEmail(firebaseAuthUser?.email || '');
     if (!safeEmail) return;
 
-    const matchedUser = usersData.find(user => (user.email || '').toLowerCase() === safeEmail) || null;
+    const matchedUser = resolvePreferredUserRecord(usersData, {
+      sessionUserId,
+      firebaseAuthEmail: safeEmail,
+      firebaseAuthUid: firebaseAuthUser?.uid || '',
+    });
     if (!matchedUser) {
       setUsersData(prev => [...prev, createFirebaseBackedUserRecord(firebaseAuthUser, prev)]);
       return;
@@ -4631,7 +4992,7 @@ export function AppProvider({ children }) {
   }, [firebaseAuthReady, firebaseAuthUser, sessionUserId, usersData]);
   useEffect(() => {
     if (!sessionUserId) return;
-    const activeUser = usersData.find(user => user.id === sessionUserId);
+    const activeUser = currentUserRecord || usersData.find(user => user.id === sessionUserId);
     if (!activeUser) {
       handleLogout('Sesi login tidak lagi valid.');
       return;
@@ -4654,7 +5015,7 @@ export function AppProvider({ children }) {
     if (activeUser.role === ACCESS_ROLES.PETUGAS && !assignedShipForCurrentUser) {
       handleLogout('Petugas yang tidak lagi terdaftar di armada aktif tidak bisa tetap login.');
     }
-  }, [assignedShipForCurrentUser, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
+  }, [assignedShipForCurrentUser, currentUserRecord, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
   useEffect(() => { if (!currentUserRecord) return; if (!isAdmin && (currentPage === 'users' || currentPage === 'ships' || currentPage === 'daily-report')) { setCurrentPage('home'); setActiveShipId(null); setShowShipForm(false); setShowShipDocForm(false); setShowUserForm(false); setSelectedUser(null); } }, [currentPage, currentUserRecord, isAdmin]);
   useEffect(() => { if (activeShipId) return; setShowShipDocForm(false); }, [activeShipId]);
   useEffect(() => {

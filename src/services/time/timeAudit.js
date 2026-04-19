@@ -29,12 +29,12 @@ const TRUST_LEVEL_META = {
 const VERIFICATION_META = {
   verified: {
     label: 'Terverifikasi',
-    description: 'Record sudah menerima cap verifikasi setelah sinkronisasi.',
+    description: 'Timestamp record sudah tervalidasi oleh anchor server atau sinkronisasi ulang.',
     tone: 'success',
   },
   'pending-sync': {
     label: 'Menunggu verifikasi',
-    description: 'Record tersimpan, tetapi cap verifikasi belum diterima.',
+    description: 'Record tersimpan, tetapi masih menunggu cap sinkronisasi ulang dari server.',
     tone: 'warning',
   },
   'needs-review': {
@@ -149,7 +149,9 @@ export function resolveTimeVerificationStatus(record, options = {}) {
     return 'needs-review';
   }
 
-  if (hasServerReceipt) {
+  // Record yang dibuat saat anchor server aktif sudah layak dianggap terverifikasi,
+  // walau cap receipt cloud belum ditulis balik ke payload lokal.
+  if (hasServerReceipt || trustLevel === 'server-trusted') {
     return 'verified';
   }
 
@@ -242,6 +244,8 @@ export function buildTimeAuditInfo(record, options = {}) {
     warningMessage = 'Sesi aplikasi sempat terputus saat offline. Record ini wajib direview.';
   } else if (trustLevel === 'offline-trusted' && verificationStatus === 'verified') {
     warningMessage = 'Record offline ini sudah lolos sinkronisasi kembali dan diterima sistem.';
+  } else if (trustLevel === 'server-trusted' && verificationStatus === 'verified') {
+    warningMessage = 'Record ini menggunakan anchor waktu server aktif dan siap dipakai sebagai jejak audit.';
   }
 
   return {
