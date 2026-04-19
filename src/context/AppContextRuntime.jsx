@@ -556,8 +556,8 @@ function normalizeShiftKeyForCloudSync(shiftKey, fallbackMeta = getShiftMeta()) 
 
 function resolveLatestShiftKey(shiftKeys = [], fallbackMeta = getShiftMeta()) {
   const safeFallbackMeta = fallbackMeta || getShiftMeta();
-  let latestShiftMeta = getShiftMetaFromKey(safeFallbackMeta.key) || safeFallbackMeta;
-  let latestShiftStartAt = getShiftScheduleTimes(latestShiftMeta).startAt.getTime();
+  let latestShiftMeta = null;
+  let latestShiftStartAt = Number.NEGATIVE_INFINITY;
 
   ensureArray(Array.isArray(shiftKeys) ? shiftKeys : [shiftKeys]).forEach((shiftKey) => {
     const normalizedShiftKey = normalizeShiftKeyForCloudSync(shiftKey, safeFallbackMeta);
@@ -570,6 +570,12 @@ function resolveLatestShiftKey(shiftKeys = [], fallbackMeta = getShiftMeta()) {
       latestShiftStartAt = candidateShiftStartAt;
     }
   });
+
+  // Jangan langsung meloncat ke fallback shift saat ini jika state lama
+  // masih membawa shift yang belum direkonsiliasi ke riwayat.
+  if (!latestShiftMeta) {
+    latestShiftMeta = getShiftMetaFromKey(safeFallbackMeta.key) || safeFallbackMeta;
+  }
 
   return latestShiftMeta?.key || safeFallbackMeta.key;
 }
@@ -1351,6 +1357,52 @@ function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) 
   return Array.from(merged.values());
 }
 
+function getCheckpointContextShipKey(checkpoint) {
+  return String(checkpoint?.shipId || checkpoint?.shipName || '');
+}
+
+function getCheckpointContextHistoryKey(checkpoint) {
+  return String(checkpoint?.historyId || '');
+}
+
+function isCheckpointReadOnlyContext(checkpoint) {
+  return Boolean(checkpoint?.readOnly || checkpoint?.historyId);
+}
+
+function isCheckpointContextCompatible(sourceCheckpoint, candidateCheckpoint) {
+  if (!sourceCheckpoint || !candidateCheckpoint) return false;
+
+  const sourceShipKey = getCheckpointContextShipKey(sourceCheckpoint);
+  const candidateShipKey = getCheckpointContextShipKey(candidateCheckpoint);
+  if (sourceShipKey && candidateShipKey && sourceShipKey !== candidateShipKey) {
+    return false;
+  }
+
+  const sourceHistoryKey = getCheckpointContextHistoryKey(sourceCheckpoint);
+  const candidateHistoryKey = getCheckpointContextHistoryKey(candidateCheckpoint);
+  if (sourceHistoryKey || candidateHistoryKey) {
+    return Boolean(sourceHistoryKey && sourceHistoryKey === candidateHistoryKey);
+  }
+
+  if (isCheckpointReadOnlyContext(sourceCheckpoint) !== isCheckpointReadOnlyContext(candidateCheckpoint)) {
+    return false;
+  }
+
+  const sourceShiftKey = String(sourceCheckpoint?.shiftKey || '');
+  const candidateShiftKey = String(candidateCheckpoint?.shiftKey || '');
+  if (sourceShiftKey && candidateShiftKey && sourceShiftKey !== candidateShiftKey) {
+    return false;
+  }
+
+  const sourceDateKey = String(sourceCheckpoint?.date || '');
+  const candidateDateKey = String(candidateCheckpoint?.date || '');
+  if (sourceDateKey && candidateDateKey && sourceDateKey !== candidateDateKey) {
+    return false;
+  }
+
+  return true;
+}
+
 function resolveCanonicalCheckpointRecord(checkpoint, checkpointsByShip = {}, historyEntries = []) {
   if (!checkpoint) return null;
 
@@ -1362,6 +1414,7 @@ function resolveCanonicalCheckpointRecord(checkpoint, checkpointsByShip = {}, hi
   Object.values(checkpointsByShip || {}).forEach((shipCheckpoints) => {
     ensureArray(shipCheckpoints).forEach((candidateCheckpoint) => {
       if (getCheckpointMergeKey(candidateCheckpoint) !== mergeKey) return;
+      if (!isCheckpointContextCompatible(checkpoint, candidateCheckpoint)) return;
       bestCheckpoint = mergeCheckpointRecord(bestCheckpoint, candidateCheckpoint);
     });
   });
@@ -1369,6 +1422,7 @@ function resolveCanonicalCheckpointRecord(checkpoint, checkpointsByShip = {}, hi
   ensureArray(historyEntries).forEach((entry) => {
     ensureArray(entry?.checkpoints).forEach((candidateCheckpoint) => {
       if (getCheckpointMergeKey(candidateCheckpoint) !== mergeKey) return;
+      if (!isCheckpointContextCompatible(checkpoint, candidateCheckpoint)) return;
       bestCheckpoint = mergeCheckpointRecord(bestCheckpoint, candidateCheckpoint);
     });
   });
@@ -2054,26 +2108,52 @@ async function pickLocalImage(options = {}) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
+  input.multiple = false;
+  input.tabIndex = -1;
+  input.setAttribute('aria-hidden', 'true');
+  input.style.position = 'fixed';
+  input.style.left = '-9999px';
+  input.style.width = '1px';
+  input.style.height = '1px';
+  input.style.opacity = '0';
+  input.style.pointerEvents = 'none';
   if (cameraOnly) {
     input.capture = 'environment';
     input.setAttribute('capture', 'environment');
   }
 
   return new Promise((resolve) => {
+    const cleanup = () => {
+      input.onchange = null;
+      input.oncancel = null;
+      if (input.parentNode) {
+        input.parentNode.removeChild(input);
+      }
+    };
+
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) {
+        cleanup();
         resolve(null);
         return;
       }
       try {
         const dataUrl = await readImageFileAsDataUrl(file);
+        cleanup();
         resolve(dataUrl);
       } catch (error) {
         console.error(error);
+        cleanup();
         resolve(null);
       }
     };
+    input.oncancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    document.body.appendChild(input);
     input.click();
   });
 }
@@ -2082,15 +2162,34 @@ async function pickLocalFile(accept = '.pdf,.doc,.docx,.xls,.xlsx,image/*') {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = accept;
+  input.multiple = false;
+  input.tabIndex = -1;
+  input.setAttribute('aria-hidden', 'true');
+  input.style.position = 'fixed';
+  input.style.left = '-9999px';
+  input.style.width = '1px';
+  input.style.height = '1px';
+  input.style.opacity = '0';
+  input.style.pointerEvents = 'none';
   return new Promise((resolve) => {
+    const cleanup = () => {
+      input.onchange = null;
+      input.oncancel = null;
+      if (input.parentNode) {
+        input.parentNode.removeChild(input);
+      }
+    };
+
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) {
+        cleanup();
         resolve(null);
         return;
       }
       try {
         const dataUrl = await readFileAsDataUrl(file);
+        cleanup();
         resolve({
           dataUrl,
           name: file.name,
@@ -2098,9 +2197,16 @@ async function pickLocalFile(accept = '.pdf,.doc,.docx,.xls,.xlsx,image/*') {
         });
       } catch (error) {
         console.error(error);
+        cleanup();
         resolve(null);
       }
     };
+    input.oncancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    document.body.appendChild(input);
     input.click();
   });
 }
@@ -4328,7 +4434,7 @@ export function AppProvider({ children }) {
         Object.entries(previousState).map(([shipId, shipCheckpoints]) => ([
           shipId,
           shipCheckpoints.map((checkpoint) => (
-            String(checkpoint.id) === String(checkpointId) && !checkpoint.readOnly
+            (createPatrolIncidentId(checkpoint) === incidentId || String(checkpoint.id) === String(checkpointId)) && !checkpoint.readOnly
               ? {
                   ...checkpoint,
                   kejadian: nextIncidentInfo.deskripsi,
