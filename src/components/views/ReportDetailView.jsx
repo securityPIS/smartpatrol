@@ -56,6 +56,7 @@ export default function ReportDetailView({ isInline = false }) {
   }
 
   const isMissed = selectedReportDetail.resultType === 'missed' || selectedReportDetail.status === 'missed';
+  const isAman = selectedReportDetail.resultType === 'aman';
   const isReadOnly = Boolean(selectedReportDetail.readOnly);
   const headerToneClass = isMissed ? 'bg-rose-500/10 border-rose-500 text-rose-400' : selectedReportDetail.resultType === 'temuan' ? 'bg-yellow-500/10 border-yellow-500 text-yellow-400' : 'bg-emerald-500/10 border-emerald-500 text-emerald-400';
   const gpsSnapshot = selectedReportDetail.gpsSnapshot || null;
@@ -109,7 +110,7 @@ export default function ReportDetailView({ isInline = false }) {
           )}
         </div>
       )}
-      {selectedReportDetail.resultType === 'aman' && (
+      {isAman && (
         <div className="px-4 py-4 border-b border-cyan-900/50 bg-[#091022] shrink-0">
           <div className="flex items-center gap-3 overflow-x-auto scrollbar-thin scrollbar-thumb-cyan-900/50">
             {galleryItems.length === 0 ? (
@@ -141,28 +142,32 @@ export default function ReportDetailView({ isInline = false }) {
         </div>
       )}
       <div className="flex-1 overflow-y-auto p-5 space-y-6">
-         <div className="grid grid-cols-2 gap-3">
-           <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50 shadow-sm"><p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">{isMissed ? 'Status' : 'Inspektur'}</p><p className="text-sm font-bold text-cyan-50 truncate">{isMissed ? 'Missed Patrol' : (selectedReportDetail.completedBy || '-')}</p></div>
-           <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50 shadow-sm">
-             <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">{isReadOnly ? 'Shift' : 'Waktu Sync'}</p>
-             {isReadOnly && selectedReportDetail.date ? (
-               <p className="text-sm font-bold text-cyan-50">
-                 <span className="block">{selectedReportDetail.date}</span>
-                 <span className="block">{selectedReportDetail.time || '-'}</span>
-               </p>
-             ) : (
-               <p className="text-sm font-bold text-cyan-50">
-                 <span className="block">{syncDateLabel}</span>
-                 <span className="block">{syncTimeLabel} WIB</span>
-               </p>
-             )}
-           </div>
-         </div>
-         <TimeAuditRecordCard
-           record={selectedReportDetail}
-           title="Audit Timestamp Laporan"
-           fallbackTimestampKeys={['completedAt', 'updatedAt', 'createdAt']}
-         />
+         {!isAman ? (
+           <>
+             <div className="grid grid-cols-2 gap-3">
+               <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50 shadow-sm"><p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">{isMissed ? 'Status' : 'Inspektur'}</p><p className="text-sm font-bold text-cyan-50 truncate">{isMissed ? 'Missed Patrol' : (selectedReportDetail.completedBy || '-')}</p></div>
+               <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50 shadow-sm">
+                 <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest mb-1">{isReadOnly ? 'Shift' : 'Waktu Sync'}</p>
+                 {isReadOnly && selectedReportDetail.date ? (
+                   <p className="text-sm font-bold text-cyan-50">
+                     <span className="block">{selectedReportDetail.date}</span>
+                     <span className="block">{selectedReportDetail.time || '-'}</span>
+                   </p>
+                 ) : (
+                   <p className="text-sm font-bold text-cyan-50">
+                     <span className="block">{syncDateLabel}</span>
+                     <span className="block">{syncTimeLabel} WIB</span>
+                   </p>
+                 )}
+               </div>
+             </div>
+             <TimeAuditRecordCard
+               record={selectedReportDetail}
+               title="Audit Timestamp Laporan"
+               fallbackTimestampKeys={['completedAt', 'updatedAt', 'createdAt']}
+             />
+           </>
+         ) : null}
          {isMissed ? (
            <div className="bg-rose-950/20 p-4 rounded-xl border border-rose-900/30">
              <p className="text-[10px] text-rose-600 font-bold mb-1.5 flex items-center gap-1.5 uppercase tracking-widest"><AlertTriangle className="w-3 h-3" /> Keterangan</p>
@@ -175,7 +180,7 @@ export default function ReportDetailView({ isInline = false }) {
              <div className="bg-emerald-950/20 p-4 rounded-xl border border-emerald-900/30"><p className="text-[10px] text-emerald-600 font-bold mb-1.5 flex items-center gap-1.5 uppercase tracking-widest"><CheckCircle2 className="w-3 h-3" /> Tindak Lanjut</p><p className="text-sm text-emerald-50/90 leading-relaxed">{selectedReportDetail.tindakLanjut || '-'}</p></div>
            </div>
          )}
-         {selectedReportDetail.resultType === 'aman' && (
+         {isAman && (
            <div className="space-y-3">
              <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50 shadow-sm">
                {hasGpsSnapshot ? (
@@ -259,6 +264,11 @@ export default function ReportDetailView({ isInline = false }) {
                <p className="text-[10px] text-emerald-600 font-bold mb-1.5 flex items-center gap-1.5 uppercase tracking-widest"><CheckCircle2 className="w-3 h-3" /> Catatan</p>
                <p className="text-sm text-emerald-50/90 leading-relaxed">{selectedReportDetail.kejadian || 'Checkpoint dilaporkan dalam kondisi aman.'}</p>
              </div>
+             <TimeAuditRecordCard
+               record={selectedReportDetail}
+               title="Audit Timestamp Laporan"
+               fallbackTimestampKeys={['completedAt', 'updatedAt', 'createdAt']}
+             />
            </div>
          )}
       </div>

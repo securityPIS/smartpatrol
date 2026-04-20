@@ -4,8 +4,42 @@ import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, Tr
 import AsyncImage from '../AsyncImage';
 import { TimeAuditPills, TimeAuditRecordCard } from '../TimeAuditStatus';
 
-function getIncidentStatus(selectedIncident, incidentMeta) {
-  const metaStatus = incidentMeta[selectedIncident?.id]?.status;
+function normalizeIncidentMetaKeyPart(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+function buildIncidentMetaKeyCandidates(incident) {
+  const candidates = new Set();
+  const exactId = String(incident?.id || '').trim();
+  const explicitIncidentId = String(incident?.incidentId || '').trim();
+  const checkpointToken = normalizeIncidentMetaKeyPart(incident?.checkpointId);
+  const completedToken = normalizeIncidentMetaKeyPart(incident?.completedAt);
+
+  if (exactId) candidates.add(exactId);
+  if (explicitIncidentId) candidates.add(explicitIncidentId);
+  if (checkpointToken) {
+    candidates.add(`p-${checkpointToken}`);
+    if (completedToken) {
+      candidates.add(`p-${checkpointToken}-${completedToken}`);
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function resolveIncidentMetaRecord(incidentMeta = {}, incident = null) {
+  const candidates = buildIncidentMetaKeyCandidates(incident);
+  return candidates.reduce((resolvedMeta, candidateKey) => (
+    resolvedMeta || incidentMeta?.[candidateKey] || null
+  ), null);
+}
+
+function getIncidentStatus(selectedIncident, incidentMetaRecord) {
+  const metaStatus = incidentMetaRecord?.status;
   if (metaStatus) return metaStatus;
   if (selectedIncident?.isSOS) {
     return selectedIncident.sosStatus === 'resolved' ? 'closed' : 'open';
@@ -154,9 +188,13 @@ export default function IncidentDetailView({ isInline = false }) {
 
   const isReadOnly = Boolean(selectedIncident.readOnly);
   const isSOSIncident = Boolean(selectedIncident.isSOS);
-  const incidentStatus = getIncidentStatus(selectedIncident, incidentMeta);
-  const documentationItems = incidentMeta[selectedIncident.id]?.documentation || [];
-  const progressItems = incidentMeta[selectedIncident.id]?.progress || [];
+  const incidentMetaRecord = useMemo(
+    () => resolveIncidentMetaRecord(incidentMeta, selectedIncident),
+    [incidentMeta, selectedIncident],
+  );
+  const incidentStatus = getIncidentStatus(selectedIncident, incidentMetaRecord);
+  const documentationItems = incidentMetaRecord?.documentation || [];
+  const progressItems = incidentMetaRecord?.progress || [];
   const canManageDetailActions = incidentStatus !== 'closed' && canManageIncident(selectedIncident);
   const canUploadDocumentation = canManageDetailActions;
   const canEditInfo = canManageIncident(selectedIncident);

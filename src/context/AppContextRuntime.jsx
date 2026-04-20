@@ -1531,6 +1531,7 @@ function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
         ...nonPendingCheckpoint,
         id: nonPendingCheckpoint.id || pendingCheckpoint.id,
         name: nonPendingCheckpoint.name || pendingCheckpoint.name,
+        photoUrl: resolveMergedAssetUrl(nonPendingCheckpoint.photoUrl, pendingCheckpoint.photoUrl),
       };
     }
   }
@@ -1557,6 +1558,7 @@ function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
     ...preferredCheckpoint,
     id: preferredCheckpoint.id || fallbackCheckpoint.id,
     name: preferredCheckpoint.name || fallbackCheckpoint.name,
+    photoUrl: resolveMergedAssetUrl(preferredCheckpoint.photoUrl, fallbackCheckpoint.photoUrl),
   };
 }
 
@@ -1571,6 +1573,58 @@ function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) 
   });
 
   return Array.from(merged.values());
+}
+
+function resolveMergedAssetUrl(preferredUrl, fallbackUrl) {
+  const safePreferredUrl = typeof preferredUrl === 'string' ? preferredUrl : '';
+  const safeFallbackUrl = typeof fallbackUrl === 'string' ? fallbackUrl : '';
+  const preferredIsPortable = safePreferredUrl && !safePreferredUrl.startsWith('idb://');
+  const fallbackIsPortable = safeFallbackUrl && !safeFallbackUrl.startsWith('idb://');
+
+  if (preferredIsPortable) return safePreferredUrl;
+  if (fallbackIsPortable) return safeFallbackUrl;
+  return safePreferredUrl || safeFallbackUrl || null;
+}
+
+function mergeProgressItems(baseProgress = [], nextProgress = []) {
+  return mergeEntitiesById(baseProgress, nextProgress, {
+    getId: (item) => item?.id || item?.createdAt || item?.comment,
+    merge: (baseItem, nextItem) => {
+      const baseTimestamp = new Date(baseItem?.createdAt || '').getTime();
+      const nextTimestamp = new Date(nextItem?.createdAt || '').getTime();
+      const preferred = nextTimestamp >= baseTimestamp ? nextItem : baseItem;
+      const fallback = nextTimestamp >= baseTimestamp ? baseItem : nextItem;
+      return {
+        ...fallback,
+        ...preferred,
+        comment: preferred.comment || fallback.comment || '',
+        photoUrl: resolveMergedAssetUrl(preferred.photoUrl, fallback.photoUrl),
+        author: preferred.author || fallback.author || '',
+      };
+    },
+  });
+}
+
+function mergeDocumentationItems(baseDocumentation = [], nextDocumentation = []) {
+  return mergeEntitiesById(baseDocumentation, nextDocumentation, {
+    getId: (item) => item?.id || item?.createdAt || item?.photoUrl,
+    merge: (baseItem, nextItem) => {
+      const baseTimestamp = new Date(baseItem?.createdAt || '').getTime();
+      const nextTimestamp = new Date(nextItem?.createdAt || '').getTime();
+      const preferred = nextTimestamp >= baseTimestamp ? nextItem : baseItem;
+      const fallback = nextTimestamp >= baseTimestamp ? baseItem : nextItem;
+      return {
+        ...fallback,
+        ...preferred,
+        photoUrl: resolveMergedAssetUrl(preferred.photoUrl, fallback.photoUrl),
+        author: preferred.author || fallback.author || '',
+      };
+    },
+  }).sort((left, right) => {
+    const leftTimestamp = new Date(left?.createdAt || '').getTime();
+    const rightTimestamp = new Date(right?.createdAt || '').getTime();
+    return rightTimestamp - leftTimestamp;
+  });
 }
 
 function getCheckpointContextShipKey(checkpoint) {
@@ -1710,36 +1764,6 @@ function mergeEntitiesById(baseItems = [], nextItems = [], options = {}) {
   return Array.from(merged.values());
 }
 
-function mergeProgressItems(baseProgress = [], nextProgress = []) {
-  return mergeEntitiesById(baseProgress, nextProgress, {
-    getId: (item) => item?.id || item?.createdAt || item?.comment,
-    merge: (baseItem, nextItem) => {
-      const baseTimestamp = new Date(baseItem?.createdAt || '').getTime();
-      const nextTimestamp = new Date(nextItem?.createdAt || '').getTime();
-      return nextTimestamp >= baseTimestamp
-        ? { ...baseItem, ...nextItem }
-        : { ...nextItem, ...baseItem };
-    },
-  });
-}
-
-function mergeDocumentationItems(baseDocumentation = [], nextDocumentation = []) {
-  return mergeEntitiesById(baseDocumentation, nextDocumentation, {
-    getId: (item) => item?.id || item?.createdAt || item?.photoUrl,
-    merge: (baseItem, nextItem) => {
-      const baseTimestamp = new Date(baseItem?.createdAt || '').getTime();
-      const nextTimestamp = new Date(nextItem?.createdAt || '').getTime();
-      return nextTimestamp >= baseTimestamp
-        ? { ...baseItem, ...nextItem }
-        : { ...nextItem, ...baseItem };
-    },
-  }).sort((left, right) => {
-    const leftTimestamp = new Date(left?.createdAt || '').getTime();
-    const rightTimestamp = new Date(right?.createdAt || '').getTime();
-    return rightTimestamp - leftTimestamp;
-  });
-}
-
 function mergeIncidentMetaCollection(baseMeta = {}, nextMeta = {}) {
   const mergedMeta = { ...(baseMeta || {}) };
 
@@ -1748,6 +1772,11 @@ function mergeIncidentMetaCollection(baseMeta = {}, nextMeta = {}) {
     mergedMeta[incidentId] = {
       ...baseValue,
       ...nextValue,
+      status: nextValue?.status || baseValue.status || null,
+      infoOverrides: {
+        ...(baseValue.infoOverrides || {}),
+        ...(nextValue?.infoOverrides || {}),
+      },
       documentation: mergeDocumentationItems(baseValue.documentation || [], nextValue?.documentation || []),
       progress: mergeProgressItems(baseValue.progress || [], nextValue?.progress || []),
     };
@@ -3134,8 +3163,9 @@ export function AppProvider({ children }) {
 
     const dataUrl = isInlineDataAsset ? photoUrl : await loadImageFromDB(photoUrl);
     if (!dataUrl) {
-      cloudAssetCacheRef.current.set(photoUrl, null);
-      return null;
+      // Prevent other devices from wiping out the reference if they don't own the IDB blob.
+      cloudAssetCacheRef.current.set(photoUrl, photoUrl);
+      return photoUrl;
     }
 
     try {
@@ -3144,13 +3174,13 @@ export function AppProvider({ children }) {
         path: createCloudAssetPath(...pathSegments),
       });
 
-      const resolvedUrl = uploadedUrl || null;
+      const resolvedUrl = uploadedUrl || photoUrl;
       cloudAssetCacheRef.current.set(photoUrl, resolvedUrl);
       return resolvedUrl;
     } catch (error) {
       console.error('Gagal upload aset patroli ke cloud', error);
-      cloudAssetCacheRef.current.set(photoUrl, null);
-      return null;
+      cloudAssetCacheRef.current.set(photoUrl, photoUrl);
+      return photoUrl;
     }
   }, []);
   const prepareSharedStateForCloudSync = useCallback(async (stateSnapshot) => {
@@ -3395,8 +3425,11 @@ export function AppProvider({ children }) {
       }
 
       if (previousIncident.isPatrol) {
+        if (previousIncident.readOnly) return previousIncident;
+
         const matchedCheckpoint = flattenedCheckpoints.find((checkpoint) => (
           createPatrolIncidentId(checkpoint) === previousIncident.id
+          && checkpoint.resultType === 'temuan'
         ));
 
         if (!matchedCheckpoint) return previousIncident;
@@ -3815,13 +3848,14 @@ export function AppProvider({ children }) {
     });
     setSelectedIncident((previousIncident) => {
       if (!previousIncident?.isPatrol) return previousIncident;
+      if (previousIncident.readOnly) return previousIncident;
 
       const checkpointId = previousIncident?.checkpointId
         || String(previousIncident.id || '').replace(/^p-/, '');
       if (!checkpointId) return previousIncident;
 
       const canonicalCheckpoint = getCanonicalCheckpointRecord({ id: checkpointId });
-      if (!canonicalCheckpoint) return previousIncident;
+      if (!canonicalCheckpoint || canonicalCheckpoint.resultType !== 'temuan') return previousIncident;
 
       const nextIncident = {
         ...previousIncident,

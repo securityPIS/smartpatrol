@@ -6,23 +6,30 @@ export async function readImageFileAsDataUrl(file, maxEdge = 1280, quality = 0.8
   const objectUrl = URL.createObjectURL(file);
 
   try {
-    const image = await loadImage(objectUrl);
-    const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height, 1);
-    const scale = Math.min(1, maxEdge / longestSide);
-    const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
-    const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+    try {
+      const image = await loadImage(objectUrl);
+      const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height, 1);
+      const scale = Math.min(1, maxEdge / longestSide);
+      const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+      const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
 
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
 
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) {
-      throw new Error("Browser tidak mendukung kompresi gambar.");
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) {
+        throw new Error("Browser tidak mendukung kompresi gambar.");
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+      return canvas.toDataURL("image/webp", quality);
+    } catch (error) {
+      // Fallback ini menjaga upload tetap jalan untuk format kamera tertentu
+      // yang gagal dirender ulang lewat canvas/browser.
+      console.warn("Kompresi gambar gagal, memakai file asli.", error);
+      return readFileAsDataUrl(file);
     }
-
-    context.drawImage(image, 0, 0, width, height);
-    return canvas.toDataURL("image/webp", quality);
   } finally {
     URL.revokeObjectURL(objectUrl);
   }

@@ -4,6 +4,10 @@ const STORE_NAME = 'photos';
 let dbPromise = null;
 
 function openDB() {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('IndexedDB tidak tersedia di perangkat ini.'));
+  }
+
   if (dbPromise) return dbPromise;
   
   dbPromise = new Promise((resolve, reject) => {
@@ -43,7 +47,11 @@ export async function saveImageToDB(dataUrl) {
     });
   } catch (error) {
     console.error('Failed to save image to IndexedDB:', error);
-    return null;
+    // Fallback ke data URL menjaga upload tetap bisa dipakai saat IndexedDB
+    // diblokir browser/PWA, meski mode ini sebaiknya hanya jadi cadangan.
+    return typeof dataUrl === 'string' && dataUrl.startsWith('data:')
+      ? dataUrl
+      : null;
   }
 }
 

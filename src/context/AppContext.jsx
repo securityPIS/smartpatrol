@@ -4362,9 +4362,11 @@ export function AppProvider({ children }) {
     openHistoryEntry,
     closeHistoryEntry,
     handleDeleteHistoryEntry,
+    handleOpenPatrolResult,
   }), [
     closeHistoryEntry,
     handleDeleteHistoryEntry,
+    handleOpenPatrolResult,
     openHistoryEntry,
     selectedHistoryEntry,
     visibleHistoryEntries,
