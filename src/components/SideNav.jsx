@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyediakan navigasi samping desktop dengan prioritas menu yang berbeda untuk admin dan petugas.
+Caller: App shell pada layout desktop.
+Dependensi: UI context, role context, history context, ships context, notifications context, dan SOSButton.
+Main Functions: Merender tab desktop, status aktif menu, badge notifikasi, dan shortcut SOS.
+Side Effects: Mengubah currentPage, mereset activeShipId, dan menutup detail riwayat aktif.
+*/
+
 import React from 'react';
 import { useHistory, useNotifications, useRole, useShips, useUI } from '../context/AppContextRuntime';
 import { Home, AlertOctagon, FileText, Shield, Ship, Bell, ChevronRight, BarChart3 } from 'lucide-react';
@@ -11,9 +19,9 @@ const SideNav = React.memo(function SideNav() {
   const { isAdmin } = useRole();
 
   const tabs = [
-    {id: 'home', icon: <Home className="w-5 h-5"/>, label: 'Patroli'},
-    {id: 'incidents', icon: <AlertOctagon className="w-5 h-5"/>, label: 'Temuan'},
     {id: 'history', icon: <FileText className="w-5 h-5"/>, label: 'Riwayat'},
+    ...(isAdmin ? [] : [{id: 'home', icon: <Home className="w-5 h-5"/>, label: 'Patroli'}]),
+    {id: 'incidents', icon: <AlertOctagon className="w-5 h-5"/>, label: 'Temuan'},
     {id: 'notifications', icon: <Bell className="w-5 h-5"/>, label: 'Notif'},
     ...(isAdmin ? [{id: 'daily-report', icon: <BarChart3 className="w-5 h-5"/>, label: 'Report'}] : [])
   ];

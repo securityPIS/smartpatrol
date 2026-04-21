@@ -1333,6 +1333,45 @@ function createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot) {
   };
 }
 
+function buildLiveHistoryEntry({ shiftMeta, checkpoints, ship, users, shiftStatusRecord = null }) {
+  if (!shiftMeta?.key || !ship) return null;
+
+  const shipName = ship?.name || 'Belum Ada Kapal';
+  const liveEntryKey = `live-${ship?.id || shipName}-${shiftMeta.key}`;
+  const shipSnapshot = createShipLocationSnapshot(ship);
+  const liveCheckpoints = ensureArray(checkpoints)
+    .filter(checkpoint => ensureObject(checkpoint))
+    .map(checkpoint => ({
+      ...checkpoint,
+      date: shiftMeta.dateLabel,
+      shipName: checkpoint.shipName || shipName,
+      shipSnapshot: checkpoint.shipSnapshot || shipSnapshot,
+    }));
+  const summary = summarizePatrolCheckpoints(liveCheckpoints);
+
+  return {
+    id: liveEntryKey,
+    key: liveEntryKey,
+    date: shiftMeta.dateLabel,
+    dateKey: shiftMeta.dateKey,
+    shift: shiftMeta.label,
+    shiftId: shiftMeta.id,
+    time: shiftMeta.timeRange,
+    ship: shipName,
+    shipSnapshot,
+    crewSnapshot: buildGuardShiftSnapshot(users, shipName, liveCheckpoints, shiftStatusRecord),
+    weatherSnapshot: null,
+    checkpoints: liveCheckpoints,
+    summary,
+    points: summary.total,
+    issue: summary.temuan,
+    missed: summary.missed,
+    createdAt: getTrustedDate().toISOString(),
+    isLive: true,
+    readOnly: true,
+  };
+}
+
 function normalizeCheckpointRecordForShip(baseCheckpoint, checkpoint, ship, shiftKey = checkpoint?.shiftKey || null) {
   if (!checkpoint) return { ...baseCheckpoint };
 
@@ -3273,16 +3312,47 @@ export function AppProvider({ children }) {
     if (!operationalShip?.id) return [];
     return ensureArray(checkpointsByShip[operationalShip.id]).filter(checkpoint => ensureObject(checkpoint));
   }, [checkpointsByShip, operationalShip?.id]);
+  const adminLiveHistoryEntries = useMemo(() => {
+    if (!isAdmin || !currentUserRecord || !currentShiftMeta?.key) return [];
+
+    return ensureArray(shipsData)
+      .filter(ship => ensureObject(ship) && (ship.id || ship.name))
+      .map((ship) => {
+        const shipCheckpoints = ensureArray(checkpointsByShip?.[ship.id]).filter(checkpoint => ensureObject(checkpoint));
+        const shipShiftStatusRecord = getShiftStatusRecordForShipShift(shiftStatusRecords, ship.id, currentShiftMeta.key);
+        const liveEntry = buildLiveHistoryEntry({
+          shiftMeta: currentShiftMeta,
+          checkpoints: shipCheckpoints,
+          ship,
+          users: usersData,
+          shiftStatusRecord: shipShiftStatusRecord,
+        });
+
+        if (!liveEntry) return null;
+
+        const hasOngoingPatrol = liveEntry.crewSnapshot.length > 0
+          || ensureArray(shipShiftStatusRecord?.items).length > 0
+          || liveEntry.summary.completed > 0;
+
+        return hasOngoingPatrol ? liveEntry : null;
+      })
+      .filter(Boolean)
+      .sort((left, right) => (
+        (Number(right?.summary?.completed) || 0) - (Number(left?.summary?.completed) || 0)
+        || String(left?.ship || '').localeCompare(String(right?.ship || ''))
+      ));
+  }, [checkpointsByShip, currentShiftMeta, currentUserRecord, isAdmin, shiftStatusRecords, shipsData, usersData]);
   const visibleHistoryEntries = useMemo(() => {
     if (!currentUserRecord) return [];
     const safeHistoryEntries = ensureArray(historyEntries).filter(entry => ensureObject(entry));
-    if (isAdmin || isPic) return safeHistoryEntries;
+    if (isAdmin) return [...adminLiveHistoryEntries, ...safeHistoryEntries];
+    if (isPic) return safeHistoryEntries;
     if (!assignedShipForCurrentUser) return [];
     return safeHistoryEntries.filter(entry => (
       entry.shipSnapshot?.id === assignedShipForCurrentUser.id
       || entry.ship === assignedShipForCurrentUser.name
     ));
-  }, [assignedShipForCurrentUser, currentUserRecord, historyEntries, isAdmin, isPic]);
+  }, [adminLiveHistoryEntries, assignedShipForCurrentUser, currentUserRecord, historyEntries, isAdmin, isPic]);
   const selectedHistoryEntry = useMemo(() => visibleHistoryEntries.find(entry => entry.id === selectedHistoryId) || null, [visibleHistoryEntries, selectedHistoryId]);
   const visibleNotifications = useMemo(() => {
     if (!currentUserId) return [];

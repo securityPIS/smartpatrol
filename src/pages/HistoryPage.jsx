@@ -1,6 +1,14 @@
+/*
+Tujuan: Menampilkan riwayat patroli dan shift aktif agar admin bisa memonitor progres secara cepat.
+Caller: App shell saat user membuka halaman riwayat.
+Dependensi: History context, reports context, incidents context, dan HistoryDetailView.
+Main Functions: Menyaring daftar riwayat, menonjolkan entry ON GOING, dan membuka detail ringkasan patroli.
+Side Effects: Mengubah selected history, membuka detail laporan/temuan, dan menghapus riwayat arsip bila diizinkan.
+*/
+
 import React, { useEffect, useMemo, useState } from 'react';
 import { useHistory, useIncidents, useReports, useRole } from '../context/AppContextRuntime';
-import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX } from 'lucide-react';
+import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX, Activity } from 'lucide-react';
 import HistoryDetailView from '../components/views/HistoryDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
@@ -333,26 +341,55 @@ export default function HistoryPage() {
             )}
           </div>
         )}
-        {filteredHistoryEntries.map((data) => (
+        {filteredHistoryEntries.map((data) => {
+          const isLiveEntry = Boolean(data.isLive);
+          const isSelectedEntry = selectedHistoryEntry?.id === data.id;
+          const cardClassName = isLiveEntry
+            ? (isSelectedEntry
+              ? 'border-emerald-400 ring-1 ring-emerald-400/30 shadow-[0_0_18px_rgba(16,185,129,0.18)] bg-emerald-500/10'
+              : 'border-emerald-700/60 bg-emerald-950/20 hover:border-emerald-500/60 hover:shadow-[0_0_22px_rgba(16,185,129,0.14)]')
+            : (isSelectedEntry
+              ? 'border-cyan-400 ring-1 ring-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.15)] bg-[#0f1734]'
+              : 'border-cyan-800/50 hover:border-cyan-500/50 hover:shadow-[0_0_20px_rgba(6,182,212,0.1)]');
+          const iconClassName = isLiveEntry
+            ? (isSelectedEntry
+              ? 'bg-emerald-400 text-[#052e1d] border-emerald-300'
+              : 'bg-emerald-500/10 text-emerald-300 border-emerald-700/60')
+            : (isSelectedEntry
+              ? 'bg-cyan-500 text-[#070b19] border-cyan-400'
+              : 'bg-[#070b19] text-cyan-500 border-cyan-800');
+          const badgeClassName = isLiveEntry
+            ? 'bg-emerald-500/10 text-emerald-200 border border-emerald-400/40'
+            : 'bg-[#070b19] text-cyan-400 border border-cyan-800';
+
+          return (
           <div 
             key={data.id} 
             onClick={() => handleEntryClick(data.id)} 
-            className={`bg-[#0b1229] border rounded-xl p-4 cursor-pointer transition-all hover:shadow-[0_0_20px_rgba(6,182,212,0.1)] ${selectedHistoryEntry?.id === data.id ? 'border-cyan-400 ring-1 ring-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.15)] bg-[#0f1734]' : 'border-cyan-800/50 hover:border-cyan-500/50'}`}
+            className={`border rounded-xl p-4 cursor-pointer transition-all ${cardClassName}`}
           >
             <div className="flex justify-between items-start mb-3">
               <div className="flex gap-3">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center border transition-colors ${selectedHistoryEntry?.id === data.id ? 'bg-cyan-500 text-[#070b19] border-cyan-400' : 'bg-[#070b19] text-cyan-500 border-cyan-800'}`}>
-                  <FileText className="w-5 h-5" />
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center border transition-colors ${iconClassName}`}>
+                  {isLiveEntry ? <Activity className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
                 </div>
                 <div>
-                    <h3 className="font-bold text-cyan-50">{data.ship}</h3>
-                    <p className="text-sm text-cyan-500/80 flex items-center gap-1 mt-0.5"><CalendarDays className="w-3 h-3" /> {data.date}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-bold text-cyan-50">{data.ship}</h3>
+                      {isLiveEntry && (
+                        <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] bg-emerald-400/15 text-emerald-200 border border-emerald-400/30">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
+                          ON GOING
+                        </span>
+                      )}
+                    </div>
+                    <p className={`text-sm flex items-center gap-1 mt-0.5 ${isLiveEntry ? 'text-emerald-200/80' : 'text-cyan-500/80'}`}><CalendarDays className="w-3 h-3" /> {data.date}</p>
                 </div>
               </div>
               <div className="text-right">
                 <div className="flex items-center justify-end gap-2">
-                  <span className="inline-block px-2 py-1 bg-[#070b19] text-cyan-400 rounded text-xs font-bold border border-cyan-800">{data.shift}</span>
-                  {isAdmin && (
+                  <span className={`inline-block px-2 py-1 rounded text-xs font-bold ${badgeClassName}`}>{data.shift}</span>
+                  {isAdmin && !isLiveEntry && (
                     <button
                       type="button"
                       onClick={(event) => {
@@ -369,22 +406,22 @@ export default function HistoryPage() {
                 <p className="text-[10px] text-cyan-600 mt-1 flex items-center justify-end gap-1"><Clock className="w-3 h-3"/> {data.time}</p>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 border-t border-cyan-900/50 pt-3 opacity-80 group-hover:opacity-100">
-              <div className="flex-1 bg-[#070b19] p-2 rounded-lg border border-cyan-900/30">
+            <div className={`grid grid-cols-3 gap-2 pt-3 opacity-80 group-hover:opacity-100 ${isLiveEntry ? 'border-t border-emerald-900/40' : 'border-t border-cyan-900/50'}`}>
+              <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
                   <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Status Titik</p>
                   <p className="text-xs text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> {data.summary?.completed || 0}/{data.summary?.total || 0} Selesai</p>
               </div>
-              <div className="flex-1 bg-[#070b19] p-2 rounded-lg border border-cyan-900/30">
+              <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
                   <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Temuan</p>
                   {data.issue > 0 ? <p className="text-xs text-yellow-400 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> {data.issue} Temuan</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
               </div>
-              <div className="flex-1 bg-[#070b19] p-2 rounded-lg border border-cyan-900/30">
+              <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
                   <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Missed</p>
                   {data.missed > 0 ? <p className="text-xs text-rose-400 font-medium flex items-center gap-1"><CircleOff className="w-3 h-3"/> {data.missed} Titik</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
               </div>
             </div>
           </div>
-        ))}
+        )})}
       </div>
 
       {/* Right Pane: Detail View */}

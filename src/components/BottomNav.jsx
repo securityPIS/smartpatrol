@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyediakan navigasi bawah mobile yang menyesuaikan urutan menu berdasarkan role user.
+Caller: App shell pada layout mobile.
+Dependensi: UI context, role context, history context, ships context, dan SOSButton.
+Main Functions: Merender tab navigasi mobile, badge notifikasi, dan shortcut SOS.
+Side Effects: Mengubah currentPage, mereset activeShipId, dan menutup detail riwayat aktif.
+*/
+
 import React from 'react';
 import { useHistory, useNotifications, useRole, useShips, useUI } from '../context/AppContextRuntime';
 import { Home, AlertOctagon, FileText, Bell, BarChart3 } from 'lucide-react';
@@ -11,9 +19,9 @@ const BottomNav = React.memo(function BottomNav() {
   const { isAdmin } = useRole();
 
   const tabs = [
+    {id: 'history', icon: <FileText className="w-5 h-5 mb-0.5"/>, label: 'Riwayat'},
     ...(isAdmin ? [{id: 'daily-report', icon: <BarChart3 className="w-5 h-5 mb-0.5"/>, label: 'Report'}] : [{id: 'home', icon: <Home className="w-5 h-5 mb-0.5"/>, label: 'Patroli'}]),
     {id: 'incidents', icon: <AlertOctagon className="w-5 h-5 mb-0.5"/>, label: 'Temuan'},
-    {id: 'history', icon: <FileText className="w-5 h-5 mb-0.5"/>, label: 'Riwayat'},
     {id: 'notifications', icon: <Bell className="w-5 h-5 mb-0.5"/>, label: 'Notif'}
   ];
   const leftTabs = tabs.slice(0, 2);

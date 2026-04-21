@@ -250,7 +250,7 @@ SmartPatrol/
 |---|---|---|
 | `pages/LoginPage.jsx` | `LoginPage` | Login via Firebase Auth (email/password) atau local hash. Registrasi user baru. |
 | `pages/PatrolPage.jsx` | `PatrolPage` | Halaman utama petugas: daftar checkpoint, tab Info/Checkpoint, modal status petugas shift, progress bar, countdown shift, summary aman/temuan/missed. |
-| `pages/HistoryPage.jsx` | `HistoryPage` | Riwayat patroli: list shift sebelumnya grouped by date, klik untuk detail. |
+| `pages/HistoryPage.jsx` | `HistoryPage` | Riwayat patroli: list shift sebelumnya dan untuk admin menampilkan shift `ON GOING` di urutan teratas agar progres patroli aktif bisa dipantau cepat. |
 | `pages/IncidentsPage.jsx` | `IncidentsPage` | Manajemen insiden: list, filter, buat baru, progress tracking, dokumentasi. |
 | `pages/DailyReportPage.jsx` | `DailyReportPage` | Dashboard Admin: laporan harian per kapal + shift, statistik, detail report. |
 | `pages/ShipsPage.jsx` | `ShipsPage` | CRUD armada kapal, dokumen, checkpoint definition, assign/transfer crew. |
