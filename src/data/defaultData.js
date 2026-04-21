@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyediakan seed data dan daftar checkpoint wajib global SmartPatrol.
+Caller: App context, form insiden, dan inisialisasi state awal aplikasi.
+Dependensi: Utilitas sanitasi untuk generator ID.
+Main Functions: Menetapkan checkpoint default, draft form, user seed, kapal seed, dan state awal.
+Side Effects: Menjadi sumber baseline checklist patroli untuk semua kapal baru dan state lokal awal.
+*/
+
 import { makeId } from "../utils/sanitize";
 
 export const APP_STORAGE_KEY = "smartpatrol.local.v1";
@@ -8,6 +16,7 @@ export const WEATHER_CACHE_TTL_MS = 30 * 60 * 1000;
 export const DEFAULT_CURRENT_USER = "Budi Santoso";
 
 export const DEFAULT_LOCATION_OPTIONS = [
+  "Kondisi personel",
   "Cuaca",
   "Haluan",
   "Buritan",
@@ -24,6 +33,8 @@ export const DEFAULT_LOCATION_OPTIONS = [
   "Gudang Spare Part",
   "Alat Dapur",
   "Fasilitas Pendukung",
+  "Obat-Obatan",
+  "Tangga monyet",
 ];
 
 export const USER_ROLE_OPTIONS = ["ADMIN", "PETUGAS", "PIC"];

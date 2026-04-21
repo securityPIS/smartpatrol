@@ -1,8 +1,16 @@
+/*
+Tujuan: Menjadi pusat state, flow bisnis, dan sinkronisasi SmartPatrol.
+Caller: Root app melalui AppProvider dan seluruh hook domain aplikasi.
+Dependensi: Seed data, Firebase service, trusted time, utilitas sanitasi, dan IndexedDB image store.
+Main Functions: Mengelola auth, kapal, checkpoint patroli, incidents, history, SOS, dan cloud sync.
+Side Effects: Menulis state lokal/cloud, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
+*/
+
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import {
   Sun, Cloud, CloudRain, Wind, Thermometer,
 } from 'lucide-react';
-import { createPosterDataUrl } from '../data/defaultData';
+import { createPosterDataUrl, DEFAULT_LOCATION_OPTIONS } from '../data/defaultData';
 import { readFileAsDataUrl, readImageFileAsDataUrl } from '../utils/images';
 import { sanitizeEmail, sanitizeMultilineText, sanitizePhone, sanitizeText, sanitizeUrl } from '../utils/sanitize';
 import { loadImageFromDB, saveImageToDB } from '../utils/imageStore';
@@ -182,11 +190,7 @@ const SHIFT_DEFINITION_MAP = [...SHIFT_SEQUENCE, ...COMPAT_SHIFT_SEQUENCE, ...LE
   [shift.id]: shift,
 }), {});
 
-const defaultLocationOptions = [
-  'Cuaca', 'Haluan', 'Buritan', 'Deck', 'Sekoci', 'Anjungan', 'Radio Room',
-  'Alat Navigasi', 'Solar Panel', 'Ruang Mesin', 'Ruang Pompa', 'Air Bersih',
-  'Gudang Logistik', 'Gudang Spare Part', 'Alat Dapur', 'Fasilitas Pendukung'
-];
+const defaultLocationOptions = [...DEFAULT_LOCATION_OPTIONS];
 const SHIP_STATUS_OPTIONS = ['Non Operasional', 'Operasional', 'Situasional'];
 
 function createDefaultShipCheckpoints() {
@@ -300,9 +304,8 @@ function normalizeShipRecord(ship = {}) {
       : [],
     sosRecipientShipIds,
     defaultCheckpointsInitialized: true,
-    customCheckpoints: ship?.defaultCheckpointsInitialized
-      ? normalizeShipCheckpointDefinitions(ship?.customCheckpoints)
-      : initializeShipCheckpointDefinitions(ship?.customCheckpoints),
+    // Pastikan checklist wajib selalu ada pada semua kapal, termasuk data lama yang sudah tersimpan.
+    customCheckpoints: initializeShipCheckpointDefinitions(ship?.customCheckpoints),
   };
 }
 
@@ -1578,11 +1581,9 @@ function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) 
 function resolveMergedAssetUrl(preferredUrl, fallbackUrl) {
   const safePreferredUrl = typeof preferredUrl === 'string' ? preferredUrl : '';
   const safeFallbackUrl = typeof fallbackUrl === 'string' ? fallbackUrl : '';
-  const preferredIsPortable = safePreferredUrl && !safePreferredUrl.startsWith('idb://');
-  const fallbackIsPortable = safeFallbackUrl && !safeFallbackUrl.startsWith('idb://');
-
-  if (preferredIsPortable) return safePreferredUrl;
-  if (fallbackIsPortable) return safeFallbackUrl;
+  // Always respect the caller's preference (based on timestamp).
+  // The preferred checkpoint is the newer one - its photo should always win,
+  // even if it's a local idb:// URL. prepareCloudPhotoUrl will upload it later.
   return safePreferredUrl || safeFallbackUrl || null;
 }
 
@@ -3391,15 +3392,37 @@ export function AppProvider({ children }) {
     setSelectedReportDetail((previousReport) => {
       if (!previousReport) return previousReport;
 
+      // Prefer a context-compatible checkpoint (matching historyId for read-only
+      // history reports) to avoid overwriting documentation with a pending
+      // current-shift checkpoint that shares the same id but has no data.
       const matchedCheckpoint = flattenedCheckpoints.find((checkpoint) => (
         String(checkpoint?.id) === String(previousReport.id)
-      ));
+        && isCheckpointContextCompatible(previousReport, checkpoint)
+      )) || (
+        // Fallback to any id match ONLY if the report is NOT a read-only
+        // history entry — prevents pending checkpoints wiping documentation.
+        !previousReport.readOnly && !previousReport.historyId
+        && flattenedCheckpoints.find((checkpoint) => (
+          String(checkpoint?.id) === String(previousReport.id)
+        ))
+      );
 
       if (!matchedCheckpoint) return previousReport;
 
       return {
         ...previousReport,
         ...matchedCheckpoint,
+        // Preserve the display-critical flags from the original report context
+        readOnly: previousReport.readOnly,
+        historyId: previousReport.historyId || matchedCheckpoint.historyId || null,
+        // Preserve documentation fields — use matched if present, else keep original
+        resultType: matchedCheckpoint.resultType || previousReport.resultType,
+        photoUrl: resolveMergedAssetUrl(matchedCheckpoint.photoUrl, previousReport.photoUrl),
+        galleryPhotos: (matchedCheckpoint.galleryPhotos?.length ? matchedCheckpoint.galleryPhotos : null)
+          || previousReport.galleryPhotos || [],
+        kejadian: matchedCheckpoint.kejadian || previousReport.kejadian || '',
+        penyebab: matchedCheckpoint.penyebab || previousReport.penyebab || '',
+        tindakLanjut: matchedCheckpoint.tindakLanjut || previousReport.tindakLanjut || '',
         shipName: matchedCheckpoint.shipName || previousReport.shipName,
         date: matchedCheckpoint.date || previousReport.date,
         shipSnapshot: matchedCheckpoint.shipSnapshot ?? previousReport.shipSnapshot ?? null,
@@ -3835,6 +3858,17 @@ export function AppProvider({ children }) {
       const nextReport = {
         ...previousReport,
         ...canonicalCheckpoint,
+        // Preserve display-critical flags from the original report context
+        readOnly: previousReport.readOnly,
+        historyId: previousReport.historyId || canonicalCheckpoint.historyId || null,
+        // Preserve documentation fields — use canonical if present, else keep original
+        resultType: canonicalCheckpoint.resultType || previousReport.resultType,
+        photoUrl: resolveMergedAssetUrl(canonicalCheckpoint.photoUrl, previousReport.photoUrl),
+        galleryPhotos: (canonicalCheckpoint.galleryPhotos?.length ? canonicalCheckpoint.galleryPhotos : null)
+          || previousReport.galleryPhotos || [],
+        kejadian: canonicalCheckpoint.kejadian || previousReport.kejadian || '',
+        penyebab: canonicalCheckpoint.penyebab || previousReport.penyebab || '',
+        tindakLanjut: canonicalCheckpoint.tindakLanjut || previousReport.tindakLanjut || '',
         shipName: canonicalCheckpoint.shipName || previousReport.shipName,
         date: canonicalCheckpoint.date || previousReport.date,
         shipSnapshot: canonicalCheckpoint.shipSnapshot ?? previousReport.shipSnapshot ?? null,

@@ -1,5 +1,14 @@
+/*
+Tujuan: Menampilkan dan mengelola form CRUD armada beserta daftar checkpoint kapal.
+Caller: Modal/form armada dari halaman manajemen kapal.
+Dependensi: Context ships runtime, seed checkpoint default, ikon UI, dan AsyncImage.
+Main Functions: Mengedit metadata kapal, checkpoint, foto kapal, dan menyimpan perubahan.
+Side Effects: Mengubah draft armada di client sebelum disimpan ke state utama aplikasi.
+*/
+
 import React from 'react';
 import { SHIP_STATUS_OPTIONS, useShips } from '../../context/AppContextRuntime';
+import { DEFAULT_LOCATION_OPTIONS } from '../../data/defaultData';
 import { ChevronDown, Camera, Trash2, Save, Plus, Map, Package, Weight, Hash } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
@@ -73,7 +82,7 @@ export default function ShipFormView({ isInline = false }) {
         <div className="pt-2 border-t border-cyan-900/30">
           <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3 pb-2">Daftar TITIK Periksa</h4>
           <p className="text-[11px] text-cyan-500 mb-3">
-            16 titik default armada dibuat otomatis saat armada baru dibuat, lalu admin tetap bisa menambah atau menghapus titik sesuai kebutuhan armada.
+            {DEFAULT_LOCATION_OPTIONS.length} titik default armada dibuat otomatis saat armada baru dibuat, lalu admin tetap bisa menambah atau menghapus titik sesuai kebutuhan armada.
           </p>
           <div className="flex gap-2 mb-3">
             <input type="text" value={newCheckpoint} onChange={e => setNewCheckpoint(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleAddCheckpointToForm()} placeholder="Nama Titik Baru..." className="flex-1 bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
