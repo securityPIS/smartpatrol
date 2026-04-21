@@ -1045,23 +1045,200 @@ function buildGuardScoreMaps(checkpoints = []) {
   }, { byId: new Map(), byName: new Map() });
 }
 
-function buildGuardShiftSnapshot(users, shipName, checkpoints = []) {
-  const scoreMaps = buildGuardScoreMaps(checkpoints);
-  return ensureArray(users)
-    .filter(user => user.shipAssigned === shipName && user.status === 'active' && user.role === ACCESS_ROLES.PETUGAS)
-    .map(user => ({
-      id: user.id,
-      name: user.name,
-      role: user.role,
-      photoUrl: user.photoUrl || null,
-      score: scoreMaps.byId.get(user.id) || scoreMaps.byName.get(createGuardNameKey(user.name)) || 0,
-    }));
+const SHIFT_GUARD_STATUS = Object.freeze({
+  PATROLI: 'patroli',
+  ISTIRAHAT: 'istirahat',
+});
+
+function createShiftStatusRecordKey(shipId, shiftKey) {
+  const safeShipId = sanitizeText(String(shipId || ''), 120).trim();
+  const safeShiftKey = sanitizeText(String(shiftKey || ''), 160).trim();
+  if (!safeShipId || !safeShiftKey) return '';
+  return `${safeShipId}|${safeShiftKey}`;
 }
 
-function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo }) {
+function normalizeShiftGuardStatusValue(value) {
+  const normalizedValue = sanitizeText(String(value || ''), 40).trim().toLowerCase();
+  return normalizedValue === SHIFT_GUARD_STATUS.ISTIRAHAT
+    ? SHIFT_GUARD_STATUS.ISTIRAHAT
+    : SHIFT_GUARD_STATUS.PATROLI;
+}
+
+function normalizeShiftStatusItems(items = []) {
+  const seenItemKeys = new Set();
+
+  return ensureArray(items).reduce((normalizedItems, item) => {
+    const userId = sanitizeText(String(item?.userId || ''), 120).trim();
+    const name = sanitizeText(item?.name || '', 120).trim();
+    const itemKey = userId || createGuardNameKey(name);
+    if (!itemKey || seenItemKeys.has(itemKey)) return normalizedItems;
+
+    seenItemKeys.add(itemKey);
+    normalizedItems.push({
+      userId: userId || null,
+      name,
+      role: ACCESS_ROLES.PETUGAS,
+      status: normalizeShiftGuardStatusValue(item?.status),
+    });
+
+    return normalizedItems;
+  }, []);
+}
+
+function normalizeShiftStatusRecord(record = {}) {
+  if (!record || typeof record !== 'object') return null;
+
+  const shipId = sanitizeText(String(record.shipId || ''), 120).trim();
+  const shiftKey = sanitizeText(String(record.shiftKey || ''), 160).trim();
+  const recordKey = createShiftStatusRecordKey(shipId, shiftKey);
+  if (!recordKey) return null;
+
+  const filledAtTrustedIso = sanitizeText(record.filledAtTrustedIso || record.updatedAt || '', 80).trim() || null;
+  const filledAtTrustedMs = Number.isFinite(record.filledAtTrustedMs)
+    ? record.filledAtTrustedMs
+    : new Date(filledAtTrustedIso || '').getTime();
+
+  return {
+    key: recordKey,
+    shipId,
+    shipName: sanitizeText(record.shipName || '', 120).trim() || null,
+    shiftKey,
+    filledByUserId: sanitizeText(String(record.filledByUserId || ''), 120).trim() || null,
+    filledByName: sanitizeText(record.filledByName || '', 120).trim() || null,
+    filledAtTrustedIso,
+    filledAtTrustedMs: Number.isFinite(filledAtTrustedMs) ? filledAtTrustedMs : null,
+    filledAtClientMs: Number.isFinite(record.filledAtClientMs) ? record.filledAtClientMs : null,
+    timeTrustLevel: sanitizeText(record.timeTrustLevel || '', 40).trim() || null,
+    clockTamperDetected: Boolean(record.clockTamperDetected),
+    items: normalizeShiftStatusItems(record.items),
+    updatedAt: filledAtTrustedIso,
+  };
+}
+
+function getShiftStatusRecordTimestamp(record) {
+  if (!record) return 0;
+  if (Number.isFinite(record.filledAtTrustedMs)) return record.filledAtTrustedMs;
+
+  const parsedTimestamp = new Date(record.filledAtTrustedIso || record.updatedAt || '').getTime();
+  return Number.isNaN(parsedTimestamp) ? 0 : parsedTimestamp;
+}
+
+function mergeShiftStatusRecord(baseRecord, nextRecord) {
+  if (!baseRecord) return nextRecord;
+  if (!nextRecord) return baseRecord;
+
+  const baseTimestamp = getShiftStatusRecordTimestamp(baseRecord);
+  const nextTimestamp = getShiftStatusRecordTimestamp(nextRecord);
+  const shouldUseNext = (
+    Number.isNaN(baseTimestamp)
+    || (!Number.isNaN(nextTimestamp) && nextTimestamp >= baseTimestamp)
+  );
+  const preferredRecord = shouldUseNext ? nextRecord : baseRecord;
+  const fallbackRecord = shouldUseNext ? baseRecord : nextRecord;
+
+  return {
+    ...fallbackRecord,
+    ...preferredRecord,
+    key: preferredRecord.key || fallbackRecord.key,
+    shipId: preferredRecord.shipId || fallbackRecord.shipId,
+    shiftKey: preferredRecord.shiftKey || fallbackRecord.shiftKey,
+    items: preferredRecord.items?.length ? preferredRecord.items : (fallbackRecord.items || []),
+  };
+}
+
+function mergeShiftStatusRecords(baseRecords = {}, nextRecords = {}) {
+  const mergedRecords = new Map();
+
+  [
+    ...Object.values(baseRecords || {}),
+    ...Object.values(nextRecords || {}),
+  ].forEach((record) => {
+    const normalizedRecord = normalizeShiftStatusRecord(record);
+    if (!normalizedRecord) return;
+
+    const existingRecord = mergedRecords.get(normalizedRecord.key);
+    mergedRecords.set(
+      normalizedRecord.key,
+      existingRecord ? mergeShiftStatusRecord(existingRecord, normalizedRecord) : normalizedRecord,
+    );
+  });
+
+  return Object.fromEntries(mergedRecords.entries());
+}
+
+function getShiftStatusRecordForShipShift(records = {}, shipId, shiftKey) {
+  const recordKey = createShiftStatusRecordKey(shipId, shiftKey);
+  if (!recordKey) return null;
+  return normalizeShiftStatusRecord(records?.[recordKey]);
+}
+
+function doesShiftStatusRecordCoverGuards(record, guards = []) {
+  const normalizedRecord = normalizeShiftStatusRecord(record);
+  const normalizedGuards = ensureArray(guards).filter(user => user?.id || user?.name);
+  if (!normalizedRecord || normalizedGuards.length === 0) return false;
+
+  const coveredGuardKeys = new Set(normalizedRecord.items.flatMap((item) => ([
+    item.userId,
+    createGuardNameKey(item.name),
+  ])).filter(Boolean));
+
+  return normalizedGuards.every((guard) => (
+    coveredGuardKeys.has(guard.id)
+    || coveredGuardKeys.has(createGuardNameKey(guard.name))
+  ));
+}
+
+function retainShiftStatusRecordsForShift(records = {}, shiftKey = null) {
+  if (!shiftKey) return {};
+
+  return Object.values(records || {}).reduce((collection, record) => {
+    const normalizedRecord = normalizeShiftStatusRecord(record);
+    if (!normalizedRecord || normalizedRecord.shiftKey !== shiftKey) return collection;
+
+    collection[normalizedRecord.key] = normalizedRecord;
+    return collection;
+  }, {});
+}
+
+function buildGuardShiftSnapshot(users, shipName, checkpoints = [], shiftStatusRecord = null) {
+  const scoreMaps = buildGuardScoreMaps(checkpoints);
+  const normalizedShiftStatusRecord = normalizeShiftStatusRecord(shiftStatusRecord);
+  const statusByUserId = new Map();
+  const statusByName = new Map();
+
+  normalizedShiftStatusRecord?.items?.forEach((item) => {
+    if (item.userId) statusByUserId.set(item.userId, item.status);
+
+    const guardNameKey = createGuardNameKey(item.name);
+    if (guardNameKey) statusByName.set(guardNameKey, item.status);
+  });
+
+  return ensureArray(users)
+    .filter(user => user.shipAssigned === shipName && user.status === 'active' && user.role === ACCESS_ROLES.PETUGAS)
+    .map((user) => {
+      const shiftStatus = statusByUserId.get(user.id) || statusByName.get(createGuardNameKey(user.name)) || null;
+
+      return {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        photoUrl: user.photoUrl || null,
+        score: scoreMaps.byId.get(user.id) || scoreMaps.byName.get(createGuardNameKey(user.name)) || 0,
+        shiftStatus,
+        shiftStatusLabel: shiftStatus === SHIFT_GUARD_STATUS.ISTIRAHAT
+          ? 'ISTIRAHAT'
+          : shiftStatus === SHIFT_GUARD_STATUS.PATROLI
+            ? 'PATROLI'
+            : null,
+      };
+    });
+}
+
+function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo, shiftStatusRecords = {} }) {
   const historyKey = createHistoryEntryKey(ship, shiftMeta);
   const historyId = `history-${historyKey}`;
   const { endAt } = getShiftScheduleTimes(shiftMeta);
+  const shiftStatusRecord = getShiftStatusRecordForShipShift(shiftStatusRecords, ship?.id, shiftMeta.key);
   const snapshotCheckpoints = checkpoints.map(checkpoint => (
     checkpoint.status === 'completed'
       ? { ...checkpoint, readOnly: true, historyId, date: shiftMeta.dateLabel }
@@ -1080,7 +1257,7 @@ function buildHistoryEntry({ shiftMeta, checkpoints, ship, users, weatherInfo })
     time: shiftMeta.timeRange,
     ship: shipName,
     shipSnapshot: ship ? { id: ship.id, name: ship.name, lat: ship.lat, lng: ship.lng } : null,
-    crewSnapshot: buildGuardShiftSnapshot(users, shipName, snapshotCheckpoints),
+    crewSnapshot: buildGuardShiftSnapshot(users, shipName, snapshotCheckpoints, shiftStatusRecord),
     weatherSnapshot: weatherInfo ? { ...weatherInfo } : null,
     checkpoints: snapshotCheckpoints,
     summary,
@@ -1175,6 +1352,7 @@ function migrateCheckpointStateToCurrentShift({
   ships = [],
   checkpointsByShip = {},
   historyEntries = [],
+  shiftStatusRecords = {},
   users = [],
   currentShiftMeta = getShiftMeta(),
 }) {
@@ -1246,6 +1424,7 @@ function migrateCheckpointStateToCurrentShift({
           shiftMeta,
           checkpoints: historyCheckpoints,
           ship,
+          shiftStatusRecords,
           users,
           weatherInfo: null,
         }),
@@ -1282,6 +1461,7 @@ function migrateCheckpointStateToCurrentShift({
     activeShiftKey: safeCurrentShiftMeta.key,
     checkpointsByShip: nextCheckpointsByShip,
     historyEntries: sortHistoryEntries(nextHistoryEntries),
+    shiftStatusRecords: retainShiftStatusRecordsForShift(shiftStatusRecords, safeCurrentShiftMeta.key),
     migrated: didMigrate,
   };
 }
@@ -1935,6 +2115,7 @@ function resolveLatestActiveSOSAlert(sosEntries = []) {
 
 function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const deletedRecords = mergeDeletedRecords(baseState.deletedRecords || {}, nextState.deletedRecords || {});
+  const resolvedActiveShiftKey = nextState.activeShiftKey || baseState.activeShiftKey || null;
   const baseUsers = applyAdminCredentialReset(normalizeUsersCollection(baseState.usersData || []));
   const nextUsers = applyAdminCredentialReset(normalizeUsersCollection(nextState.usersData || []));
   const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers), deletedRecords.users);
@@ -1966,9 +2147,13 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
       nextState.activeSOSAlert,
     ].filter(Boolean),
   );
+  const mergedShiftStatusRecords = mergeShiftStatusRecords(
+    baseState.shiftStatusRecords || {},
+    nextState.shiftStatusRecords || {},
+  );
 
   return createSharedStateSnapshot({
-    activeShiftKey: nextState.activeShiftKey || baseState.activeShiftKey,
+    activeShiftKey: resolvedActiveShiftKey,
     checkpointsByShip,
     deletedRecords,
     historyEntries: omitDeletedEntities(
@@ -1983,6 +2168,9 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
     notifications: mergeNotificationsCollection(baseState.notifications || [], nextState.notifications || []),
     shipsData: mergedShips,
     usersData: mergedUsers,
+    shiftStatusRecords: resolvedActiveShiftKey
+      ? retainShiftStatusRecordsForShift(mergedShiftStatusRecords, resolvedActiveShiftKey)
+      : mergedShiftStatusRecords,
     activeSOSAlert: resolveLatestActiveSOSAlert(mergedSOSHistory),
     sosHistory: mergedSOSHistory,
   });
@@ -2250,6 +2438,7 @@ function createSharedStateSnapshot({
   notifications,
   shipsData,
   usersData,
+  shiftStatusRecords,
   activeSOSAlert,
   sosHistory,
 }) {
@@ -2263,6 +2452,7 @@ function createSharedStateSnapshot({
     deletedRecords: createDeletedRecordsState(deletedRecords),
     activeShiftKey,
     notifications,
+    shiftStatusRecords: shiftStatusRecords && typeof shiftStatusRecords === 'object' ? shiftStatusRecords : {},
     activeSOSAlert,
     sosHistory,
   };
@@ -2302,6 +2492,10 @@ function createCloudSyncStateSnapshot(stateSnapshot = {}) {
     notifications: limitNotificationsForCloudSync(stateSnapshot.notifications || []),
     shipsData: stateSnapshot.shipsData,
     usersData: stateSnapshot.usersData,
+    shiftStatusRecords: retainShiftStatusRecordsForShift(
+      stateSnapshot.shiftStatusRecords,
+      stateSnapshot.activeShiftKey,
+    ),
     activeSOSAlert: stateSnapshot.activeSOSAlert || null,
     sosHistory: stateSnapshot.sosHistory || [],
   });
@@ -2372,6 +2566,10 @@ function mapSharedStateTimeAudit(stateSnapshot = {}, mapper) {
     notifications: snapshot.notifications || [],
     shipsData: snapshot.shipsData || [],
     usersData: snapshot.usersData || [],
+    shiftStatusRecords: retainShiftStatusRecordsForShift(
+      snapshot.shiftStatusRecords,
+      snapshot.activeShiftKey,
+    ),
     activeSOSAlert: mapAuditableRecord(snapshot.activeSOSAlert, mapper, {
       fallbackTimestampKeys: ['triggeredAt', 'createdAt'],
     }),
@@ -2665,6 +2863,7 @@ export function AppProvider({ children }) {
     ships: initialShipsCollection,
     checkpointsByShip: initialRawCheckpointsByShip,
     historyEntries: sortHistoryEntries(persistedState?.historyEntries || createSeedHistoryEntries()),
+    shiftStatusRecords: persistedState?.shiftStatusRecords || {},
     users: initialUsersCollection,
     currentShiftMeta: initialCurrentShiftMeta,
   });
@@ -2713,6 +2912,7 @@ export function AppProvider({ children }) {
   const [usersData, setUsersData] = useState(() => initialUsersCollection);
   const [incidentsData, setIncidentsData] = useState(() => persistedState?.incidentsData || []);
   const [historyEntries, setHistoryEntries] = useState(() => initialShiftState.historyEntries);
+  const [shiftStatusRecords, setShiftStatusRecords] = useState(() => initialShiftState.shiftStatusRecords || {});
   const [notifications, setNotifications] = useState(() => sortNotifications(persistedState?.notifications || []));
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
   const [shiftClock, setShiftClock] = useState(() => getTrustedNowMs());
@@ -2800,6 +3000,7 @@ export function AppProvider({ children }) {
   const [selectedUser, setSelectedUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [patrolTab, setPatrolTab] = useState('checkpoint');
+  const [showShiftStatusModal, setShowShiftStatusModal] = useState(false);
   const [cloudSyncBootstrapped, setCloudSyncBootstrapped] = useState(() => !isCloudSyncEnabled);
   const previousUsersDataRef = useRef(usersData);
   const lastSharedStateRef = useRef('');
@@ -3056,6 +3257,18 @@ export function AppProvider({ children }) {
   const operationalShipName = currentUserRecord?.role === ACCESS_ROLES.ADMIN
     ? null
     : (operationalShip?.name || (isPetugas ? null : currentUserRecord?.shipAssigned || shipsData[0]?.name || null));
+  const activeOperationalGuards = useMemo(
+    () => ensureArray(usersData).filter(user => (
+      user.shipAssigned === operationalShipName
+      && user.status === 'active'
+      && user.role === ACCESS_ROLES.PETUGAS
+    )),
+    [operationalShipName, usersData],
+  );
+  const currentShiftStatusRecord = useMemo(
+    () => getShiftStatusRecordForShipShift(shiftStatusRecords, operationalShip?.id, currentShiftMeta.key),
+    [currentShiftMeta.key, operationalShip?.id, shiftStatusRecords],
+  );
   const checkpoints = useMemo(() => {
     if (!operationalShip?.id) return [];
     return ensureArray(checkpointsByShip[operationalShip.id]).filter(checkpoint => ensureObject(checkpoint));
@@ -3111,6 +3324,16 @@ export function AppProvider({ children }) {
   const activePatrolState = useMemo(() => activePatrolId ? activeForms[activePatrolId] : null, [activeForms, activePatrolId]);
   const activePatrolItem = useMemo(() => activePatrolId ? checkpoints.find(c => String(c.id) === String(activePatrolId)) : null, [activePatrolId, checkpoints]);
   const canPatrolCurrentShip = Boolean(currentUserRecord && operationalShip && (isPic || (isPetugas && assignedShipForCurrentUser?.id === operationalShip.id)));
+  const isShiftStatusRequired = Boolean(
+    canPatrolCurrentShip
+    && operationalShip?.id
+    && !selectedHistoryEntry
+    && activeOperationalGuards.length > 0
+  );
+  const isCurrentShiftStatusCompleted = !isShiftStatusRequired || doesShiftStatusRecordCoverGuards(
+    currentShiftStatusRecord,
+    activeOperationalGuards,
+  );
   const canAddTemporaryPatrolNode = Boolean(isPetugas && canPatrolCurrentShip && operationalShip && !selectedHistoryEntry);
   const shouldForcePatrolCameraCapture = isMobilePatrolViewport();
 
@@ -3134,6 +3357,7 @@ export function AppProvider({ children }) {
     notifications,
     shipsData,
     usersData,
+    shiftStatusRecords,
     activeSOSAlert,
     sosHistory,
   })), [
@@ -3146,6 +3370,7 @@ export function AppProvider({ children }) {
     notifications,
     shipsData,
     usersData,
+    shiftStatusRecords,
     activeSOSAlert,
     sosHistory,
   ]);
@@ -3288,6 +3513,7 @@ export function AppProvider({ children }) {
       notifications: boundedStateSnapshot.notifications || [],
       shipsData: preparedShipsData,
       usersData: preparedUsersData,
+      shiftStatusRecords: boundedStateSnapshot.shiftStatusRecords || {},
       activeSOSAlert: boundedStateSnapshot.activeSOSAlert || null,
       sosHistory: boundedStateSnapshot.sosHistory || [],
     });
@@ -3310,6 +3536,7 @@ export function AppProvider({ children }) {
       ships: nextShips,
       checkpointsByShip: nextCheckpointsByShip,
       historyEntries: sortHistoryEntries(nextState.historyEntries || createSeedHistoryEntries()),
+      shiftStatusRecords: nextState.shiftStatusRecords || {},
       users: nextUsers,
       currentShiftMeta: getShiftMeta(),
     });
@@ -3323,6 +3550,7 @@ export function AppProvider({ children }) {
       notifications: sortNotifications(nextState.notifications || []),
       shipsData: nextShips,
       usersData: nextUsers,
+      shiftStatusRecords: incomingShiftState.shiftStatusRecords || {},
       activeSOSAlert: nextState.activeSOSAlert || null,
       sosHistory: nextState.sosHistory || [],
     }));
@@ -3344,6 +3572,7 @@ export function AppProvider({ children }) {
       ships: mergedState.shipsData,
       checkpointsByShip: mergedState.checkpointsByShip,
       historyEntries: mergedState.historyEntries,
+      shiftStatusRecords: mergedState.shiftStatusRecords || {},
       users: mergedState.usersData,
       currentShiftMeta: getShiftMeta(),
     });
@@ -3352,6 +3581,7 @@ export function AppProvider({ children }) {
       activeShiftKey: normalizedShiftState.activeShiftKey,
       checkpointsByShip: normalizedShiftState.checkpointsByShip,
       historyEntries: normalizedShiftState.historyEntries,
+      shiftStatusRecords: normalizedShiftState.shiftStatusRecords || {},
     });
     const serializedState = serializeSharedStateSnapshot(normalizedState);
     latestCloudSharedStateRef.current = normalizedCloudState;
@@ -3386,6 +3616,7 @@ export function AppProvider({ children }) {
     setIncidentMeta(normalizedState.incidentMeta);
     setDeletedRecords(normalizedState.deletedRecords);
     setHistoryEntries(normalizedState.historyEntries);
+    setShiftStatusRecords(normalizedState.shiftStatusRecords || {});
     setNotifications(normalizedState.notifications);
     setActiveSOSAlert(normalizedState.activeSOSAlert);
     setSosHistory(normalizedState.sosHistory);
@@ -3787,9 +4018,13 @@ export function AppProvider({ children }) {
       : allIncidents
   ), [allIncidents, assignedShipForCurrentUser, isPetugas]);
   const activeShiftGuardSnapshot = useMemo(
-    () => (operationalShipName ? buildGuardShiftSnapshot(usersData, operationalShipName, checkpoints) : []),
-    [checkpoints, operationalShipName, usersData],
+    () => (operationalShipName ? buildGuardShiftSnapshot(usersData, operationalShipName, checkpoints, currentShiftStatusRecord) : []),
+    [checkpoints, currentShiftStatusRecord, operationalShipName, usersData],
   );
+
+  useEffect(() => {
+    setShowShiftStatusModal(false);
+  }, [currentShiftMeta.key, operationalShip?.id]);
 
   const handleNotificationClick = useCallback((notification) => {
     if (!notification) return;
@@ -4044,6 +4279,7 @@ export function AppProvider({ children }) {
           shiftMeta: workingShiftMeta,
           checkpoints: shipCheckpoints,
           ship,
+          shiftStatusRecords,
           users: usersData,
           weatherInfo,
         }));
@@ -4096,12 +4332,14 @@ export function AppProvider({ children }) {
       return notificationsBatch;
     }));
     setCheckpointsByShip(workingCheckpointsByShip);
+    setShiftStatusRecords((previousRecords) => retainShiftStatusRecordsForShift(previousRecords, currentShiftMeta.key));
     setActiveForms({});
+    setShowShiftStatusModal(false);
     setPendingPatrolCameraCapture(null);
     setSelectedReportDetail(null);
     setSelectedIncident(null);
     setActiveShiftKey(currentShiftMeta.key);
-  }, [activeShiftKey, appendNotifications, checkpointsByShip, currentShiftMeta.key, getShipRecipients, shipsData, usersData, weatherInfo]);
+  }, [activeShiftKey, appendNotifications, checkpointsByShip, currentShiftMeta.key, getShipRecipients, shiftStatusRecords, shipsData, usersData, weatherInfo]);
 
   const updateOperationalShipCheckpoints = useCallback((updater) => {
     if (!operationalShip?.id) return;
@@ -4117,10 +4355,73 @@ export function AppProvider({ children }) {
       };
     });
   }, [operationalShip?.id]);
+  const openShiftStatusModal = useCallback(() => {
+    if (!isShiftStatusRequired) return;
+    setShowShiftStatusModal(true);
+  }, [isShiftStatusRequired]);
+  const closeShiftStatusModal = useCallback(() => {
+    setShowShiftStatusModal(false);
+  }, []);
+  const handleSaveCurrentShiftStatus = useCallback((items = []) => {
+    if (!operationalShip?.id || !currentUserRecord) return false;
+
+    const guardSnapshot = ensureArray(activeShiftGuardSnapshot).filter(user => user?.id || user?.name);
+    if (guardSnapshot.length === 0) {
+      setShowShiftStatusModal(false);
+      return false;
+    }
+
+    const trustedTimestamp = createTrustedTimestampRecord();
+    const normalizedItems = normalizeShiftStatusItems(items);
+    const itemsByUserId = new Map(normalizedItems.filter(item => item.userId).map(item => [item.userId, item]));
+    const itemsByName = new Map(
+      normalizedItems
+        .map(item => [createGuardNameKey(item.name), item])
+        .filter(([guardNameKey]) => Boolean(guardNameKey)),
+    );
+
+    const resolvedItems = guardSnapshot.map((guard) => {
+      const matchedItem = itemsByUserId.get(guard.id) || itemsByName.get(createGuardNameKey(guard.name));
+      return {
+        userId: guard.id || null,
+        name: guard.name,
+        role: ACCESS_ROLES.PETUGAS,
+        status: normalizeShiftGuardStatusValue(
+          matchedItem?.status || guard.shiftStatus || SHIFT_GUARD_STATUS.PATROLI,
+        ),
+      };
+    });
+
+    const nextRecord = normalizeShiftStatusRecord({
+      shipId: operationalShip.id,
+      shipName: operationalShipName,
+      shiftKey: currentShiftMeta.key,
+      filledByUserId: currentUserRecord.id,
+      filledByName: currentUserRecord.name || currentUser,
+      filledAtTrustedIso: trustedTimestamp.occurredAtTrustedIso,
+      filledAtTrustedMs: trustedTimestamp.occurredAtTrustedMs,
+      filledAtClientMs: trustedTimestamp.occurredAtClientMs,
+      timeTrustLevel: trustedTimestamp.timeTrustLevel,
+      clockTamperDetected: trustedTimestamp.clockTamperDetected,
+      items: resolvedItems,
+    });
+    if (!nextRecord) return false;
+
+    setShiftStatusRecords((previousRecords) => ({
+      ...retainShiftStatusRecordsForShift(previousRecords, currentShiftMeta.key),
+      [nextRecord.key]: nextRecord,
+    }));
+    setShowShiftStatusModal(false);
+    return true;
+  }, [activeShiftGuardSnapshot, currentShiftMeta.key, currentUser, currentUserRecord, operationalShip?.id, operationalShipName]);
 
   // Patrol handlers
   const handleActionClick = useCallback(async (id, type) => {
     if (!canPatrolCurrentShip) return;
+    if (!isCurrentShiftStatusCompleted) {
+      setShowShiftStatusModal(true);
+      return;
+    }
 
     const nextForm = { type, penyebab: '', kejadian: '', tindakLanjut: '', photoUrl: null };
     if (shouldForcePatrolCameraCapture && type === 'aman') {
@@ -4129,7 +4430,7 @@ export function AppProvider({ children }) {
     }
 
     setActiveForms({ [id]: nextForm });
-  }, [canPatrolCurrentShip, shouldForcePatrolCameraCapture]);
+  }, [canPatrolCurrentShip, isCurrentShiftStatusCompleted, shouldForcePatrolCameraCapture]);
   const handleFormChange = useCallback((id, field, value) => { setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } })); }, []);
   const handlePhotoUpload = useCallback(async (id, isIncident = false, options = {}) => {
     const useCameraOnly = Boolean(options.cameraOnly);
@@ -4147,6 +4448,10 @@ export function AppProvider({ children }) {
   }, [activeForms, shouldForcePatrolCameraCapture]);
   const handleSubmitPatrol = useCallback(async (id) => {
     if (!currentUserRecord || !operationalShip) return;
+    if (!isCurrentShiftStatusCompleted) {
+      setShowShiftStatusModal(true);
+      return;
+    }
     const currentCheckpoint = checkpoints.find(checkpoint => String(checkpoint.id) === String(id));
     if (!currentCheckpoint) return;
     const formState = activeForms[id];
@@ -4218,7 +4523,7 @@ export function AppProvider({ children }) {
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, operationalShip, operationalShipName, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -4298,6 +4603,10 @@ export function AppProvider({ children }) {
   }, [getCanonicalCheckpointRecord, selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
   const handleAddCustomPatrolNode = useCallback(() => {
     if (!canAddTemporaryPatrolNode || !operationalShip) return;
+    if (!isCurrentShiftStatusCompleted) {
+      setShowShiftStatusModal(true);
+      return;
+    }
 
     const safeName = sanitizeText(newCustomNode, 80);
     if (!safeName) return;
@@ -4322,7 +4631,7 @@ export function AppProvider({ children }) {
       },
     ]));
     setNewCustomNode('');
-  }, [canAddTemporaryPatrolNode, checkpoints, currentShiftMeta.key, newCustomNode, operationalShip, updateOperationalShipCheckpoints]);
+  }, [canAddTemporaryPatrolNode, checkpoints, currentShiftMeta.key, isCurrentShiftStatusCompleted, newCustomNode, operationalShip, updateOperationalShipCheckpoints]);
   const closePatrolCameraCapture = useCallback(() => {
     setPendingPatrolCameraCapture(null);
   }, []);
@@ -5737,6 +6046,7 @@ export function AppProvider({ children }) {
     currentShiftSchedule,
     activeShiftKey,
     activeShiftGuardSnapshot,
+    currentShiftStatusRecord,
     filteredCheckpoints,
     searchQuery,
     setSearchQuery,
@@ -5748,6 +6058,9 @@ export function AppProvider({ children }) {
     activePatrolState,
     activePatrolItem,
     canPatrolCurrentShip,
+    isShiftStatusRequired,
+    isCurrentShiftStatusCompleted,
+    showShiftStatusModal,
     canAddTemporaryPatrolNode,
     shouldForcePatrolCameraCapture,
     pendingPatrolCameraCapture,
@@ -5757,6 +6070,9 @@ export function AppProvider({ children }) {
     progressPercentage,
     newCustomNode,
     setNewCustomNode,
+    openShiftStatusModal,
+    closeShiftStatusModal,
+    handleSaveCurrentShiftStatus,
     handleActionClick,
     handleFormChange,
     handlePhotoUpload,
@@ -5777,11 +6093,14 @@ export function AppProvider({ children }) {
     canAddTemporaryPatrolNode,
     canPatrolCurrentShip,
     checkpoints,
+    closeShiftStatusModal,
     closePatrolCameraCapture,
     completedCount,
+    currentShiftStatusRecord,
     currentShiftMeta,
     currentShiftSchedule,
     filteredCheckpoints,
+    handleSaveCurrentShiftStatus,
     handleActionClick,
     handleAddCustomPatrolNode,
     handleAddReportGalleryPhoto,
@@ -5791,11 +6110,15 @@ export function AppProvider({ children }) {
     handlePatrolCameraCapture,
     handlePhotoUpload,
     handleSubmitPatrol,
+    isCurrentShiftStatusCompleted,
+    isShiftStatusRequired,
     newCustomNode,
+    openShiftStatusModal,
     patrolTab,
     pendingPatrolCameraCapture,
     progressPercentage,
     searchQuery,
+    showShiftStatusModal,
     shouldForcePatrolCameraCapture,
     submittingPatrolId,
     totalCount,

@@ -1,3 +1,11 @@
+/*
+Tujuan: Menampilkan detail patroli live atau histori beserta roster petugas shift.
+Caller: PatrolPage dan HistoryPage saat user membuka detail info patroli.
+Dependensi: Patrol context, data kapal/cuaca, AsyncImage, dan TimeAuditSummaryCard.
+Main Functions: Merangkum checkpoint, cuaca, roster petugas, dan progres per shift.
+Side Effects: Mengarahkan user kembali ke patroli live saat detail dibuka penuh.
+*/
+
 import React from 'react';
 import { ACCESS_ROLES, useHistory, usePatrol, useShips, useUI, useUsers, useWeather } from '../../context/AppContextRuntime';
 import {
@@ -293,7 +301,15 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
                   </div>
                   <div>
                     <p className="text-sm font-bold text-cyan-50">{user.name}</p>
-                    <p className="text-[10px] text-cyan-500 uppercase font-bold tracking-tight">{user.role}</p>
+                    <p className={`text-[10px] uppercase font-bold tracking-tight ${
+                      user.shiftStatus === 'istirahat'
+                        ? 'text-amber-300'
+                        : user.shiftStatus === 'patroli'
+                          ? 'text-emerald-300'
+                          : 'text-cyan-500'
+                    }`}>
+                      {user.role}{user.shiftStatusLabel ? ` - ${user.shiftStatusLabel}` : ''}
+                    </p>
                   </div>
                 </div>
                 <div className="text-right">
