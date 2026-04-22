@@ -1,14 +1,15 @@
 /*
-Tujuan: Menyediakan trusted server time dan kontrol akses operasional SmartPatrol lewat Cloud Functions.
-Caller: Client web untuk sinkronisasi waktu, binding akun Firebase Auth, approval onboarding, dan sinkronisasi akses admin.
+Tujuan: Menyediakan trusted server time, kontrol akses operasional, dan notifikasi onboarding admin lewat Cloud Functions.
+Caller: Client web untuk sinkronisasi waktu, binding akun Firebase Auth, approval onboarding, sinkronisasi akses admin, dan trigger Firestore registrasi baru.
 Dependensi: Firebase Functions v2, Firebase Admin SDK, dan model sanitasi security lokal.
-Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, approvePendingRegistration, rejectPendingRegistration, revokeOperationalUserAccess.
-Side Effects: Membaca/menulis Firestore pendingRegistrations dan userAccess, memperbarui custom claims Firebase Auth, dan mengembalikan trusted server time.
+Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, approvePendingRegistration, rejectPendingRegistration, revokeOperationalUserAccess, notifyAdminsOnPendingRegistrationCreate.
+Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, shared-state.notifications, memperbarui custom claims Firebase Auth, dan mengembalikan trusted server time.
 */
 
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import {
   ACCESS_ROLES,
@@ -25,6 +26,7 @@ const SHARED_STATE_COLLECTION = 'smartpatrol';
 const SHARED_STATE_DOCUMENT = 'shared-state';
 const PENDING_REGISTRATIONS_COLLECTION = 'pendingRegistrations';
 const USER_ACCESS_COLLECTION = 'userAccess';
+const MAX_NOTIFICATION_ITEMS = 250;
 
 const firestore = getFirestore();
 const adminAuth = getAuth();
@@ -47,6 +49,10 @@ function getPendingRegistrationRef(uid) {
 
 function getUserAccessRef(uid) {
   return firestore.collection(USER_ACCESS_COLLECTION).doc(uid);
+}
+
+function createNotificationId(prefix = 'notification') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function serializeTimestamp(value) {
@@ -276,6 +282,65 @@ async function markPendingRegistration(uid, patch = {}) {
   }, { merge: true });
 }
 
+async function appendNotificationForAdminUsers(notification = {}) {
+  await firestore.runTransaction(async (transaction) => {
+    const sharedStateRef = getSharedStateRef();
+    const sharedStateSnapshot = await transaction.get(sharedStateRef);
+    if (!sharedStateSnapshot.exists) return;
+
+    const sharedStateData = sharedStateSnapshot.data() || {};
+    const state = sharedStateData.state || {};
+    const usersData = Array.isArray(state.usersData) ? state.usersData : [];
+    const targetUserIds = Array.from(new Set(
+      usersData
+        .filter((user) => sanitizeString(user?.role || '', 20).toUpperCase() === ACCESS_ROLES.ADMIN)
+        .map((user) => sanitizeString(user?.id || '', 160))
+        .filter(Boolean),
+    ));
+
+    if (targetUserIds.length === 0) return;
+
+    const existingNotifications = Array.isArray(state.notifications) ? state.notifications : [];
+    const nextDedupeKey = sanitizeString(notification.dedupeKey || '', 240);
+    if (nextDedupeKey && existingNotifications.some((item) => sanitizeString(item?.dedupeKey || '', 240) === nextDedupeKey)) {
+      return;
+    }
+
+    const nextNotification = {
+      id: createNotificationId('notif'),
+      type: sanitizeString(notification.type || 'general', 60) || 'general',
+      title: sanitizeString(notification.title || 'Notifikasi Sistem', 120) || 'Notifikasi Sistem',
+      message: sanitizeString(notification.message || '', 240),
+      senderName: sanitizeString(notification.senderName || 'Sistem', 80) || 'Sistem',
+      senderRole: sanitizeString(notification.senderRole || 'SYSTEM', 40) || 'SYSTEM',
+      targetUserIds,
+      route: sanitizeString(notification.route || 'users/list', 80) || 'users/list',
+      routeParams: notification.routeParams && typeof notification.routeParams === 'object'
+        ? notification.routeParams
+        : {},
+      shipName: '',
+      shiftKey: '',
+      incidentId: '',
+      historyId: '',
+      dedupeKey: nextDedupeKey,
+      readByUserIds: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    transaction.set(sharedStateRef, {
+      state: {
+        ...state,
+        notifications: [
+          nextNotification,
+          ...existingNotifications,
+        ].slice(0, MAX_NOTIFICATION_ITEMS),
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+      clientUpdatedAt: Date.now(),
+    }, { merge: true });
+  });
+}
+
 export const getServerTime = onRequest(
   {
     region: TRUSTED_TIME_REGION,
@@ -303,6 +368,31 @@ export const getServerTime = onRequest(
       issuedAt: new Date(serverNowMs).toISOString(),
       source: 'firebase-functions',
       timezone: 'UTC',
+    });
+  },
+);
+
+export const notifyAdminsOnPendingRegistrationCreate = onDocumentCreated(
+  {
+    region: TRUSTED_TIME_REGION,
+    document: `${PENDING_REGISTRATIONS_COLLECTION}/{uid}`,
+    maxInstances: 10,
+  },
+  async (event) => {
+    const pending = buildPendingRegistrationPayload(event.data?.data() || {});
+    if (!pending.uid || !pending.email) return;
+
+    await appendNotificationForAdminUsers({
+      type: 'registration_pending',
+      title: 'Registrasi user baru',
+      message: `${pending.name} (${pending.email}) baru saja registrasi dan menunggu approval admin.`,
+      senderName: 'Onboarding SmartPatrol',
+      senderRole: 'SYSTEM',
+      route: 'users/list',
+      routeParams: {
+        pendingUid: pending.uid,
+      },
+      dedupeKey: `pending-registration:${pending.uid}`,
     });
   },
 );

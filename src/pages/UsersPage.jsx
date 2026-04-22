@@ -14,6 +14,32 @@ import AsyncImage from '../components/AsyncImage';
 import UserFormView from '../components/views/UserFormView';
 import UserDetailView from '../components/views/UserDetailView';
 
+function getUserStatusBadge(user) {
+  const status = String(user?.status || '').toLowerCase();
+  if (status === 'disabled') {
+    return {
+      label: 'INACTIVE',
+      className: 'bg-rose-500/10 text-rose-300 border-rose-500/30',
+    };
+  }
+  if (status === 'active' && user?.role === 'PETUGAS') {
+    return {
+      label: 'ON-DUTY',
+      className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+    };
+  }
+  if (status === 'active') {
+    return {
+      label: 'ACTIVE',
+      className: 'bg-sky-500/10 text-sky-300 border-sky-500/30',
+    };
+  }
+  return {
+    label: 'OFF-DUTY',
+    className: 'bg-slate-800 text-slate-400 border-slate-700',
+  };
+}
+
 const UsersPage = React.memo(function UsersPage() {
   const {
     usersData,
@@ -98,6 +124,7 @@ const UsersPage = React.memo(function UsersPage() {
         <div className="space-y-3">
           {usersData.map((user) => {
             const isSelected = selectedUser?.id === user.id;
+            const statusBadge = getUserStatusBadge(user);
             return (
             <div 
               key={user.id} 
@@ -117,13 +144,13 @@ const UsersPage = React.memo(function UsersPage() {
                        <span className={`text-[8px] px-1 py-0.5 border rounded font-black tracking-widest ${user.type==='TNI' ? 'bg-fuchsia-900/30 border-fuchsia-500 text-fuchsia-400' : 'bg-cyan-900/30 border-cyan-500 text-cyan-300'}`}>{user.type}</span>
                      </div>
                   </div>
-                  <span className={`text-[9px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-widest shrink-0 ${user.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
-                     {user.status === 'active' ? 'ON-DUTY' : 'OFF-DUTY'}
+                  <span className={`text-[9px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-widest shrink-0 ${statusBadge.className}`}>
+                     {statusBadge.label}
                   </span>
                 </div>
                 <div className="pt-2 mt-1 border-t border-cyan-900/30 flex items-center gap-1.5 text-[10px]">
                    <Ship className={`w-3 h-3 ${user.shipAssigned ? 'text-cyan-400' : 'text-slate-600'}`} />
-                   {user.shipAssigned ? <span className="text-cyan-100 italic">Penugasan: <span className="font-bold text-cyan-400">{user.shipAssigned}</span></span> : <span className="text-slate-500 italic">Belum ada penugasan.</span>}
+                   {user.shipAssigned ? <span className="text-cyan-100 italic">Penugasan: <span className="font-bold text-cyan-400">{user.shipAssigned}</span></span> : <span className="text-slate-500 italic">{String(user.status || '').toLowerCase() === 'disabled' ? 'User sedang nonaktif.' : 'Belum ada penugasan.'}</span>}
                 </div>
               </div>
             </div>

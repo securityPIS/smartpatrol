@@ -314,7 +314,7 @@ SmartPatrol/
 
 | File | Fungsi | Peran |
 |---|---|---|
-| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess` | Trusted server time + kontrol binding/approval akses operasional. Region `asia-southeast2`. |
+| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + notifikasi admin saat registrasi onboarding baru. Region `asia-southeast2`. |
 
 ### Data
 

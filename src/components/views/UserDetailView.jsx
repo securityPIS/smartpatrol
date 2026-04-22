@@ -7,17 +7,23 @@ Side Effects: Memicu sinkronisasi perubahan user ke AppContextRuntime dan dialog
 */
 
 import React from 'react';
-import { ACCESS_ROLES, useRole, useUI, useUsers } from '../../context/AppContextRuntime';
+import { ACCESS_ROLES, useAuth, useRole, useUI, useUsers } from '../../context/AppContextRuntime';
 import { ChevronDown, Trash2, Camera, Save, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 
 export default function UserDetailView({ isInline = false }) {
   const { selectedUser, setSelectedUser, userFormError, userFormNotice, clearUserManagementFeedback, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload } = useUsers();
+  const { sessionUserId } = useAuth();
   const { isAdmin } = useRole();
   const { setConfirmDialog } = useUI();
   const isFirebaseAccount = selectedUser?.authProvider === 'firebase' || Boolean(selectedUser?.firebaseUid);
   const canEditRole = isAdmin;
   const canDeleteUser = isAdmin && selectedUser?.role !== ACCESS_ROLES.ADMIN;
+  const isUserInactive = String(selectedUser?.status || '').toLowerCase() === 'disabled';
+  const isEditingOwnProfile = selectedUser?.id === sessionUserId;
+  const resolvedActiveStatus = selectedUser?.role === ACCESS_ROLES.PETUGAS
+    ? (selectedUser?.shipAssigned ? 'active' : 'off-duty')
+    : 'active';
 
   if (!selectedUser) {
     if (isInline) {
@@ -89,6 +95,38 @@ export default function UserDetailView({ isInline = false }) {
           {!isFirebaseAccount && (
             <p className="text-[10px] text-cyan-600 leading-relaxed">Isi password jika Anda ingin membuat akun Firebase Auth untuk profil ini. SmartPatrol tidak lagi mengandalkan password legacy dari state lokal.</p>
           )}
+
+          <div className="rounded-xl border border-cyan-800/50 bg-[#0b1229] p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest">Status Operasional</p>
+                <p className="mt-1 text-xs text-cyan-200/80">Mode `Active` membuat user tersedia operasional. Untuk petugas tanpa assignment kapal, status ini akan muncul di daftar `Off-Duty`.</p>
+              </div>
+              <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${isUserInactive ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
+                {isUserInactive ? 'INACTIVE' : 'ACTIVE'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedUser({ ...selectedUser, status: resolvedActiveStatus })}
+                className={`rounded-xl border px-3 py-3 text-xs font-black uppercase tracking-widest transition-colors ${!isUserInactive ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' : 'border-cyan-800/50 bg-[#070b19] text-cyan-300 hover:border-emerald-500/40 hover:text-emerald-200'}`}
+              >
+                Active
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedUser({ ...selectedUser, shipAssigned: null, status: 'disabled' })}
+                disabled={isEditingOwnProfile}
+                className={`rounded-xl border px-3 py-3 text-xs font-black uppercase tracking-widest transition-colors ${isUserInactive ? 'border-rose-500/40 bg-rose-500/15 text-rose-200' : 'border-cyan-800/50 bg-[#070b19] text-cyan-300 hover:border-rose-500/40 hover:text-rose-200'}`}
+              >
+                Inactive
+              </button>
+            </div>
+            {isEditingOwnProfile && (
+              <p className="text-[10px] text-amber-300/90">Akun yang sedang dipakai tidak bisa dinonaktifkan dari sesi ini.</p>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>

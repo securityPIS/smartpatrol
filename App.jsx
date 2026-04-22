@@ -107,7 +107,25 @@ function AppShell() {
   const { selectedReportDetail, previewPhoto } = useReports();
   const { activeSOSAlert } = useSOS();
 
-  if (!sessionUserId) return <LoginPage />;
+  if (!sessionUserId) {
+    return (
+      <>
+        <LoginPage />
+        {confirmDialog && (
+          <ConfirmModal
+            isOpen={!!confirmDialog}
+            title={confirmDialog?.title}
+            message={confirmDialog?.message}
+            onConfirm={() => confirmDialog?.onConfirm?.()}
+            onCancel={() => setConfirmDialog(null)}
+            confirmText={confirmDialog?.confirmText}
+            cancelText={confirmDialog?.cancelText}
+            isAlert={confirmDialog?.isAlert}
+          />
+        )}
+      </>
+    );
+  }
 
   const themeClass = theme === 'light' ? 'pertamina-light' : '';
   const pageRecoveryKey = [

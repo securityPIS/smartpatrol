@@ -2311,7 +2311,7 @@ function normalizeUserRecord(user, index = 0) {
     ? 'firebase'
     : sanitizeText(user?.authProvider || seedUser?.authProvider || 'none', 20).toLowerCase();
   const fallbackStatus = role === ACCESS_ROLES.PETUGAS ? (shipAssigned ? 'active' : 'off-duty') : 'active';
-  const status = sanitizeText(user?.status || seedUser?.status || fallbackStatus, 20) || fallbackStatus;
+  const status = sanitizeText(user?.status || seedUser?.status || fallbackStatus, 20).toLowerCase() || fallbackStatus;
   return {
     ...seedUser,
     ...user,
@@ -2320,7 +2320,7 @@ function normalizeUserRecord(user, index = 0) {
     role,
     type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP',
     workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40),
-    status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status,
+    status: role === ACCESS_ROLES.PETUGAS && !shipAssigned && status !== 'disabled' ? 'off-duty' : status,
     shipAssigned,
     email: safeEmail,
     password: '',
@@ -4268,6 +4268,14 @@ export function AppProvider({ children }) {
       return;
     }
 
+    if (notification.route === 'users/list') {
+      closeHistoryEntry();
+      setSelectedIncident(null);
+      setSelectedReportDetail(null);
+      setCurrentPage('users');
+      return;
+    }
+
     closeHistoryEntry();
   }, [activeSOSAlert, allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry, sosHistory]);
 
@@ -5264,7 +5272,18 @@ export function AppProvider({ children }) {
     const nextRole = isAdmin
       ? (ACCESS_ROLE_VALUES.includes(selectedUser.role) ? selectedUser.role : ACCESS_ROLES.PETUGAS)
       : preservedRole;
-    const nextShipAssigned = selectedUser.shipAssigned || null;
+    const requestedStatus = sanitizeText(selectedUser.status || currentRecord?.status || '', 20).toLowerCase();
+    const wantsInactive = requestedStatus === 'disabled';
+    if (isEditingOwnProfile && wantsInactive) {
+      setUserFormError('Akun yang sedang dipakai tidak bisa dinonaktifkan dari sesi ini.');
+      return;
+    }
+    const nextShipAssigned = wantsInactive
+      ? null
+      : (sanitizeText(selectedUser.shipAssigned || '', 80) || null);
+    const nextOperationalStatus = nextRole === ACCESS_ROLES.PETUGAS
+      ? (wantsInactive ? 'disabled' : (nextShipAssigned ? 'active' : 'off-duty'))
+      : (wantsInactive ? 'disabled' : 'active');
     const previewUser = normalizeUserRecord({
       ...(currentRecord || {}),
       ...selectedUser,
@@ -5278,7 +5297,7 @@ export function AppProvider({ children }) {
       authProvider: isFirebaseUser ? 'firebase' : (authPayload?.authProvider ?? currentRecord?.authProvider ?? 'none'),
       firebaseUid: isFirebaseUser ? (currentRecord?.firebaseUid || selectedUser.firebaseUid || null) : (authPayload?.firebaseUid ?? currentRecord?.firebaseUid ?? null),
       shipAssigned: nextShipAssigned,
-      status: nextRole === ACCESS_ROLES.PETUGAS ? (nextShipAssigned ? (selectedUser.status || currentRecord?.status || 'active') : 'off-duty') : (selectedUser.status || currentRecord?.status || 'active'),
+      status: nextOperationalStatus,
       workerNumber: sanitizeText(selectedUser.workerNumber || '', 40),
       phone: sanitizePhone(selectedUser.phone || ''),
       address: sanitizeMultilineText(selectedUser.address || '', 180),
@@ -5316,6 +5335,18 @@ export function AppProvider({ children }) {
       };
       return normalizeUserRecord(nextUser, index);
     }));
+    if (previewUser.status === 'disabled') {
+      setShipsData((previousShips) => previousShips.map((ship) => {
+        const nextSchedules = { ...(ship.personnelSchedules || {}) };
+        delete nextSchedules[selectedUser.id];
+        return {
+          ...ship,
+          personnel: ensureArray(ship.personnel).filter((userId) => userId !== selectedUser.id),
+          personnelNextMonth: ensureArray(ship.personnelNextMonth).filter((userId) => userId !== selectedUser.id),
+          personnelSchedules: nextSchedules,
+        };
+      }));
+    }
     setSelectedUser({ ...previewUser, password: '' });
   }, [clearUserManagementFeedback, isAdmin, selectedUser, sessionUserId, usersData]);
   const handleDeleteUser = useCallback((id) => {
@@ -5889,58 +5920,29 @@ export function AppProvider({ children }) {
         }
       }
 
-      const accessResult = await resolveOperationalAccess();
-      setAuthAccessState(accessResult || null);
-
-      if (accessResult?.access) {
-        const resolvedUser = buildOperationalUserRecordFromAccess({
-          access: accessResult.access,
-          profile: accessResult.profile,
-          authUser: credential.user,
-          existingUser,
-          users: usersData,
-        });
-
-        setUsersData((previousUsers) => upsertOperationalUserRecord(previousUsers, {
-          access: accessResult.access,
-          profile: accessResult.profile,
-          authUser: credential.user,
-        }));
-
-        if (accessResult.access.enabled && canUserAccessApplication(resolvedUser)) {
-          setAuthNotice('Akun operasional berhasil diikat ke Firebase Auth.');
-          finalizeAuthorizedLogin(resolvedUser);
-          return;
-        }
-
-        await logoutFirebaseUser();
-        setAuthAccessState(null);
-        setAuthMode('login');
-        setAuthForm(createAuthFormState({ email: safeEmail }));
-        setAuthNotice('Akun berhasil diikat ke Firebase Auth, tetapi akses operasional masih menunggu aktivasi admin.');
-        return;
-      }
-
-      if (accessResult?.status !== 'pending') {
-        await createPendingRegistration({
-          uid: credential.user.uid,
-          email: safeEmail,
-          name: safeName,
-          phone: safePhone,
-          photoUrl: uploadedPhoto.photoUrl,
-          photoPath: uploadedPhoto.photoPath,
-          type: safeType,
-          workerNumber: safeWorkerNumber,
-        });
-      }
+      await createPendingRegistration({
+        uid: credential.user.uid,
+        email: safeEmail,
+        name: safeName,
+        phone: safePhone,
+        photoUrl: uploadedPhoto.photoUrl,
+        photoPath: uploadedPhoto.photoPath,
+        type: safeType,
+        workerNumber: safeWorkerNumber,
+      });
 
       await logoutFirebaseUser();
       setAuthAccessState(null);
       setAuthMode('login');
       setAuthForm(createAuthFormState({ email: safeEmail }));
-      setAuthNotice(existingUser
-        ? 'Akun Firebase berhasil dibuat. Tunggu verifikasi admin untuk mengaktifkan akses operasional.'
-        : 'Registrasi berhasil dikirim. Tunggu approval admin sebelum akun diaktifkan.');
+      setAuthNotice('Registrasi berhasil dikirim. Silakan tunggu approval admin sebelum akun diaktifkan.');
+      setConfirmDialog({
+        title: 'Registrasi Berhasil',
+        message: 'Akun Anda sudah terdaftar di antrean onboarding SmartPatrol. Silakan tunggu approval admin sebelum login operasional dijalankan.',
+        confirmText: 'MENGERTI',
+        isAlert: true,
+        onConfirm: () => {},
+      });
     } catch (error) {
       try {
         await logoutFirebaseUser();
@@ -5953,7 +5955,7 @@ export function AppProvider({ children }) {
       setAuthBusy(false);
       setAuthAccessBusy(false);
     }
-  }, [authForm, finalizeAuthorizedLogin, usersData]);
+  }, [authForm, usersData]);
 
   // Persistence effects
   useEffect(() => {
