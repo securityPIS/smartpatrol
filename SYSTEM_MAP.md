@@ -104,9 +104,12 @@ AppProvider useEffect:
 
 scheduleCloudSync (debounced write):
   → createCloudSyncStateSnapshot(localState)
+  → prepareSharedStateForCloudSync
+    → urgent sync: kirim state inti dulu, aset lokal disisihkan lalu dijadwalkan sync lanjutan
+    → normal sync: uploadCloudDataUrlAsset (gambar → Firebase Storage)
+    → fitSharedStateToCloudBudget (trim history/notifikasi/SOS agar dokumen Firestore tetap ringan)
   → saveCloudAppState(state, { mergeState: fn })
     → Firestore runTransaction → merge → setDoc
-    → uploadCloudDataUrlAsset (gambar → Firebase Storage)
 ```
 
 ### 6. Trusted Time (NTP-like)

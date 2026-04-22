@@ -2712,35 +2712,138 @@ function createSharedStateSnapshot({
 const CLOUD_SYNC_HISTORY_LIMIT_PER_SHIP = 12;
 const CLOUD_SYNC_HISTORY_LIMIT_TOTAL = 24;
 const CLOUD_SYNC_NOTIFICATION_LIMIT = 120;
+const CLOUD_SYNC_SOS_HISTORY_LIMIT = 40;
+const CLOUD_SYNC_INCIDENT_MEDIA_LIMIT = 12;
+const CLOUD_SYNC_SOFT_PAYLOAD_LIMIT_BYTES = 700 * 1024;
+const CLOUD_SYNC_TRIM_PROFILES = [
+  {
+    historyLimitPerShip: 8,
+    historyLimitTotal: 16,
+    notificationLimit: 80,
+    sosHistoryLimit: 24,
+    incidentMediaLimit: 10,
+  },
+  {
+    historyLimitPerShip: 4,
+    historyLimitTotal: 8,
+    notificationLimit: 40,
+    sosHistoryLimit: 16,
+    incidentMediaLimit: 6,
+  },
+  {
+    historyLimitPerShip: 2,
+    historyLimitTotal: 4,
+    notificationLimit: 20,
+    sosHistoryLimit: 8,
+    incidentMediaLimit: 4,
+  },
+  {
+    historyLimitPerShip: 0,
+    historyLimitTotal: 0,
+    notificationLimit: 12,
+    sosHistoryLimit: 4,
+    incidentMediaLimit: 2,
+  },
+];
 
-function limitHistoryEntriesForCloudSync(entries = []) {
+function getComparableRecordTimestamp(record = {}) {
+  return resolveExternalTimestampMs(
+    record?.updatedAt
+    || record?.createdAt
+    || record?.completedAt
+    || record?.triggeredAt
+    || record?.resolvedAt,
+  ) || 0;
+}
+
+function limitRecentRecords(records = [], limit = 0) {
+  const normalizedRecords = ensureArray(records);
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (normalizedRecords.length <= limit) return normalizedRecords;
+
+  const keepIndexes = new Set(
+    normalizedRecords
+      .map((record, index) => ({ index, timestamp: getComparableRecordTimestamp(record) }))
+      .sort((left, right) => (
+        right.timestamp - left.timestamp
+        || right.index - left.index
+      ))
+      .slice(0, limit)
+      .map(({ index }) => index),
+  );
+
+  return normalizedRecords.filter((_, index) => keepIndexes.has(index));
+}
+
+function limitIncidentMetaForCloudSync(incidentMeta = {}, mediaLimit = CLOUD_SYNC_INCIDENT_MEDIA_LIMIT) {
+  return Object.fromEntries(
+    Object.entries(incidentMeta || {}).map(([incidentId, meta]) => ([
+      incidentId,
+      {
+        ...meta,
+        documentation: limitRecentRecords(meta?.documentation || [], mediaLimit),
+        progress: limitRecentRecords(meta?.progress || [], mediaLimit),
+      },
+    ])),
+  );
+}
+
+function limitHistoryEntriesForCloudSync(entries = [], options = {}) {
+  const perShipLimit = Number.isFinite(options?.historyLimitPerShip)
+    ? options.historyLimitPerShip
+    : CLOUD_SYNC_HISTORY_LIMIT_PER_SHIP;
+  const totalLimit = Number.isFinite(options?.historyLimitTotal)
+    ? options.historyLimitTotal
+    : CLOUD_SYNC_HISTORY_LIMIT_TOTAL;
+  if (perShipLimit <= 0 || totalLimit <= 0) return [];
+
   const groupedEntries = new Map();
 
   sortHistoryEntries(entries).forEach((entry) => {
     const shipKey = String(entry?.shipId || entry?.ship || 'unknown');
     const shipEntries = groupedEntries.get(shipKey) || [];
-    if (shipEntries.length >= CLOUD_SYNC_HISTORY_LIMIT_PER_SHIP) return;
+    if (shipEntries.length >= perShipLimit) return;
     shipEntries.push(entry);
     groupedEntries.set(shipKey, shipEntries);
   });
 
   return sortHistoryEntries(Array.from(groupedEntries.values()).flat())
-    .slice(0, CLOUD_SYNC_HISTORY_LIMIT_TOTAL);
+    .slice(0, totalLimit);
 }
 
-function limitNotificationsForCloudSync(notifications = []) {
-  return sortNotifications(notifications).slice(0, CLOUD_SYNC_NOTIFICATION_LIMIT);
+function limitNotificationsForCloudSync(notifications = [], limit = CLOUD_SYNC_NOTIFICATION_LIMIT) {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  return sortNotifications(notifications).slice(0, limit);
 }
 
-function createCloudSyncStateSnapshot(stateSnapshot = {}) {
+function createCloudSyncStateSnapshot(stateSnapshot = {}, options = {}) {
+  const historyLimitPerShip = Number.isFinite(options?.historyLimitPerShip)
+    ? options.historyLimitPerShip
+    : CLOUD_SYNC_HISTORY_LIMIT_PER_SHIP;
+  const historyLimitTotal = Number.isFinite(options?.historyLimitTotal)
+    ? options.historyLimitTotal
+    : CLOUD_SYNC_HISTORY_LIMIT_TOTAL;
+  const notificationLimit = Number.isFinite(options?.notificationLimit)
+    ? options.notificationLimit
+    : CLOUD_SYNC_NOTIFICATION_LIMIT;
+  const sosHistoryLimit = Number.isFinite(options?.sosHistoryLimit)
+    ? options.sosHistoryLimit
+    : CLOUD_SYNC_SOS_HISTORY_LIMIT;
+  const incidentMediaLimit = Number.isFinite(options?.incidentMediaLimit)
+    ? options.incidentMediaLimit
+    : CLOUD_SYNC_INCIDENT_MEDIA_LIMIT;
+
   return createSharedStateSnapshot({
     activeShiftKey: stateSnapshot.activeShiftKey,
     checkpointsByShip: stateSnapshot.checkpointsByShip,
     deletedRecords: stateSnapshot.deletedRecords,
-    historyEntries: limitHistoryEntriesForCloudSync(stateSnapshot.historyEntries || []),
-    incidentMeta: stateSnapshot.incidentMeta,
+    historyEntries: limitHistoryEntriesForCloudSync(stateSnapshot.historyEntries || [], {
+      historyLimitPerShip,
+      historyLimitTotal,
+    }),
+    incidentMeta: limitIncidentMetaForCloudSync(stateSnapshot.incidentMeta, incidentMediaLimit),
     incidentsData: stateSnapshot.incidentsData,
-    notifications: limitNotificationsForCloudSync(stateSnapshot.notifications || []),
+    notifications: limitNotificationsForCloudSync(stateSnapshot.notifications || [], notificationLimit),
     shipsData: stateSnapshot.shipsData,
     usersData: stateSnapshot.usersData,
     shiftStatusRecords: retainShiftStatusRecordsForShift(
@@ -2748,7 +2851,7 @@ function createCloudSyncStateSnapshot(stateSnapshot = {}) {
       stateSnapshot.activeShiftKey,
     ),
     activeSOSAlert: stateSnapshot.activeSOSAlert || null,
-    sosHistory: stateSnapshot.sosHistory || [],
+    sosHistory: limitRecentRecords(stateSnapshot.sosHistory || [], sosHistoryLimit),
   });
 }
 
@@ -2872,6 +2975,53 @@ function serializeSharedStateSnapshot(snapshot) {
   } catch {
     return '';
   }
+}
+
+function measureSharedStateSnapshotBytes(snapshot) {
+  const serializedSnapshot = serializeSharedStateSnapshot(snapshot);
+  if (!serializedSnapshot) return 0;
+
+  try {
+    return new TextEncoder().encode(serializedSnapshot).length;
+  } catch {
+    return serializedSnapshot.length;
+  }
+}
+
+function fitSharedStateToCloudBudget(stateSnapshot = {}) {
+  const baseSnapshot = createCloudSyncStateSnapshot(stateSnapshot);
+  const baseSizeBytes = measureSharedStateSnapshotBytes(baseSnapshot);
+  if (baseSizeBytes <= CLOUD_SYNC_SOFT_PAYLOAD_LIMIT_BYTES) {
+    return baseSnapshot;
+  }
+
+  let bestSnapshot = baseSnapshot;
+  let bestSizeBytes = baseSizeBytes;
+
+  for (const trimProfile of CLOUD_SYNC_TRIM_PROFILES) {
+    const candidateSnapshot = createCloudSyncStateSnapshot(stateSnapshot, trimProfile);
+    const candidateSizeBytes = measureSharedStateSnapshotBytes(candidateSnapshot);
+
+    if (candidateSizeBytes < bestSizeBytes) {
+      bestSnapshot = candidateSnapshot;
+      bestSizeBytes = candidateSizeBytes;
+    }
+
+    if (candidateSizeBytes <= CLOUD_SYNC_SOFT_PAYLOAD_LIMIT_BYTES) {
+      console.warn('Payload cloud dipangkas agar commit Firestore tetap ringan.', {
+        beforeBytes: baseSizeBytes,
+        afterBytes: candidateSizeBytes,
+        trimProfile,
+      });
+      return candidateSnapshot;
+    }
+  }
+
+  console.warn('Payload cloud masih besar setelah trim agresif.', {
+    beforeBytes: baseSizeBytes,
+    afterBytes: bestSizeBytes,
+  });
+  return bestSnapshot;
 }
 
 function isMobilePatrolViewport() {
@@ -3724,7 +3874,8 @@ export function AppProvider({ children }) {
 
     return false;
   }, []);
-  const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
+  const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments, options = {}) => {
+    const shouldSkipUpload = Boolean(options?.skipUpload);
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
     if (cloudAssetCacheRef.current.has(photoUrl)) {
       return cloudAssetCacheRef.current.get(photoUrl) || null;
@@ -3738,14 +3889,15 @@ export function AppProvider({ children }) {
     const isIndexedDbAsset = photoUrl.startsWith('idb://');
     const isInlineDataAsset = photoUrl.startsWith('data:');
     if (!isIndexedDbAsset && !isInlineDataAsset) return photoUrl;
+    if (shouldSkipUpload) return null;
     if (isIndexedDbAsset && localAssetAvailabilityRef.current.get(photoUrl) === false) {
-      return photoUrl;
+      return null;
     }
 
     const dataUrl = isInlineDataAsset ? photoUrl : await loadImageFromDB(photoUrl);
     if (!dataUrl) {
       localAssetAvailabilityRef.current.set(photoUrl, false);
-      return photoUrl;
+      return null;
     }
 
     if (isIndexedDbAsset) {
@@ -3758,16 +3910,17 @@ export function AppProvider({ children }) {
         path: createCloudAssetPath(...pathSegments),
       });
 
-      const resolvedUrl = uploadedUrl || photoUrl;
+      const resolvedUrl = uploadedUrl || null;
       cloudAssetCacheRef.current.set(photoUrl, resolvedUrl);
       return resolvedUrl;
     } catch (error) {
       console.error('Gagal upload aset patroli ke cloud', error);
-      return photoUrl;
+      return null;
     }
   }, []);
-  const prepareSharedStateForCloudSync = useCallback(async (stateSnapshot) => {
-    const boundedStateSnapshot = createCloudSyncStateSnapshot(stateSnapshot);
+  const prepareSharedStateForCloudSync = useCallback(async (stateSnapshot, options = {}) => {
+    const shouldSkipAssetUpload = Boolean(options?.skipAssetUpload);
+    const boundedStateSnapshot = fitSharedStateToCloudBudget(stateSnapshot);
     const preparedCheckpointsByShip = Object.fromEntries(await Promise.all(
       Object.entries(boundedStateSnapshot.checkpointsByShip || {}).map(async ([shipId, shipCheckpoints]) => ([
         shipId,
@@ -3776,12 +3929,14 @@ export function AppProvider({ children }) {
           photoUrl: await prepareCloudPhotoUrl(
             checkpoint.photoUrl,
             ['checkpoints', shipId, checkpoint.id, checkpoint.photoUrl],
+            { skipUpload: shouldSkipAssetUpload },
           ),
           galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => ({
             ...galleryPhoto,
             photoUrl: await prepareCloudPhotoUrl(
               galleryPhoto.photoUrl,
               ['checkpoints-gallery', shipId, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+              { skipUpload: shouldSkipAssetUpload },
             ),
           }))),
         }))),
@@ -3793,6 +3948,7 @@ export function AppProvider({ children }) {
       photoUrl: await prepareCloudPhotoUrl(
         ship.photoUrl,
         ['ships', ship.id, 'cover', ship.photoUrl],
+        { skipUpload: shouldSkipAssetUpload },
       ),
     })));
 
@@ -3801,6 +3957,7 @@ export function AppProvider({ children }) {
       photoUrl: await prepareCloudPhotoUrl(
         user.photoUrl,
         ['users', user.id, 'avatar', user.photoUrl],
+        { skipUpload: shouldSkipAssetUpload },
       ),
     })));
 
@@ -3809,6 +3966,7 @@ export function AppProvider({ children }) {
       photoUrl: await prepareCloudPhotoUrl(
         incident.photoUrl,
         ['incidents', incident.id, 'photo', incident.photoUrl],
+        { skipUpload: shouldSkipAssetUpload },
       ),
     })));
 
@@ -3822,6 +3980,7 @@ export function AppProvider({ children }) {
             photoUrl: await prepareCloudPhotoUrl(
               documentationItem.photoUrl,
               ['incident-documentation', incidentId, documentationItem.id || documentationIndex, documentationItem.photoUrl],
+              { skipUpload: shouldSkipAssetUpload },
             ),
           }))),
           progress: await Promise.all((meta?.progress || []).map(async (progressItem, progressIndex) => ({
@@ -3829,6 +3988,7 @@ export function AppProvider({ children }) {
             photoUrl: await prepareCloudPhotoUrl(
               progressItem.photoUrl,
               ['incident-progress', incidentId, progressItem.id || progressIndex, progressItem.photoUrl],
+              { skipUpload: shouldSkipAssetUpload },
             ),
           }))),
         },
@@ -3842,12 +4002,14 @@ export function AppProvider({ children }) {
         photoUrl: await prepareCloudPhotoUrl(
           checkpoint.photoUrl,
           ['history', entry.id || entry.key, checkpoint.id, checkpoint.photoUrl],
+          { skipUpload: shouldSkipAssetUpload },
         ),
         galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => ({
           ...galleryPhoto,
           photoUrl: await prepareCloudPhotoUrl(
             galleryPhoto.photoUrl,
             ['history-gallery', entry.id || entry.key, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+            { skipUpload: shouldSkipAssetUpload },
           ),
         }))),
       }))),
@@ -3856,11 +4018,12 @@ export function AppProvider({ children }) {
         photoUrl: await prepareCloudPhotoUrl(
           crew.photoUrl,
           ['history-crew', entry.id || entry.key, crew.id || crew.name, crew.photoUrl],
+          { skipUpload: shouldSkipAssetUpload },
         ),
       }))),
     })));
 
-    return createCloudSyncStateSnapshot({
+    return fitSharedStateToCloudBudget({
       activeShiftKey: boundedStateSnapshot.activeShiftKey,
       checkpointsByShip: preparedCheckpointsByShip,
       deletedRecords: boundedStateSnapshot.deletedRecords,
@@ -6286,6 +6449,7 @@ export function AppProvider({ children }) {
         .catch(() => {})
         .then(async () => {
           try {
+            const shouldSkipAssetUpload = cloudSyncPriorityRef.current === 'urgent';
             const latestStateForWrite = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
               latestCloudSharedStateRef.current || {},
               createSharedStateSnapshot({
@@ -6302,20 +6466,26 @@ export function AppProvider({ children }) {
               if (!hasSyncableLocalAssets) return;
             }
 
-            logCloudSyncDebug('save-shared-state', {
-              activeShiftKey: latestStateForWrite.activeShiftKey,
-              deletedHistory: Object.keys(latestStateForWrite.deletedRecords?.historyEntries || {}).length,
-              deletedIncidents: Object.keys(latestStateForWrite.deletedRecords?.incidents || {}).length,
-              deletedShips: Object.keys(latestStateForWrite.deletedRecords?.ships || {}).length,
-              deletedUsers: Object.keys(latestStateForWrite.deletedRecords?.users || {}).length,
-              historyEntries: latestStateForWrite.historyEntries.length,
-              incidents: latestStateForWrite.incidentsData.length,
-              notifications: latestStateForWrite.notifications.length,
-              ships: latestStateForWrite.shipsData.length,
-              users: latestStateForWrite.usersData.length,
+            const preparedState = await prepareSharedStateForCloudSync(latestStateForWrite, {
+              skipAssetUpload: shouldSkipAssetUpload,
             });
+            const preparedStateBytes = measureSharedStateSnapshotBytes(preparedState);
 
-            const preparedState = await prepareSharedStateForCloudSync(latestStateForWrite);
+            logCloudSyncDebug('save-shared-state', {
+              activeShiftKey: preparedState.activeShiftKey,
+              deletedHistory: Object.keys(preparedState.deletedRecords?.historyEntries || {}).length,
+              deletedIncidents: Object.keys(preparedState.deletedRecords?.incidents || {}).length,
+              deletedShips: Object.keys(preparedState.deletedRecords?.ships || {}).length,
+              deletedUsers: Object.keys(preparedState.deletedRecords?.users || {}).length,
+              historyEntries: preparedState.historyEntries.length,
+              incidents: preparedState.incidentsData.length,
+              notifications: preparedState.notifications.length,
+              payloadBytes: preparedStateBytes,
+              ships: preparedState.shipsData.length,
+              skipAssetUpload: shouldSkipAssetUpload,
+              sosHistory: preparedState.sosHistory.length,
+              users: preparedState.usersData.length,
+            });
             const receivedAtServerMs = getTrustedNowMs();
             const verifiedPreparedState = markSharedStateTimeAuditReceived(
               mergeSharedStateSnapshots({}, preparedState),
@@ -6337,6 +6507,10 @@ export function AppProvider({ children }) {
             applyCloudSharedState(committedState, {
               receivedAtServerMs,
             });
+
+            if (shouldSkipAssetUpload && latestHasPendingLocalAssets) {
+              requestCloudSync('normal');
+            }
           } finally {
             if (cloudSyncPriorityVersionRef.current === scheduledPriorityVersion) {
               cloudSyncPriorityRef.current = 'normal';
@@ -6349,7 +6523,7 @@ export function AppProvider({ children }) {
     }, syncDelayMs);
 
     return () => clearTimeout(timerId);
-  }, [applyCloudSharedState, cloudSyncBootstrapped, cloudSyncKick, currentShiftMeta.key, hasOperationalCloudAccess, hasUploadableLocalAssets, isOffline, prepareSharedStateForCloudSync, sharedState]);
+  }, [applyCloudSharedState, cloudSyncBootstrapped, cloudSyncKick, currentShiftMeta.key, hasOperationalCloudAccess, hasUploadableLocalAssets, isOffline, prepareSharedStateForCloudSync, requestCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
