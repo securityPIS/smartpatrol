@@ -249,7 +249,7 @@ SmartPatrol/
 
 | File | Fungsi Publik | Peran |
 |---|---|---|
-| `services/firebase/app.js` | `firebaseApp`, `firebaseAuth`, `firebaseDb`, `firebaseFunctions`, `firebaseStorage`, `isFirebaseConfigured` | Inisialisasi Firebase SDK singleton dari env vars. |
+| `services/firebase/app.js` | `firebaseApp`, `firebaseAuth`, `firebaseDb`, `firebaseFunctions`, `firebaseStorage`, `isFirebaseConfigured`, `firebaseConfigSource` | Inisialisasi Firebase SDK singleton dari env vars dengan fallback config staging tersemat untuk mencegah build auth kosong. |
 | `services/firebase/auth.js` | `loginWithFirebaseEmail`, `registerWithFirebaseEmail`, `provisionFirebaseEmailUser`, `logoutFirebaseUser`, `subscribeToFirebaseAuthChanges` | Wrapper Firebase Auth. `provisionFirebaseEmailUser` membuat akun baru tanpa mengganti sesi admin (isolated temp app). |
 | `services/firebase/access.js` | `createPendingRegistration`, `uploadRegistrationPhotoAsset`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `subscribeToPendingRegistrations` | Lapisan onboarding terisolasi dan sidecar authz. Public register hanya menulis `pendingRegistrations/{uid}`, sedangkan approval/binding akses operasional dijalankan lewat Cloud Functions. |
 | `services/firebase/cloudState.js` | `subscribeToCloudAppState`, `fetchCloudAppState`, `saveCloudAppState`, `uploadCloudDataUrlAsset` | CRUD Firestore single-document (`smartpatrol/shared-state`). Menggunakan `runTransaction` untuk merge. Akses client sekarang digate oleh `userAccess/{uid}` di rules. |

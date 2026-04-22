@@ -5773,7 +5773,7 @@ export function AppProvider({ children }) {
       return;
     }
     if (!isFirebaseAuthEnabled) {
-      setAuthError('Firebase Auth wajib aktif sebelum login operasional dijalankan.');
+      setAuthError('Firebase Auth tidak aktif pada build aplikasi ini. Muat ulang aplikasi, hapus cache PWA bila perlu, lalu pastikan bundle yang dideploy memuat config Firebase SmartPatrol.');
       return;
     }
 
