@@ -2676,8 +2676,8 @@ function createCloudAssetPath(...segments) {
     .join('/');
 }
 
-const CLOUD_SYNC_DEBOUNCE_MS = 600;
-const URGENT_CLOUD_SYNC_DEBOUNCE_MS = 120;
+const CLOUD_SYNC_DEBOUNCE_MS = 300;
+const URGENT_CLOUD_SYNC_DEBOUNCE_MS = 40;
 
 function createSharedStateSnapshot({
   activeShiftKey,
@@ -3022,6 +3022,129 @@ function fitSharedStateToCloudBudget(stateSnapshot = {}) {
     afterBytes: bestSizeBytes,
   });
   return bestSnapshot;
+}
+
+function compactTimeAuditFieldsForCloudSync(record = {}) {
+  const auditFields = extractTimeAuditFields(record);
+
+  return {
+    occurredAtTrustedMs: auditFields.occurredAtTrustedMs,
+    receivedAtServerMs: auditFields.receivedAtServerMs,
+    timeTrustLevel: auditFields.timeTrustLevel,
+    verificationStatus: auditFields.verificationStatus,
+    clockTamperDetected: auditFields.clockTamperDetected,
+  };
+}
+
+function compactShipSnapshotForCloudSync(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+
+  const lat = normalizeSnapshotCoordinate(snapshot.lat);
+  const lng = normalizeSnapshotCoordinate(snapshot.lng);
+  const id = sanitizeText(snapshot.id || '', 120) || null;
+  const name = sanitizeText(snapshot.name || '', 80) || '';
+
+  if (!id && !name && lat == null && lng == null) return null;
+
+  return {
+    id,
+    name,
+    lat,
+    lng,
+  };
+}
+
+function compactGpsSnapshotForCloudSync(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+
+  const lat = normalizeSnapshotCoordinate(snapshot.lat);
+  const lng = normalizeSnapshotCoordinate(snapshot.lng);
+  const source = sanitizeText(snapshot.source || '', 40) || null;
+
+  if (lat == null && lng == null && !source) return null;
+
+  return {
+    lat,
+    lng,
+    source,
+  };
+}
+
+function compactWeatherSnapshotForCloudSync(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+
+  const weathercode = Number.isFinite(Number(snapshot.weathercode))
+    ? Number(snapshot.weathercode)
+    : null;
+  const temperature = Number.isFinite(Number(snapshot.temperature))
+    ? Number(Number(snapshot.temperature).toFixed(1))
+    : null;
+  const windspeed = Number.isFinite(Number(snapshot.windspeed))
+    ? Number(Number(snapshot.windspeed).toFixed(1))
+    : null;
+
+  if (weathercode == null && temperature == null && windspeed == null) return null;
+
+  return {
+    weathercode,
+    temperature,
+    windspeed,
+  };
+}
+
+function compactMediaAuditRecordForCloudSync(record = {}) {
+  if (!record || typeof record !== 'object') return record;
+
+  const {
+    occurredAtTrustedIso: _occurredAtTrustedIso,
+    occurredAtClientMs: _occurredAtClientMs,
+    offlineSessionId: _offlineSessionId,
+    offlineSessionInterrupted: _offlineSessionInterrupted,
+    anchorSyncedAtMs: _anchorSyncedAtMs,
+    ...restRecord
+  } = record;
+
+  return {
+    ...restRecord,
+    ...compactTimeAuditFieldsForCloudSync(record),
+  };
+}
+
+function compactCheckpointRecordForCloudSync(record = {}) {
+  if (!record || typeof record !== 'object') return record;
+
+  const compactedRecord = compactMediaAuditRecordForCloudSync(record);
+
+  return {
+    ...compactedRecord,
+    shipSnapshot: compactShipSnapshotForCloudSync(record.shipSnapshot),
+    gpsSnapshot: compactGpsSnapshotForCloudSync(record.gpsSnapshot),
+    weatherSnapshot: compactWeatherSnapshotForCloudSync(record.weatherSnapshot),
+    galleryPhotos: Array.isArray(record.galleryPhotos) ? record.galleryPhotos : [],
+  };
+}
+
+function compactIncidentRecordForCloudSync(record = {}) {
+  if (!record || typeof record !== 'object') return record;
+
+  const compactedRecord = compactMediaAuditRecordForCloudSync(record);
+
+  return {
+    ...compactedRecord,
+    shipSnapshot: compactShipSnapshotForCloudSync(record.shipSnapshot),
+    gpsSnapshot: compactGpsSnapshotForCloudSync(record.gpsSnapshot),
+    weatherSnapshot: compactWeatherSnapshotForCloudSync(record.weatherSnapshot),
+  };
+}
+
+function compactHistoryEntryForCloudSync(entry = {}) {
+  if (!entry || typeof entry !== 'object') return entry;
+
+  return {
+    ...entry,
+    shipSnapshot: compactShipSnapshotForCloudSync(entry.shipSnapshot),
+    weatherSnapshot: compactWeatherSnapshotForCloudSync(entry.weatherSnapshot),
+  };
 }
 
 function isMobilePatrolViewport() {
@@ -3924,21 +4047,23 @@ export function AppProvider({ children }) {
     const preparedCheckpointsByShip = Object.fromEntries(await Promise.all(
       Object.entries(boundedStateSnapshot.checkpointsByShip || {}).map(async ([shipId, shipCheckpoints]) => ([
         shipId,
-        await Promise.all((shipCheckpoints || []).map(async (checkpoint) => ({
+        await Promise.all((shipCheckpoints || []).map(async (checkpoint) => compactCheckpointRecordForCloudSync({
           ...checkpoint,
           photoUrl: await prepareCloudPhotoUrl(
             checkpoint.photoUrl,
             ['checkpoints', shipId, checkpoint.id, checkpoint.photoUrl],
             { skipUpload: shouldSkipAssetUpload },
           ),
-          galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => ({
-            ...galleryPhoto,
-            photoUrl: await prepareCloudPhotoUrl(
-              galleryPhoto.photoUrl,
-              ['checkpoints-gallery', shipId, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
-              { skipUpload: shouldSkipAssetUpload },
-            ),
-          }))),
+          galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => (
+            compactMediaAuditRecordForCloudSync({
+              ...galleryPhoto,
+              photoUrl: await prepareCloudPhotoUrl(
+                galleryPhoto.photoUrl,
+                ['checkpoints-gallery', shipId, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+                { skipUpload: shouldSkipAssetUpload },
+              ),
+            })
+          ))),
         }))),
       ])),
     ));
@@ -3961,7 +4086,7 @@ export function AppProvider({ children }) {
       ),
     })));
 
-    const preparedIncidentsData = await Promise.all((boundedStateSnapshot.incidentsData || []).map(async (incident) => ({
+    const preparedIncidentsData = await Promise.all((boundedStateSnapshot.incidentsData || []).map(async (incident) => compactIncidentRecordForCloudSync({
       ...incident,
       photoUrl: await prepareCloudPhotoUrl(
         incident.photoUrl,
@@ -3975,43 +4100,49 @@ export function AppProvider({ children }) {
         incidentId,
         {
           ...meta,
-          documentation: await Promise.all((meta?.documentation || []).map(async (documentationItem, documentationIndex) => ({
-            ...documentationItem,
-            photoUrl: await prepareCloudPhotoUrl(
-              documentationItem.photoUrl,
-              ['incident-documentation', incidentId, documentationItem.id || documentationIndex, documentationItem.photoUrl],
-              { skipUpload: shouldSkipAssetUpload },
-            ),
-          }))),
-          progress: await Promise.all((meta?.progress || []).map(async (progressItem, progressIndex) => ({
-            ...progressItem,
-            photoUrl: await prepareCloudPhotoUrl(
-              progressItem.photoUrl,
-              ['incident-progress', incidentId, progressItem.id || progressIndex, progressItem.photoUrl],
-              { skipUpload: shouldSkipAssetUpload },
-            ),
-          }))),
+          documentation: await Promise.all((meta?.documentation || []).map(async (documentationItem, documentationIndex) => (
+            compactMediaAuditRecordForCloudSync({
+              ...documentationItem,
+              photoUrl: await prepareCloudPhotoUrl(
+                documentationItem.photoUrl,
+                ['incident-documentation', incidentId, documentationItem.id || documentationIndex, documentationItem.photoUrl],
+                { skipUpload: shouldSkipAssetUpload },
+              ),
+            })
+          ))),
+          progress: await Promise.all((meta?.progress || []).map(async (progressItem, progressIndex) => (
+            compactMediaAuditRecordForCloudSync({
+              ...progressItem,
+              photoUrl: await prepareCloudPhotoUrl(
+                progressItem.photoUrl,
+                ['incident-progress', incidentId, progressItem.id || progressIndex, progressItem.photoUrl],
+                { skipUpload: shouldSkipAssetUpload },
+              ),
+            })
+          ))),
         },
       ])),
     ));
 
-    const preparedHistoryEntries = await Promise.all((boundedStateSnapshot.historyEntries || []).map(async (entry) => ({
+    const preparedHistoryEntries = await Promise.all((boundedStateSnapshot.historyEntries || []).map(async (entry) => compactHistoryEntryForCloudSync({
       ...entry,
-      checkpoints: await Promise.all((entry.checkpoints || []).map(async (checkpoint) => ({
+      checkpoints: await Promise.all((entry.checkpoints || []).map(async (checkpoint) => compactCheckpointRecordForCloudSync({
         ...checkpoint,
         photoUrl: await prepareCloudPhotoUrl(
           checkpoint.photoUrl,
           ['history', entry.id || entry.key, checkpoint.id, checkpoint.photoUrl],
           { skipUpload: shouldSkipAssetUpload },
         ),
-        galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => ({
-          ...galleryPhoto,
-          photoUrl: await prepareCloudPhotoUrl(
-            galleryPhoto.photoUrl,
-            ['history-gallery', entry.id || entry.key, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
-            { skipUpload: shouldSkipAssetUpload },
-          ),
-        }))),
+        galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => (
+          compactMediaAuditRecordForCloudSync({
+            ...galleryPhoto,
+            photoUrl: await prepareCloudPhotoUrl(
+              galleryPhoto.photoUrl,
+              ['history-gallery', entry.id || entry.key, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+              { skipUpload: shouldSkipAssetUpload },
+            ),
+          })
+        ))),
       }))),
       crewSnapshot: await Promise.all((entry.crewSnapshot || []).map(async (crew) => ({
         ...crew,

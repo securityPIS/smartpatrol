@@ -14,7 +14,7 @@
 | **Framework** | React 19 + Vite 8 + TailwindCSS v4 |
 | **UI** | Single Page App, responsive (mobile-first + desktop sidebar), dark theme Chakra Petch font, glassmorphism style |
 | **Backend** | Firebase (Auth, Firestore, Storage, Cloud Functions, Hosting) |
-| **Database** | Firestore (single document `smartpatrol/shared-state`) + localStorage + IndexedDB (gambar) |
+| **Database** | Firestore (single document `smartpatrol/shared-state`, diperlakukan sebagai blob state tanpa query field) + localStorage + IndexedDB (gambar) |
 | **Auth** | Firebase Auth (email/password) sebagai sumber utama. Approval akses operasional memakai `userAccess/{uid}` dan onboarding publik memakai `pendingRegistrations/{uid}`. |
 | **Hosting** | Firebase Hosting (region: `asia-southeast2`) |
 | **Pola arsitektur** | **Offline-first SPA** — state disimpan di localStorage, disinkronkan ke Firestore via merge. Tidak ada REST API tradisional; semua logika bisnis ada di client-side React Context. Cloud Function hanya menyediakan trusted server time. |
@@ -110,6 +110,7 @@ scheduleCloudSync (debounced write):
     → fitSharedStateToCloudBudget (trim history/notifikasi/SOS agar dokumen Firestore tetap ringan)
   → saveCloudAppState(state, { mergeState: fn })
     → Firestore runTransaction → merge → setDoc
+    → Firestore single-field indexes untuk koleksi `smartpatrol` dinonaktifkan agar write blob state tetap ringan
 ```
 
 ### 6. Trusted Time (NTP-like)
