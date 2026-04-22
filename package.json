@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test:security": "node --test tests/security/auth-access.test.mjs tests/security/rules-smoke.test.mjs tests/security/trusted-time.test.mjs",
     "firebase:emulate": "firebase emulators:start --only hosting,functions",
-    "firebase:deploy": "npm run build && firebase deploy --only hosting,functions,firestore:rules",
+    "firebase:deploy": "npm run build && firebase deploy --only hosting,functions,firestore:rules,storage",
     "firebase:deploy:storage": "firebase deploy --only storage"
   },
   "devDependencies": {

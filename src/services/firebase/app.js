@@ -8,7 +8,7 @@ Side Effects: Membuat instance Firebase App tunggal saat konfigurasi valid agar 
 
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
 import { getStorage } from 'firebase/storage';
 
@@ -59,8 +59,32 @@ const firebaseApp = isFirebaseConfigured
   ? (getApps().length > 0 ? getApp() : initializeApp(firebaseConfig))
   : null;
 
+function createFirestoreInstance(app) {
+  try {
+    return initializeFirestore(app, {
+      // Auto long-polling lebih stabil pada PWA/mobile field devices yang
+      // sering bermasalah dengan WebChannel sehingga listener realtime terasa
+      // lambat atau tidak konsisten lintas perangkat.
+      experimentalAutoDetectLongPolling: true,
+      useFetchStreams: false,
+    });
+  } catch (error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (
+      message.includes('already been started')
+      || message.includes('already initialized')
+      || message.includes('failed to initialize')
+    ) {
+      return getFirestore(app);
+    }
+
+    console.warn('Gagal mengaktifkan Firestore long-polling, memakai konfigurasi default.', error);
+    return getFirestore(app);
+  }
+}
+
 const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null;
-const firebaseDb = firebaseApp ? getFirestore(firebaseApp) : null;
+const firebaseDb = firebaseApp ? createFirestoreInstance(firebaseApp) : null;
 const firebaseFunctions = firebaseApp ? getFunctions(firebaseApp, 'asia-southeast2') : null;
 const firebaseStorage = firebaseApp ? getStorage(firebaseApp) : null;
 
