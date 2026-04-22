@@ -12,7 +12,7 @@ import { getTrustedTimeSnapshot, subscribeTrustedTime } from '../services/time/t
 import { summarizeTimeAudit } from '../services/time/timeAudit';
 import {
   CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft, Plus,
-  CalendarDays, User, Thermometer, Wind, FileText, CircleOff, TimerReset,
+  CalendarDays, Thermometer, Wind, FileText, CircleOff, TimerReset,
 } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 import HistoryDetailView from '../components/views/HistoryDetailView';
@@ -401,12 +401,6 @@ const PatrolPage = React.memo(function PatrolPage() {
                   </button>
                   <button onClick={() => setPatrolTab('info')} className={`flex-1 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${patrolTab === 'info' ? 'bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 shadow-sm' : 'text-cyan-700 hover:text-cyan-500'}`}>
                     <FileText className="w-4 h-4" /> Info
-                  </button>
-                  <button
-                    onClick={openShiftStatusModal}
-                    className="shrink-0 px-3 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 text-cyan-700 hover:text-cyan-500"
-                  >
-                    <User className="w-4 h-4" /> Status Shift
                   </button>
                 </div>
 

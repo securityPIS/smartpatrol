@@ -1806,12 +1806,26 @@ function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) 
   return Array.from(merged.values());
 }
 
+function getAssetUrlPriority(url) {
+  if (typeof url !== 'string' || !url) return 0;
+  if (url.startsWith('https://')) return 4;
+  if (url.startsWith('data:image/')) return 3;
+  if (url.startsWith('idb://')) return 2;
+  return 1;
+}
+
 function resolveMergedAssetUrl(preferredUrl, fallbackUrl) {
   const safePreferredUrl = typeof preferredUrl === 'string' ? preferredUrl : '';
   const safeFallbackUrl = typeof fallbackUrl === 'string' ? fallbackUrl : '';
-  // Always respect the caller's preference (based on timestamp).
-  // The preferred checkpoint is the newer one - its photo should always win,
-  // even if it's a local idb:// URL. prepareCloudPhotoUrl will upload it later.
+  const preferredPriority = getAssetUrlPriority(safePreferredUrl);
+  const fallbackPriority = getAssetUrlPriority(safeFallbackUrl);
+
+  // Prioritaskan URL aset yang bisa dipakai lintas-device agar snapshot cloud
+  // tidak diturunkan lagi menjadi idb:// lokal milik perangkat lain.
+  if (fallbackPriority > preferredPriority) {
+    return safeFallbackUrl || safePreferredUrl || null;
+  }
+
   return safePreferredUrl || safeFallbackUrl || null;
 }
 

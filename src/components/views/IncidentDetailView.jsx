@@ -522,7 +522,6 @@ export default function IncidentDetailView({ isInline = false }) {
                   <div key={idx} className="relative">
                     <div className="absolute -left-[25px] top-0 w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] border-2 border-[#070b19]"></div>
                     <p className="text-[10px] font-mono text-cyan-500 mb-1.5">{prog.date} {prog.time} {' · '} <span className="text-emerald-400 font-bold">{prog.author}</span></p>
-                    <TimeAuditPills record={prog} fallbackTimestampKeys={['createdAt']} className="mb-2" />
                     <div className="flex gap-3 items-start bg-[#0b1229] p-3.5 rounded-xl border border-cyan-900/50 shadow-sm hover:border-cyan-700 transition-colors">
                       <p className="text-sm text-cyan-50 flex-1 whitespace-pre-wrap leading-relaxed">{prog.comment}</p>
                       {prog.photoUrl && <div className="w-20 h-20 rounded-lg overflow-hidden border border-cyan-800 flex-shrink-0 cursor-pointer hover:opacity-80 transition-all relative group" onClick={() => setPreviewPhoto({ url: prog.photoUrl, author: prog.author, time: `${prog.date} ${prog.time}` })}><AsyncImage src={prog.photoUrl} className="w-full h-full object-cover" alt="Progress" /></div>}
