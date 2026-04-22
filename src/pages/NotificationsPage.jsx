@@ -1,3 +1,11 @@
+/*
+Tujuan: Menampilkan inbox notifikasi SmartPatrol dan menjaga status baca lintas identitas user cloud.
+Caller: App shell saat user membuka halaman notifikasi dari bottom nav atau shortcut header.
+Dependensi: Hook notification/role/UI context dan ikon Lucide.
+Main Functions: Merender daftar notifikasi, hitung unread, tandai dibaca, dan navigasi ke route terkait.
+Side Effects: Memicu handler read-state notifikasi dan mengubah currentPage saat item notifikasi dibuka.
+*/
+
 import React from 'react';
 import { useNotifications, useRole, useUI } from '../context/AppContextRuntime';
 import { ArrowLeft, Bell, CheckCheck } from 'lucide-react';
@@ -18,6 +26,7 @@ const NotificationsPage = React.memo(function NotificationsPage() {
   const { currentUserRecord } = useRole();
   const { visibleNotifications, unreadNotificationCount, markAllNotificationsAsRead, handleNotificationClick } = useNotifications();
   const { closeNotificationsPage } = useUI();
+  const notificationActorIds = [currentUserRecord?.id, currentUserRecord?.firebaseUid].filter(Boolean);
 
   return (
     <div className="p-4 space-y-4 animate-in fade-in">
@@ -60,7 +69,10 @@ const NotificationsPage = React.memo(function NotificationsPage() {
             <p className="text-cyan-600 text-sm font-bold uppercase tracking-widest">Belum Ada Notifikasi</p>
           </div>
         ) : visibleNotifications.map((notification) => {
-          const isUnread = !notification.readByUserIds.includes(currentUserRecord?.id);
+          const readByUserIds = Array.isArray(notification.readByUserIds) ? notification.readByUserIds : [];
+          const isUnread = notificationActorIds.length === 0
+            ? true
+            : !notificationActorIds.some((actorId) => readByUserIds.includes(actorId));
           return (
             <button
               key={notification.id}

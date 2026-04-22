@@ -2368,15 +2368,31 @@ function resolvePreferredUserRecord(users = [], options = {}) {
     : null;
   const sessionEmail = getUserIdentityEmail(sessionUser);
   const sessionFirebaseUid = getUserIdentityFirebaseUid(sessionUser);
+  const hasIdentityContext = Boolean(
+    sessionUserId
+    || sessionEmail
+    || sessionFirebaseUid
+    || firebaseAuthEmail
+    || firebaseAuthUid
+  );
 
   let bestUser = sessionUser;
   let bestScore = sessionUser ? 1 : -1;
 
   safeUsers.forEach((user) => {
-    let score = 0;
     const userEmail = getUserIdentityEmail(user);
     const userFirebaseUid = getUserIdentityFirebaseUid(user);
+    const hasIdentityMatch = Boolean(
+      (sessionUserId && String(user?.id) === sessionUserId)
+      || (firebaseAuthUid && userFirebaseUid && userFirebaseUid === firebaseAuthUid)
+      || (firebaseAuthEmail && userEmail && userEmail === firebaseAuthEmail)
+      || (sessionEmail && userEmail && userEmail === sessionEmail)
+      || (sessionFirebaseUid && userFirebaseUid && userFirebaseUid === sessionFirebaseUid)
+    );
 
+    if (hasIdentityContext && !hasIdentityMatch) return;
+
+    let score = 0;
     if (sessionUserId && String(user?.id) === sessionUserId) score += 12;
     if (firebaseAuthUid && userFirebaseUid && userFirebaseUid === firebaseAuthUid) score += 120;
     if (firebaseAuthEmail && userEmail && userEmail === firebaseAuthEmail) score += 90;
@@ -2393,7 +2409,11 @@ function resolvePreferredUserRecord(users = [], options = {}) {
     }
   });
 
-  return bestUser || sessionUser || safeUsers[0] || null;
+  if (hasIdentityContext) {
+    return bestUser || sessionUser || null;
+  }
+
+  return bestUser || safeUsers[0] || null;
 }
 
 function resolveAssignedShipForUser(user, ships = []) {
@@ -3087,6 +3107,7 @@ export function AppProvider({ children }) {
   const [sosHistory, setSosHistory] = useState(() => persistedState?.sosHistory || []);
   const [pendingRegistrations, setPendingRegistrations] = useState([]);
   const hasAppliedRoleLandingRef = useRef(false);
+  const publicRegistrationFlowRef = useRef(false);
 
   // Crew migration effect
   useEffect(() => {
@@ -3493,20 +3514,26 @@ export function AppProvider({ children }) {
     ));
   }, [adminLiveHistoryEntries, assignedShipForCurrentUser, currentUserRecord, historyEntries, isAdmin, isPic]);
   const selectedHistoryEntry = useMemo(() => visibleHistoryEntries.find(entry => entry.id === selectedHistoryId) || null, [visibleHistoryEntries, selectedHistoryId]);
+  const notificationRecipientIds = useMemo(() => Array.from(new Set([
+    currentUserId,
+    firebaseAuthUid,
+  ].filter(Boolean))), [currentUserId, firebaseAuthUid]);
+  const notificationReadIdentityIds = notificationRecipientIds;
+  const notificationWriteIdentityId = currentUserId || firebaseAuthUid || '';
   const visibleNotifications = useMemo(() => {
-    if (!currentUserId) return [];
+    if (notificationRecipientIds.length === 0) return [];
     return ensureArray(notifications).filter((notification) => (
       ensureObject(notification)
       && Array.isArray(notification.targetUserIds)
-      && notification.targetUserIds.includes(currentUserId)
+      && notification.targetUserIds.some((targetUserId) => notificationRecipientIds.includes(targetUserId))
     ));
-  }, [notifications, currentUserId]);
+  }, [notificationRecipientIds, notifications]);
   const unreadNotificationCount = useMemo(() => {
-    if (!currentUserId) return 0;
+    if (notificationReadIdentityIds.length === 0) return 0;
     return visibleNotifications.filter((notification) => !(
       Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []
-    ).includes(currentUserId)).length;
-  }, [visibleNotifications, currentUserId]);
+    ).some((readIdentity) => notificationReadIdentityIds.includes(readIdentity))).length;
+  }, [notificationReadIdentityIds, visibleNotifications]);
   const filteredCheckpoints = useMemo(() => {
     const safeLookup = String(deferredSearchQuery || '').toLowerCase();
     return checkpoints.filter(checkpoint => String(checkpoint?.name || '').toLowerCase().includes(safeLookup));
@@ -4083,23 +4110,23 @@ export function AppProvider({ children }) {
     });
   }, []);
   const markNotificationAsRead = useCallback((notificationId) => {
-    if (!currentUserId) return;
+    if (!notificationWriteIdentityId) return;
     setNotifications(previousNotifications => ensureArray(previousNotifications).map((notification) => {
       const readByUserIds = Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : [];
-      if (notification?.id !== notificationId || readByUserIds.includes(currentUserId)) return notification;
-      return { ...notification, readByUserIds: [...readByUserIds, currentUserId] };
+      if (notification?.id !== notificationId || readByUserIds.includes(notificationWriteIdentityId)) return notification;
+      return { ...notification, readByUserIds: [...readByUserIds, notificationWriteIdentityId] };
     }));
-  }, [currentUserId]);
+  }, [notificationWriteIdentityId]);
   const markAllNotificationsAsRead = useCallback(() => {
-    if (!currentUserId) return;
+    if (!notificationWriteIdentityId) return;
     setNotifications(previousNotifications => ensureArray(previousNotifications).map((notification) => (
       Array.isArray(notification?.targetUserIds)
-      && notification.targetUserIds.includes(currentUserId)
-      && !(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []).includes(currentUserId)
-        ? { ...notification, readByUserIds: [...(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []), currentUserId] }
+      && notification.targetUserIds.some((targetUserId) => notificationRecipientIds.includes(targetUserId))
+      && !(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []).some((readIdentity) => notificationReadIdentityIds.includes(readIdentity))
+        ? { ...notification, readByUserIds: [...(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []), notificationWriteIdentityId] }
         : notification
     )));
-  }, [currentUserId]);
+  }, [notificationReadIdentityIds, notificationRecipientIds, notificationWriteIdentityId]);
   const navigateToLivePatrol = useCallback((tab = 'checkpoint') => {
     setSelectedHistoryId(null);
     setCurrentPage('home');
@@ -5897,6 +5924,7 @@ export function AppProvider({ children }) {
       return;
     }
 
+    publicRegistrationFlowRef.current = true;
     setAuthBusy(true);
     setAuthAccessBusy(true);
     setAuthError('');
@@ -5932,8 +5960,11 @@ export function AppProvider({ children }) {
       });
 
       await logoutFirebaseUser();
+      setSessionUserId(null);
       setAuthAccessState(null);
       setAuthMode('login');
+      setCurrentPage('home');
+      setNotificationReturnPage('home');
       setAuthForm(createAuthFormState({ email: safeEmail }));
       setAuthNotice('Registrasi berhasil dikirim. Silakan tunggu approval admin sebelum akun diaktifkan.');
       setConfirmDialog({
@@ -5951,6 +5982,7 @@ export function AppProvider({ children }) {
       }
       setAuthAccessState(null);
       setAuthError(getFirebaseAuthErrorMessage(error));
+      publicRegistrationFlowRef.current = false;
     } finally {
       setAuthBusy(false);
       setAuthAccessBusy(false);
@@ -6141,6 +6173,7 @@ export function AppProvider({ children }) {
       setFirebaseAuthUser(nextUser);
       setFirebaseAuthReady(true);
       if (!nextUser) {
+        publicRegistrationFlowRef.current = false;
         setAuthAccessState(null);
         setAuthAccessBusy(false);
       }
@@ -6148,6 +6181,11 @@ export function AppProvider({ children }) {
   }, []);
   useEffect(() => {
     if (!isFirebaseAuthEnabled || !firebaseAuthReady) return;
+    if (publicRegistrationFlowRef.current) {
+      setAuthAccessState(null);
+      setAuthAccessBusy(false);
+      return;
+    }
     if (!firebaseAuthUser) {
       setAuthAccessState(null);
       return;

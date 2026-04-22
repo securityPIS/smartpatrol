@@ -208,10 +208,15 @@ function scoreOperationalUser(user = {}, { email, uid }) {
   const normalizedUid = sanitizeString(user.firebaseUid || '', 160);
   const normalizedRole = sanitizeString(user.role || '', 20).toUpperCase();
   const normalizedStatus = sanitizeString(user.status || '', 20).toLowerCase();
+  const hasUidMatch = Boolean(uid && normalizedUid && normalizedUid === uid);
+  const hasEmailMatch = Boolean(email && normalizedEmail && normalizedEmail === email);
+
+  // Legacy binding hanya boleh berjalan saat ada kecocokan identitas kuat.
+  if (!hasUidMatch && !hasEmailMatch) return 0;
 
   let score = 0;
-  if (uid && normalizedUid && normalizedUid === uid) score += 1000;
-  if (email && normalizedEmail && normalizedEmail === email) score += 900;
+  if (hasUidMatch) score += 1000;
+  if (hasEmailMatch) score += 900;
   if (normalizedRole === ACCESS_ROLES.ADMIN) score += 120;
   if (normalizedRole === ACCESS_ROLES.PIC) score += 80;
   if (normalizedStatus === 'active') score += 40;
@@ -282,7 +287,29 @@ async function markPendingRegistration(uid, patch = {}) {
   }, { merge: true });
 }
 
+async function getAdminNotificationTargets() {
+  const snapshot = await firestore.collection(USER_ACCESS_COLLECTION)
+    .where('role', '==', ACCESS_ROLES.ADMIN)
+    .where('enabled', '==', true)
+    .get();
+
+  const targets = new Set();
+  snapshot.forEach((docSnapshot) => {
+    const data = docSnapshot.data() || {};
+    const authUid = sanitizeString(data.uid || docSnapshot.id || '', 160);
+    const legacyUserId = sanitizeString(data.legacyUserId || '', 160);
+
+    if (authUid) targets.add(authUid);
+    if (legacyUserId) targets.add(legacyUserId);
+  });
+
+  return Array.from(targets);
+}
+
 async function appendNotificationForAdminUsers(notification = {}) {
+  const targetUserIds = await getAdminNotificationTargets();
+  if (targetUserIds.length === 0) return;
+
   await firestore.runTransaction(async (transaction) => {
     const sharedStateRef = getSharedStateRef();
     const sharedStateSnapshot = await transaction.get(sharedStateRef);
@@ -290,16 +317,6 @@ async function appendNotificationForAdminUsers(notification = {}) {
 
     const sharedStateData = sharedStateSnapshot.data() || {};
     const state = sharedStateData.state || {};
-    const usersData = Array.isArray(state.usersData) ? state.usersData : [];
-    const targetUserIds = Array.from(new Set(
-      usersData
-        .filter((user) => sanitizeString(user?.role || '', 20).toUpperCase() === ACCESS_ROLES.ADMIN)
-        .map((user) => sanitizeString(user?.id || '', 160))
-        .filter(Boolean),
-    ));
-
-    if (targetUserIds.length === 0) return;
-
     const existingNotifications = Array.isArray(state.notifications) ? state.notifications : [];
     const nextDedupeKey = sanitizeString(notification.dedupeKey || '', 240);
     if (nextDedupeKey && existingNotifications.some((item) => sanitizeString(item?.dedupeKey || '', 240) === nextDedupeKey)) {
