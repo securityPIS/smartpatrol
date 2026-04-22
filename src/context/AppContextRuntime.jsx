@@ -1814,6 +1814,46 @@ function getAssetUrlPriority(url) {
   return 1;
 }
 
+function isLocalOnlyAssetUrl(url) {
+  return typeof url === 'string'
+    && (url.startsWith('idb://') || url.startsWith('data:image/'));
+}
+
+function collectLocalOnlyAssetUrls(stateSnapshot = {}) {
+  const urls = new Set();
+  const pushUrl = (url) => {
+    if (isLocalOnlyAssetUrl(url)) {
+      urls.add(url);
+    }
+  };
+
+  Object.values(stateSnapshot.checkpointsByShip || {}).forEach((shipCheckpoints) => {
+    ensureArray(shipCheckpoints).forEach((checkpoint) => {
+      pushUrl(checkpoint?.photoUrl);
+      ensureArray(checkpoint?.galleryPhotos).forEach((galleryPhoto) => pushUrl(galleryPhoto?.photoUrl));
+    });
+  });
+
+  ensureArray(stateSnapshot.shipsData).forEach((ship) => pushUrl(ship?.photoUrl));
+  ensureArray(stateSnapshot.usersData).forEach((user) => pushUrl(user?.photoUrl));
+  ensureArray(stateSnapshot.incidentsData).forEach((incident) => pushUrl(incident?.photoUrl));
+
+  Object.values(stateSnapshot.incidentMeta || {}).forEach((meta) => {
+    ensureArray(meta?.documentation).forEach((item) => pushUrl(item?.photoUrl));
+    ensureArray(meta?.progress).forEach((item) => pushUrl(item?.photoUrl));
+  });
+
+  ensureArray(stateSnapshot.historyEntries).forEach((entry) => {
+    ensureArray(entry?.crewSnapshot).forEach((crew) => pushUrl(crew?.photoUrl));
+    ensureArray(entry?.checkpoints).forEach((checkpoint) => {
+      pushUrl(checkpoint?.photoUrl);
+      ensureArray(checkpoint?.galleryPhotos).forEach((galleryPhoto) => pushUrl(galleryPhoto?.photoUrl));
+    });
+  });
+
+  return Array.from(urls);
+}
+
 function resolveMergedAssetUrl(preferredUrl, fallbackUrl) {
   const safePreferredUrl = typeof preferredUrl === 'string' ? preferredUrl : '';
   const safeFallbackUrl = typeof fallbackUrl === 'string' ? fallbackUrl : '';
@@ -3210,6 +3250,7 @@ export function AppProvider({ children }) {
   const lastCloudSharedStateRef = useRef('');
   const latestCloudSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
+  const localAssetAvailabilityRef = useRef(new Map());
   const cloudSaveQueueRef = useRef(Promise.resolve());
   const cloudFetchInFlightRef = useRef(false);
   const localSharedStateRef = useRef(null);
@@ -3627,6 +3668,37 @@ export function AppProvider({ children }) {
   useEffect(() => {
     localSharedStateRef.current = sharedState;
   }, [sharedState]);
+  const hasUploadableLocalAssets = useCallback(async (stateSnapshot) => {
+    const candidateUrls = collectLocalOnlyAssetUrls(stateSnapshot);
+
+    for (const photoUrl of candidateUrls) {
+      if (photoUrl.startsWith('data:image/')) {
+        return true;
+      }
+
+      const cachedAvailability = localAssetAvailabilityRef.current.get(photoUrl);
+      if (cachedAvailability === true) {
+        return true;
+      }
+
+      if (cachedAvailability === false) {
+        continue;
+      }
+
+      try {
+        const dataUrl = await loadImageFromDB(photoUrl);
+        const isAvailable = Boolean(dataUrl);
+        localAssetAvailabilityRef.current.set(photoUrl, isAvailable);
+        if (isAvailable) {
+          return true;
+        }
+      } catch {
+        localAssetAvailabilityRef.current.set(photoUrl, false);
+      }
+    }
+
+    return false;
+  }, []);
   const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments) => {
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
     if (cloudAssetCacheRef.current.has(photoUrl)) {
@@ -3636,12 +3708,18 @@ export function AppProvider({ children }) {
     const isIndexedDbAsset = photoUrl.startsWith('idb://');
     const isInlineDataAsset = photoUrl.startsWith('data:');
     if (!isIndexedDbAsset && !isInlineDataAsset) return photoUrl;
+    if (isIndexedDbAsset && localAssetAvailabilityRef.current.get(photoUrl) === false) {
+      return photoUrl;
+    }
 
     const dataUrl = isInlineDataAsset ? photoUrl : await loadImageFromDB(photoUrl);
     if (!dataUrl) {
-      // Prevent other devices from wiping out the reference if they don't own the IDB blob.
-      cloudAssetCacheRef.current.set(photoUrl, photoUrl);
+      localAssetAvailabilityRef.current.set(photoUrl, false);
       return photoUrl;
+    }
+
+    if (isIndexedDbAsset) {
+      localAssetAvailabilityRef.current.set(photoUrl, true);
     }
 
     try {
@@ -3655,7 +3733,6 @@ export function AppProvider({ children }) {
       return resolvedUrl;
     } catch (error) {
       console.error('Gagal upload aset patroli ke cloud', error);
-      cloudAssetCacheRef.current.set(photoUrl, photoUrl);
       return photoUrl;
     }
   }, []);
@@ -6159,7 +6236,8 @@ export function AppProvider({ children }) {
         }),
       ));
       const serializedState = serializeSharedStateSnapshot(cloudReadyState);
-      if (!serializedState || serializedState === lastCloudSharedStateRef.current) return;
+      const hasPendingLocalAssets = collectLocalOnlyAssetUrls(cloudReadyState).length > 0;
+      if (!serializedState || (serializedState === lastCloudSharedStateRef.current && !hasPendingLocalAssets)) return;
 
       cloudSaveQueueRef.current = cloudSaveQueueRef.current
         .catch(() => {})
@@ -6172,7 +6250,13 @@ export function AppProvider({ children }) {
             }),
           ));
           const latestSerializedState = serializeSharedStateSnapshot(latestStateForWrite);
-          if (!latestSerializedState || latestSerializedState === lastCloudSharedStateRef.current) return;
+          const latestHasPendingLocalAssets = collectLocalOnlyAssetUrls(latestStateForWrite).length > 0;
+          if (!latestSerializedState) return;
+          if (latestSerializedState === lastCloudSharedStateRef.current) {
+            if (!latestHasPendingLocalAssets) return;
+            const hasSyncableLocalAssets = await hasUploadableLocalAssets(latestStateForWrite);
+            if (!hasSyncableLocalAssets) return;
+          }
 
           logCloudSyncDebug('save-shared-state', {
             activeShiftKey: latestStateForWrite.activeShiftKey,
@@ -6216,7 +6300,7 @@ export function AppProvider({ children }) {
     }, 2000); // Debounce cloud sync 2s
 
     return () => clearTimeout(timerId);
-  }, [applyCloudSharedState, cloudSyncBootstrapped, currentShiftMeta.key, hasOperationalCloudAccess, isOffline, prepareSharedStateForCloudSync, sharedState]);
+  }, [applyCloudSharedState, cloudSyncBootstrapped, currentShiftMeta.key, hasOperationalCloudAccess, hasUploadableLocalAssets, isOffline, prepareSharedStateForCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
