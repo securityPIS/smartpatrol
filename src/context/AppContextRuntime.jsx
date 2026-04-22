@@ -2669,6 +2669,9 @@ function createCloudAssetPath(...segments) {
     .join('/');
 }
 
+const CLOUD_SYNC_DEBOUNCE_MS = 600;
+const URGENT_CLOUD_SYNC_DEBOUNCE_MS = 120;
+
 function createSharedStateSnapshot({
   activeShiftKey,
   checkpointsByShip,
@@ -3251,9 +3254,20 @@ export function AppProvider({ children }) {
   const latestCloudSharedStateRef = useRef(null);
   const cloudAssetCacheRef = useRef(new Map());
   const localAssetAvailabilityRef = useRef(new Map());
+  const cloudSyncPriorityRef = useRef('normal');
+  const cloudSyncPriorityVersionRef = useRef(0);
   const cloudSaveQueueRef = useRef(Promise.resolve());
   const cloudFetchInFlightRef = useRef(false);
   const localSharedStateRef = useRef(null);
+  const [cloudSyncKick, setCloudSyncKick] = useState(0);
+  const requestCloudSync = useCallback((priority = 'normal') => {
+    if (priority === 'urgent') {
+      cloudSyncPriorityRef.current = 'urgent';
+      cloudSyncPriorityVersionRef.current += 1;
+    }
+
+    setCloudSyncKick((previousValue) => previousValue + 1);
+  }, []);
 
 // SOS Hooks moved to resolve TDZ
 
@@ -3413,7 +3427,8 @@ export function AppProvider({ children }) {
     if (nextSOSIncident) {
       setSelectedIncident(nextSOSIncident);
     }
-  }, [currentUserRecord, getSOSRecipientUserIds, shipsData]);
+    requestCloudSync('urgent');
+  }, [currentUserRecord, getSOSRecipientUserIds, requestCloudSync, shipsData]);
 
   const resolveSOSActionTarget = useCallback((targetSOS = null) => {
     const targetId = typeof targetSOS === 'string'
@@ -3444,7 +3459,8 @@ export function AppProvider({ children }) {
       previousAlert?.id === updatedSOS.id ? updatedSOS : previousAlert
     ));
     setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
-  }, [currentUserId, resolveSOSActionTarget]);
+    requestCloudSync('urgent');
+  }, [currentUserId, requestCloudSync, resolveSOSActionTarget]);
 
   const handleSOSAcknowledgeSelf = useCallback((targetSOS = null) => {
     const actionableSOS = resolveSOSActionTarget(targetSOS);
@@ -3469,7 +3485,8 @@ export function AppProvider({ children }) {
       previousAlert?.id === updatedSOS.id ? updatedSOS : previousAlert
     ));
     setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
-  }, [currentUserId, resolveSOSActionTarget]);
+    requestCloudSync('urgent');
+  }, [currentUserId, requestCloudSync, resolveSOSActionTarget]);
 
   const handleSOSDismiss = useCallback((targetSOS = null) => {
     const actionableSOS = resolveSOSActionTarget(targetSOS);
@@ -3494,7 +3511,8 @@ export function AppProvider({ children }) {
       previousAlert?.id === updatedSOS.id ? null : previousAlert
     ));
     setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
-  }, [currentUserRecord, resolveSOSActionTarget]);
+    requestCloudSync('urgent');
+  }, [currentUserRecord, requestCloudSync, resolveSOSActionTarget]);
 
   const assignedShipForCurrentUser = useMemo(() => {
     return resolveAssignedShipForUser(currentUserRecord, shipsData);
@@ -4853,10 +4871,11 @@ export function AppProvider({ children }) {
           createdAt: submittedItem.completedAt,
         }]);
       }
+      requestCloudSync('urgent');
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -4908,7 +4927,8 @@ export function AppProvider({ children }) {
         }
         : previousReport
     ));
-  }, [currentUser, selectedReportDetail?.completedBy, selectedReportDetail?.readOnly, updateOperationalShipCheckpoints]);
+    requestCloudSync('urgent');
+  }, [currentUser, requestCloudSync, selectedReportDetail?.completedBy, selectedReportDetail?.readOnly, updateOperationalShipCheckpoints]);
   const handleOpenPatrolResult = useCallback((item) => {
     const canonicalItem = getCanonicalCheckpointRecord(item) || item;
     setActiveForms({});
@@ -5028,7 +5048,8 @@ export function AppProvider({ children }) {
       createdAt,
     }]);
     closeIncidentModal();
-  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShip, operationalShipName]);
+    requestCloudSync('urgent');
+  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShip, operationalShipName, requestCloudSync]);
 
   // Ship handlers
   const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
@@ -5613,7 +5634,8 @@ export function AppProvider({ children }) {
       createdAt,
     }]);
     setNewProgress({ comment: '', photoUrl: null });
-  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, selectedIncident, usersData]);
+    requestCloudSync('urgent');
+  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, requestCloudSync, selectedIncident, usersData]);
   const handleAddIncidentDocumentation = useCallback(async (incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
@@ -5647,7 +5669,8 @@ export function AppProvider({ children }) {
         ],
       },
     }));
-  }, [allIncidents, canManageIncident, currentUser, selectedIncident]);
+    requestCloudSync('urgent');
+  }, [allIncidents, canManageIncident, currentUser, requestCloudSync, selectedIncident]);
   const handleUpdateIncidentInfo = useCallback((incidentId, updates) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!incident || !canManageIncident(incident)) return false;
@@ -5748,9 +5771,10 @@ export function AppProvider({ children }) {
           shipName: incident?.shipName || operationalShipName,
           createdAt,
         }]);
+        requestCloudSync('urgent');
       } 
     }); 
-  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, operationalShipName, selectedIncident, usersData]);
+  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, operationalShipName, requestCloudSync, selectedIncident, usersData]);
   const handleDeleteIncident = useCallback((incidentId) => {
     if (!isAdmin) return;
 
@@ -5823,9 +5847,10 @@ export function AppProvider({ children }) {
         setSelectedIncident((previousIncident) => (
           previousIncident?.id === incidentId ? null : previousIncident
         ));
+        requestCloudSync('urgent');
       },
     });
-  }, [allIncidents, currentShiftMeta.key, isAdmin, selectedIncident]);
+  }, [allIncidents, currentShiftMeta.key, isAdmin, requestCloudSync, selectedIncident]);
   const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
   const handleUpdateIncidentPhoto = useCallback(async (incidentId) => {
     const dataUrl = await pickLocalImage();
@@ -5848,7 +5873,8 @@ export function AppProvider({ children }) {
       setIncidentsData(prev => prev.map(inc => inc.id === incidentId ? { ...inc, photoUrl: url } : inc));
     }
     setSelectedIncident(prev => prev && prev.id === incidentId ? { ...prev, photoUrl: url } : prev);
-  }, []);
+    requestCloudSync('urgent');
+  }, [requestCloudSync]);
 
   // Ship form handlers
   const handleSaveShip = useCallback(() => {
@@ -6227,6 +6253,11 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline || !cloudSyncBootstrapped) return;
 
+    const scheduledPriorityVersion = cloudSyncPriorityVersionRef.current;
+    const syncDelayMs = cloudSyncPriorityRef.current === 'urgent'
+      ? URGENT_CLOUD_SYNC_DEBOUNCE_MS
+      : CLOUD_SYNC_DEBOUNCE_MS;
+
     const timerId = setTimeout(() => {
       const cloudReadyState = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
         latestCloudSharedStateRef.current || {},
@@ -6242,65 +6273,71 @@ export function AppProvider({ children }) {
       cloudSaveQueueRef.current = cloudSaveQueueRef.current
         .catch(() => {})
         .then(async () => {
-          const latestStateForWrite = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
-            latestCloudSharedStateRef.current || {},
-            createSharedStateSnapshot({
-              ...sharedState,
-              activeShiftKey: currentShiftMeta.key,
-            }),
-          ));
-          const latestSerializedState = serializeSharedStateSnapshot(latestStateForWrite);
-          const latestHasPendingLocalAssets = collectLocalOnlyAssetUrls(latestStateForWrite).length > 0;
-          if (!latestSerializedState) return;
-          if (latestSerializedState === lastCloudSharedStateRef.current) {
-            if (!latestHasPendingLocalAssets) return;
-            const hasSyncableLocalAssets = await hasUploadableLocalAssets(latestStateForWrite);
-            if (!hasSyncableLocalAssets) return;
+          try {
+            const latestStateForWrite = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
+              latestCloudSharedStateRef.current || {},
+              createSharedStateSnapshot({
+                ...sharedState,
+                activeShiftKey: currentShiftMeta.key,
+              }),
+            ));
+            const latestSerializedState = serializeSharedStateSnapshot(latestStateForWrite);
+            const latestHasPendingLocalAssets = collectLocalOnlyAssetUrls(latestStateForWrite).length > 0;
+            if (!latestSerializedState) return;
+            if (latestSerializedState === lastCloudSharedStateRef.current) {
+              if (!latestHasPendingLocalAssets) return;
+              const hasSyncableLocalAssets = await hasUploadableLocalAssets(latestStateForWrite);
+              if (!hasSyncableLocalAssets) return;
+            }
+
+            logCloudSyncDebug('save-shared-state', {
+              activeShiftKey: latestStateForWrite.activeShiftKey,
+              deletedHistory: Object.keys(latestStateForWrite.deletedRecords?.historyEntries || {}).length,
+              deletedIncidents: Object.keys(latestStateForWrite.deletedRecords?.incidents || {}).length,
+              deletedShips: Object.keys(latestStateForWrite.deletedRecords?.ships || {}).length,
+              deletedUsers: Object.keys(latestStateForWrite.deletedRecords?.users || {}).length,
+              historyEntries: latestStateForWrite.historyEntries.length,
+              incidents: latestStateForWrite.incidentsData.length,
+              notifications: latestStateForWrite.notifications.length,
+              ships: latestStateForWrite.shipsData.length,
+              users: latestStateForWrite.usersData.length,
+            });
+
+            const preparedState = await prepareSharedStateForCloudSync(latestStateForWrite);
+            const receivedAtServerMs = getTrustedNowMs();
+            const verifiedPreparedState = markSharedStateTimeAuditReceived(
+              mergeSharedStateSnapshots({}, preparedState),
+              receivedAtServerMs,
+            );
+            const savedState = await saveCloudAppState(verifiedPreparedState, {
+              mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
+                mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
+              ),
+            });
+            const committedState = markSharedStateTimeAuditReceived(
+              mergeSharedStateSnapshots({}, savedState || verifiedPreparedState),
+              receivedAtServerMs,
+            );
+            const committedSerializedState = serializeSharedStateSnapshot(committedState);
+
+            if (!committedSerializedState) return;
+
+            applyCloudSharedState(committedState, {
+              receivedAtServerMs,
+            });
+          } finally {
+            if (cloudSyncPriorityVersionRef.current === scheduledPriorityVersion) {
+              cloudSyncPriorityRef.current = 'normal';
+            }
           }
-
-          logCloudSyncDebug('save-shared-state', {
-            activeShiftKey: latestStateForWrite.activeShiftKey,
-            deletedHistory: Object.keys(latestStateForWrite.deletedRecords?.historyEntries || {}).length,
-            deletedIncidents: Object.keys(latestStateForWrite.deletedRecords?.incidents || {}).length,
-            deletedShips: Object.keys(latestStateForWrite.deletedRecords?.ships || {}).length,
-            deletedUsers: Object.keys(latestStateForWrite.deletedRecords?.users || {}).length,
-            historyEntries: latestStateForWrite.historyEntries.length,
-            incidents: latestStateForWrite.incidentsData.length,
-            notifications: latestStateForWrite.notifications.length,
-            ships: latestStateForWrite.shipsData.length,
-            users: latestStateForWrite.usersData.length,
-          });
-
-          const preparedState = await prepareSharedStateForCloudSync(latestStateForWrite);
-          const receivedAtServerMs = getTrustedNowMs();
-          const verifiedPreparedState = markSharedStateTimeAuditReceived(
-            mergeSharedStateSnapshots({}, preparedState),
-            receivedAtServerMs,
-          );
-          const savedState = await saveCloudAppState(verifiedPreparedState, {
-            mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
-              mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
-            ),
-          });
-          const committedState = markSharedStateTimeAuditReceived(
-            mergeSharedStateSnapshots({}, savedState || verifiedPreparedState),
-            receivedAtServerMs,
-          );
-          const committedSerializedState = serializeSharedStateSnapshot(committedState);
-
-          if (!committedSerializedState) return;
-
-          applyCloudSharedState(committedState, {
-            receivedAtServerMs,
-          });
         })
         .catch((error) => {
           console.error('Gagal mengirim laporan patroli ke cloud', error);
         });
-    }, 2000); // Debounce cloud sync 2s
+    }, syncDelayMs);
 
     return () => clearTimeout(timerId);
-  }, [applyCloudSharedState, cloudSyncBootstrapped, currentShiftMeta.key, hasOperationalCloudAccess, hasUploadableLocalAssets, isOffline, prepareSharedStateForCloudSync, sharedState]);
+  }, [applyCloudSharedState, cloudSyncBootstrapped, cloudSyncKick, currentShiftMeta.key, hasOperationalCloudAccess, hasUploadableLocalAssets, isOffline, prepareSharedStateForCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
