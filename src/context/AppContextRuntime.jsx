@@ -1814,9 +1814,16 @@ function getAssetUrlPriority(url) {
   return 1;
 }
 
+function isPortableInlineAssetUrl(url) {
+  return typeof url === 'string' && url.startsWith('data:image/svg+xml');
+}
+
 function isLocalOnlyAssetUrl(url) {
   return typeof url === 'string'
-    && (url.startsWith('idb://') || url.startsWith('data:image/'));
+    && (
+      url.startsWith('idb://')
+      || (url.startsWith('data:image/') && !isPortableInlineAssetUrl(url))
+    );
 }
 
 function collectLocalOnlyAssetUrls(stateSnapshot = {}) {
@@ -3721,6 +3728,11 @@ export function AppProvider({ children }) {
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
     if (cloudAssetCacheRef.current.has(photoUrl)) {
       return cloudAssetCacheRef.current.get(photoUrl) || null;
+    }
+
+    if (isPortableInlineAssetUrl(photoUrl)) {
+      cloudAssetCacheRef.current.set(photoUrl, photoUrl);
+      return photoUrl;
     }
 
     const isIndexedDbAsset = photoUrl.startsWith('idb://');

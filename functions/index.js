@@ -9,6 +9,7 @@ Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, shared
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import {
@@ -30,6 +31,7 @@ const MAX_NOTIFICATION_ITEMS = 250;
 
 const firestore = getFirestore();
 const adminAuth = getAuth();
+const adminStorage = getStorage();
 
 function sanitizeString(value, maxLength = 160) {
   if (typeof value !== 'string') return '';
@@ -37,6 +39,60 @@ function sanitizeString(value, maxLength = 160) {
     .replace(/[\u0000-\u001f\u007f<>]/g, ' ')
     .trim()
     .slice(0, maxLength);
+}
+
+function sanitizeStorageSegment(value, fallback = 'part') {
+  return sanitizeString(String(value || ''), 120)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/(^-|-$)/g, '') || fallback;
+}
+
+function sanitizeOperationalAssetPath(path) {
+  const normalizedPath = sanitizeString(path || '', 400)
+    .split('/')
+    .map((segment, index) => sanitizeStorageSegment(segment, `part-${index + 1}`))
+    .filter(Boolean)
+    .join('/');
+
+  if (!normalizedPath.startsWith('state-assets/')) {
+    throw new HttpsError('invalid-argument', 'Path aset operasional tidak valid.');
+  }
+
+  return normalizedPath;
+}
+
+function decodeDataUrlAsset(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:([^,]*?),(.*)$/s);
+  if (!match) {
+    throw new HttpsError('invalid-argument', 'Format data URL aset tidak valid.');
+  }
+
+  const metadataPart = match[1] || '';
+  const payloadPart = match[2] || '';
+  const isBase64 = metadataPart.includes(';base64');
+  const contentType = sanitizeString(metadataPart.split(';')[0] || '', 120) || 'application/octet-stream';
+  const buffer = isBase64
+    ? Buffer.from(payloadPart, 'base64')
+    : Buffer.from(decodeURIComponent(payloadPart), 'utf8');
+
+  if (buffer.length === 0) {
+    throw new HttpsError('invalid-argument', 'Payload aset kosong.');
+  }
+
+  if (buffer.length > 8 * 1024 * 1024) {
+    throw new HttpsError('invalid-argument', 'Ukuran aset melebihi batas 8MB.');
+  }
+
+  return {
+    buffer,
+    contentType,
+  };
+}
+
+function buildTokenDownloadUrl(bucketName, objectPath, token) {
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`;
 }
 
 function getSharedStateRef() {
@@ -142,6 +198,22 @@ async function requireAdminUser(request) {
 
   if (role !== ACCESS_ROLES.ADMIN || !data.enabled) {
     throw new HttpsError('permission-denied', 'Hanya admin operasional yang boleh menjalankan aksi ini.');
+  }
+
+  return {
+    ...authContext,
+    access: data,
+  };
+}
+
+async function requireOperationalUser(request) {
+  const authContext = assertAuthenticated(request);
+  const snapshot = await getUserAccessRef(authContext.uid).get();
+  const data = snapshot.exists ? snapshot.data() || {} : {};
+  const reviewState = sanitizeString(data.reviewState || '', 20).toLowerCase();
+
+  if (!data.enabled || reviewState !== 'approved') {
+    throw new HttpsError('permission-denied', 'Akses operasional cloud belum aktif untuk upload aset.');
   }
 
   return {
@@ -386,6 +458,41 @@ export const getServerTime = onRequest(
       source: 'firebase-functions',
       timezone: 'UTC',
     });
+  },
+);
+
+export const uploadOperationalAsset = onCall(
+  {
+    region: TRUSTED_TIME_REGION,
+    maxInstances: 20,
+  },
+  async (request) => {
+    await requireOperationalUser(request);
+
+    const dataUrl = sanitizeString(request.data?.dataUrl || '', 8_500_000);
+    const path = sanitizeOperationalAssetPath(request.data?.path || '');
+    const { buffer, contentType } = decodeDataUrlAsset(dataUrl);
+    const bucket = adminStorage.bucket();
+    const file = bucket.file(path);
+    const downloadToken = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    await file.save(buffer, {
+      resumable: false,
+      validation: false,
+      metadata: {
+        contentType,
+        cacheControl: 'public,max-age=31536000,immutable',
+        metadata: {
+          firebaseStorageDownloadTokens: downloadToken,
+        },
+      },
+    });
+
+    return {
+      path,
+      bucket: bucket.name,
+      downloadUrl: buildTokenDownloadUrl(bucket.name, path, downloadToken),
+    };
   },
 );
 

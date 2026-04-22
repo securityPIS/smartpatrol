@@ -7,8 +7,9 @@ import {
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { getDownloadURL, ref, uploadString } from 'firebase/storage';
-import { firebaseDb, firebaseStorage } from './app';
+import { firebaseDb, firebaseFunctions, firebaseStorage } from './app';
 
 const CLOUD_STATE_COLLECTION = 'smartpatrol';
 const CLOUD_STATE_DOCUMENT = 'shared-state';
@@ -96,7 +97,27 @@ export async function saveCloudAppState(state, options = {}) {
 }
 
 export async function uploadCloudDataUrlAsset({ dataUrl, path }) {
-  if (!firebaseStorage || !isCloudWriteEnabled || !dataUrl || !path) return null;
+  if (!isCloudWriteEnabled || !dataUrl || !path) return null;
+
+  if (firebaseFunctions) {
+    try {
+      const uploadOperationalAsset = httpsCallable(firebaseFunctions, 'uploadOperationalAsset');
+      const response = await uploadOperationalAsset({
+        dataUrl,
+        path,
+      });
+      const downloadUrl = typeof response?.data?.downloadUrl === 'string'
+        ? response.data.downloadUrl
+        : '';
+      if (downloadUrl) {
+        return downloadUrl;
+      }
+    } catch (error) {
+      console.warn('Upload aset patroli via callable gagal, mencoba fallback Storage SDK.', error);
+    }
+  }
+
+  if (!firebaseStorage) return null;
 
   const storageRef = ref(firebaseStorage, path);
   await uploadString(storageRef, dataUrl, 'data_url');
