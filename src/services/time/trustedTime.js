@@ -1,9 +1,22 @@
+/*
+Tujuan: Menyediakan trusted clock SmartPatrol dengan sinkronisasi server dan deteksi clock tampering.
+Caller: AppContextRuntime dan komponen audit waktu.
+Dependensi: Endpoint trusted time server, trustedTimePolicy, localStorage, dan browser timing APIs.
+Main Functions: Sinkronisasi waktu server, membangun timestamp trusted, mengelola sesi offline, dan mendeteksi drift perangkat.
+Side Effects: Menulis anchor trusted time ke localStorage, memasang interval/timer, dan memanggil endpoint server time.
+*/
+
+import {
+  DEFAULT_CLOCK_TAMPER_DRIFT_THRESHOLD_MS,
+  isClockDriftSuspicious,
+} from './trustedTimePolicy';
+
 const TRUSTED_TIME_STORAGE_KEY = 'smartpatrol.trusted-time.v1';
 const SERVER_TIME_ROUTE = '/api/server-time';
 const TRUSTED_TIME_FUNCTION_REGION = 'asia-southeast2';
 const SERVER_TIME_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const CLOCK_TAMPER_CHECK_INTERVAL_MS = 15 * 1000;
-const CLOCK_TAMPER_DRIFT_THRESHOLD_MS = 5000;
+const CLOCK_TAMPER_DRIFT_THRESHOLD_MS = DEFAULT_CLOCK_TAMPER_DRIFT_THRESHOLD_MS;
 const CLOCK_TAMPER_RECOVERY_STABLE_SAMPLE_COUNT = 2;
 const REQUEST_TIMEOUT_MS = 8000;
 const TICK_INTERVAL_MS = 1000;
@@ -381,7 +394,7 @@ export function detectClockTampering() {
   lastLocalNowMs = currentLocalNowMs;
   lastPerfNowMs = currentPerfNowMs;
 
-  if (driftMs > CLOCK_TAMPER_DRIFT_THRESHOLD_MS) {
+  if (isClockDriftSuspicious(localElapsedMs, perfElapsedMs, CLOCK_TAMPER_DRIFT_THRESHOLD_MS)) {
     resetClockTamperRecoveryState();
 
     if (state.clockTamperDetected) {

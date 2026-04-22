@@ -1,9 +1,83 @@
+// Tujuan: Mengunci Firestore SmartPatrol agar shared-state hanya bisa diakses user operasional approved.
+// Caller: Firebase Firestore rules engine untuk client web SmartPatrol.
+// Dependensi: Koleksi sidecar userAccess/{uid} dan pendingRegistrations/{uid}.
+// Main Functions: Mengizinkan shared-state untuk userAccess enabled, create onboarding publik terbatas, dan read admin/owner.
+// Side Effects: Menolak write publik ke state operasional dan membatasi approval ke callable/admin SDK.
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userAccessDoc() {
+      return get(/databases/$(database)/documents/userAccess/$(request.auth.uid));
+    }
+
+    function hasUserAccessDoc() {
+      return isSignedIn() && exists(/databases/$(database)/documents/userAccess/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return hasUserAccessDoc()
+        && userAccessDoc().data.role == 'ADMIN'
+        && userAccessDoc().data.enabled == true;
+    }
+
+    function hasOperationalSharedStateAccess() {
+      return hasUserAccessDoc()
+        && userAccessDoc().data.enabled == true
+        && userAccessDoc().data.reviewState == 'approved';
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /smartpatrol/shared-state {
+      allow read, write: if hasOperationalSharedStateAccess();
+    }
+
     match /smartpatrol/{document=**} {
-      // Staging rule: allow shared-state sync before all users are fully migrated to Firebase Auth.
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    match /pendingRegistrations/{uid} {
+      allow create: if isOwner(uid)
+        && !exists(/databases/$(database)/documents/pendingRegistrations/$(uid))
+        && request.resource.data.keys().hasOnly([
+          'uid',
+          'email',
+          'name',
+          'phone',
+          'photoUrl',
+          'photoPath',
+          'type',
+          'workerNumber',
+          'status',
+          'createdAt',
+          'updatedAt',
+          'reviewedAt',
+          'reviewedBy',
+          'reviewNote'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.reviewedAt == null
+        && request.resource.data.reviewedBy == ''
+        && request.resource.data.reviewNote == '';
+
+      allow read: if isOwner(uid) || isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /userAccess/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if false;
     }
 
     match /{document=**} {

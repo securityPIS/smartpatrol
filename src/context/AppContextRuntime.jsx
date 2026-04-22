@@ -1,9 +1,9 @@
 /*
 Tujuan: Menjadi pusat state, flow bisnis, dan sinkronisasi SmartPatrol.
 Caller: Root app melalui AppProvider dan seluruh hook domain aplikasi.
-Dependensi: Seed data, Firebase service, trusted time, utilitas sanitasi, dan IndexedDB image store.
-Main Functions: Mengelola auth, kapal, checkpoint patroli, incidents, history, SOS, dan cloud sync.
-Side Effects: Menulis state lokal/cloud, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
+Dependensi: Seed data, Firebase service (auth/cloud/access), trusted time, utilitas sanitasi, dan IndexedDB image store.
+Main Functions: Mengelola auth Firebase, onboarding approval, kapal, checkpoint patroli, incidents, history, SOS, dan cloud sync.
+Side Effects: Menulis state lokal/cloud, memanggil callable security, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
 */
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
@@ -33,6 +33,16 @@ import {
   uploadCloudDataUrlAsset,
 } from '../services/firebase/cloudState';
 import {
+  approvePendingRegistration,
+  createPendingRegistration,
+  rejectPendingRegistration,
+  resolveOperationalAccess,
+  revokeOperationalUserAccess,
+  subscribeToPendingRegistrations,
+  syncOperationalUserAccess,
+  uploadRegistrationPhotoAsset,
+} from '../services/firebase/access';
+import {
   createTrustedTimestampRecord,
   getTrustedDate,
   getTrustedNowMs,
@@ -57,13 +67,10 @@ const APP_TIME_ZONE = 'Asia/Jakarta';
 const APP_TIME_ZONE_UTC_OFFSET_HOURS = 7;
 const SHIFT_NOTIFICATION_DEBUG_KEY = 'smartpatrol.debug.shiftNotifications';
 const CLOUD_SYNC_DEBUG_KEY = 'smartpatrol.debug.cloudSync';
-const ADMIN_RESET_EMAIL = 'admin@smartpatrol.local';
 
 function getDefaultPageForRole(role) {
   return role === ACCESS_ROLES.ADMIN ? 'daily-report' : 'home';
 }
-const ADMIN_RESET_SALT = '8f2c4a6d1b3e5f709182a4c6e8f0b2d4';
-const ADMIN_RESET_HASH = 'ffc2b0d9608c264ea137818121d7a93ddae483f971489a461ddf71393a7c8f6c';
 const MINUTE_IN_MS = 60 * 1000;
 const SHIFT_SEQUENCE = [
   {
@@ -357,11 +364,11 @@ let _mockUsersList = null;
 function getMockUsersList() {
   if (_mockUsersList) return _mockUsersList;
   _mockUsersList = [
-    { id: 'u1', name: 'Budi Santoso', role: ACCESS_ROLES.ADMIN, type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', email: ADMIN_RESET_EMAIL, hasCredential: true, passwordSalt: ADMIN_RESET_SALT, passwordHash: ADMIN_RESET_HASH, photoUrl: createPosterDataUrl('BS', 'Budi Santoso', 0, true) },
-    { id: 'u2', name: 'Sertu Agus', role: ACCESS_ROLES.PIC, type: 'TNI', status: 'active', shipAssigned: 'MT MENGGALA', email: 'pic@smartpatrol.local', hasCredential: true, passwordSalt: '7ab31d8f22ce9014', passwordHash: 'ded78e74253898700b4c5c06479e492b8a918b427441094d84f837d9cde3aa1b', photoUrl: createPosterDataUrl('SA', 'Sertu Agus', 1, true) },
-    { id: 'u3', name: 'Cipto Mangunkusumo', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', email: 'petugas@smartpatrol.local', hasCredential: true, passwordSalt: '91c4ef0a5d7b2c38', passwordHash: 'f6df216170e0fa8cbfdffaa046b3d785e6e289627af9f8753addec4a11860a8b', photoUrl: createPosterDataUrl('CM', 'Cipto', 2, true) },
-    { id: 'u4', name: 'Deni Setiawan', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', status: 'off-duty', shipAssigned: null, email: 'deni@smartpatrol.local', hasCredential: true, passwordSalt: 'bc72ea19453f8d26', passwordHash: '79907b35981fa38d4b7cecb3554985d3ed0e668f0ecddee204e30b614247d9c2', photoUrl: createPosterDataUrl('DS', 'Deni', 3, true) },
-    { id: 'u5', name: 'Kapten Eko', role: ACCESS_ROLES.PIC, type: 'INTERNAL', status: 'off-duty', shipAssigned: null, email: 'eko@smartpatrol.local', hasCredential: true, passwordSalt: 'f1ae0c4d739b2158', passwordHash: 'a4e99ec51c05d02c3f8e30b9ed98b67bef8f6abc10d4d6a9cd1ecaa4e29c0bb1', photoUrl: createPosterDataUrl('KE', 'Kapten Eko', 4, true) },
+    { id: 'u1', name: 'Budi Santoso', role: ACCESS_ROLES.ADMIN, type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', email: 'admin@smartpatrol.local', authProvider: 'none', firebaseUid: null, photoUrl: createPosterDataUrl('BS', 'Budi Santoso', 0, true) },
+    { id: 'u2', name: 'Sertu Agus', role: ACCESS_ROLES.PIC, type: 'TNI', status: 'active', shipAssigned: 'MT MENGGALA', email: 'pic@smartpatrol.local', authProvider: 'none', firebaseUid: null, photoUrl: createPosterDataUrl('SA', 'Sertu Agus', 1, true) },
+    { id: 'u3', name: 'Cipto Mangunkusumo', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', status: 'active', shipAssigned: 'MT MENGGALA', email: 'petugas@smartpatrol.local', authProvider: 'none', firebaseUid: null, photoUrl: createPosterDataUrl('CM', 'Cipto', 2, true) },
+    { id: 'u4', name: 'Deni Setiawan', role: ACCESS_ROLES.PETUGAS, type: 'BUJP', status: 'off-duty', shipAssigned: null, email: 'deni@smartpatrol.local', authProvider: 'none', firebaseUid: null, photoUrl: createPosterDataUrl('DS', 'Deni', 3, true) },
+    { id: 'u5', name: 'Kapten Eko', role: ACCESS_ROLES.PIC, type: 'INTERNAL', status: 'off-duty', shipAssigned: null, email: 'eko@smartpatrol.local', authProvider: 'none', firebaseUid: null, photoUrl: createPosterDataUrl('KE', 'Kapten Eko', 4, true) },
   ];
   return _mockUsersList;
 }
@@ -383,8 +390,10 @@ function getInitialShipsData() {
   return _initialShipsData;
 }
 
-const APP_STORAGE_KEY = 'smartpatrol.legacy.local.v1';
-const WEATHER_STORAGE_KEY = 'smartpatrol.legacy.weather.v1';
+const APP_STORAGE_KEY = 'smartpatrol.secure.local.v2';
+const LEGACY_APP_STORAGE_KEY = 'smartpatrol.legacy.local.v1';
+const WEATHER_STORAGE_KEY = 'smartpatrol.weather.local.v2';
+const LEGACY_WEATHER_STORAGE_KEY = 'smartpatrol.legacy.weather.v1';
 const WEATHER_TTL_MS = 30 * 60 * 1000;
 
 // --- MODULE-LEVEL CACHED FORMATTERS (avoids recreating Intl instances on every call) ---
@@ -2155,8 +2164,8 @@ function resolveLatestActiveSOSAlert(sosEntries = []) {
 function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const deletedRecords = mergeDeletedRecords(baseState.deletedRecords || {}, nextState.deletedRecords || {});
   const resolvedActiveShiftKey = nextState.activeShiftKey || baseState.activeShiftKey || null;
-  const baseUsers = applyAdminCredentialReset(normalizeUsersCollection(baseState.usersData || []));
-  const nextUsers = applyAdminCredentialReset(normalizeUsersCollection(nextState.usersData || []));
+  const baseUsers = normalizeUsersCollection(baseState.usersData || []);
+  const nextUsers = normalizeUsersCollection(nextState.usersData || []);
   const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers), deletedRecords.users);
   const baseShips = normalizeShipsCollection(baseState.shipsData || []);
   const nextShips = normalizeShipsCollection(nextState.shipsData || []);
@@ -2284,13 +2293,12 @@ function logCloudSyncDebug(event, payload) {
 
 function loadAuthSession() { try { const raw = window.localStorage.getItem(AUTH_SESSION_KEY); if (!raw) return null; const parsed = JSON.parse(raw); return typeof parsed?.userId === 'string' ? parsed.userId : null; } catch { return null; } }
 function saveAuthSession(userId) { try { if (!userId) { window.localStorage.removeItem(AUTH_SESSION_KEY); return; } window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ userId, savedAt: new Date().toISOString() })); } catch (error) { console.error('Gagal menyimpan sesi login', error); } }
-function fallbackHash(value) { let hash = 2166136261; for (let i = 0; i < value.length; i++) { hash ^= value.charCodeAt(i); hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24); } return `fallback-${(hash >>> 0).toString(16).padStart(8, '0')}`; }
-async function sha256Hex(value) { if (!globalThis.crypto?.subtle) return fallbackHash(value); const encoded = new TextEncoder().encode(value); const digest = await globalThis.crypto.subtle.digest('SHA-256', encoded); return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join(''); }
-function createSalt() { if (globalThis.crypto?.getRandomValues) { const bytes = new Uint8Array(16); globalThis.crypto.getRandomValues(bytes); return Array.from(bytes).map(byte => byte.toString(16).padStart(2, '0')).join(''); } return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 18)}`.slice(0, 32); }
-async function createPasswordCredential(password) { const s = sanitizeText(password, 120); const salt = createSalt(); const hash = await sha256Hex(`${salt}:${s}`); return { passwordSalt: salt, passwordHash: hash, hasCredential: true }; }
-async function verifyPasswordCredential(user, password) { if (!user?.passwordHash || !user?.passwordSalt) return false; const s = sanitizeText(password, 120); if (!s) return false; return (await sha256Hex(`${user.passwordSalt}:${s}`)) === user.passwordHash; }
 function createFallbackEmail(name, index = 0) { const slug = sanitizeText(name, 80).toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/(^[.]+|[.]+$)/g, '') || `user.${index + 1}`; return `${slug}@smartpatrol.local`; }
-function normalizeUserRole(user) { const raw = sanitizeText(user?.role || '', 20).toUpperCase(); if (ACCESS_ROLE_VALUES.includes(raw)) return raw; if (user?.name === 'Budi Santoso') return ACCESS_ROLES.ADMIN; if (user?.name === 'Kapten Eko' || user?.name === 'Sertu Agus') return ACCESS_ROLES.PIC; return ACCESS_ROLES.PETUGAS; }
+function normalizeUserRole(user) {
+  const raw = sanitizeText(user?.role || '', 20).toUpperCase();
+  if (ACCESS_ROLE_VALUES.includes(raw)) return raw;
+  return ACCESS_ROLES.PETUGAS;
+}
 
 function normalizeUserRecord(user, index = 0) {
   const safeName = sanitizeText(user?.name || '', 80) || `User ${index + 1}`;
@@ -2298,16 +2306,38 @@ function normalizeUserRecord(user, index = 0) {
   const seedUser = seedUsersById[user?.id] || seedUsersByEmail[safeEmail];
   const role = normalizeUserRole({ ...seedUser, ...user, name: safeName });
   const shipAssigned = sanitizeText(user?.shipAssigned || seedUser?.shipAssigned || '', 80) || null;
-  const passwordSalt = user?.passwordSalt || seedUser?.passwordSalt || '';
-  const passwordHash = user?.passwordHash || seedUser?.passwordHash || '';
-  const hasCredential = Boolean(passwordSalt && passwordHash);
   const firebaseUid = sanitizeText(user?.firebaseUid || seedUser?.firebaseUid || '', 160) || '';
   const authProvider = firebaseUid
     ? 'firebase'
-    : sanitizeText(user?.authProvider || seedUser?.authProvider || (hasCredential ? 'legacy' : 'none'), 20).toLowerCase();
+    : sanitizeText(user?.authProvider || seedUser?.authProvider || 'none', 20).toLowerCase();
   const fallbackStatus = role === ACCESS_ROLES.PETUGAS ? (shipAssigned ? 'active' : 'off-duty') : 'active';
   const status = sanitizeText(user?.status || seedUser?.status || fallbackStatus, 20) || fallbackStatus;
-  return { ...seedUser, ...user, id: user?.id || seedUser?.id || `u${Date.now()}${index}`, name: safeName, role, type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP', workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40), status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status, shipAssigned, email: safeEmail, password: '', hasCredential, passwordSalt, passwordHash, authProvider, firebaseUid: firebaseUid || null, phone: sanitizePhone(user?.phone || seedUser?.phone || ''), address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180), emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80), emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''), emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua', officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180), photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index) };
+  return {
+    ...seedUser,
+    ...user,
+    id: user?.id || seedUser?.id || `u${Date.now()}${index}`,
+    name: safeName,
+    role,
+    type: sanitizeText(user?.type || seedUser?.type || 'BUJP', 20) || 'BUJP',
+    workerNumber: sanitizeText(user?.workerNumber || seedUser?.workerNumber || '', 40),
+    status: role === ACCESS_ROLES.PETUGAS && !shipAssigned ? 'off-duty' : status,
+    shipAssigned,
+    email: safeEmail,
+    password: '',
+    hasCredential: false,
+    passwordSalt: '',
+    passwordHash: '',
+    authProvider,
+    firebaseUid: firebaseUid || null,
+    phone: sanitizePhone(user?.phone || seedUser?.phone || ''),
+    dob: sanitizeText(user?.dob || seedUser?.dob || '', 20),
+    address: sanitizeMultilineText(user?.address || seedUser?.address || '', 180),
+    emergencyName: sanitizeText(user?.emergencyName || seedUser?.emergencyName || '', 80),
+    emergencyContact: sanitizePhone(user?.emergencyContact || seedUser?.emergencyContact || ''),
+    emergencyRelation: sanitizeText(user?.emergencyRelation || seedUser?.emergencyRelation || 'Orang Tua', 40) || 'Orang Tua',
+    officeAddress: sanitizeMultilineText(user?.officeAddress || seedUser?.officeAddress || '', 180),
+    photoUrl: sanitizeUrl(user?.photoUrl || seedUser?.photoUrl || '') || createUserAvatar(safeName, index),
+  };
 }
 
 function normalizeUsersCollection(users) {
@@ -2381,24 +2411,6 @@ function resolveAssignedShipForUser(user, ships = []) {
   )) || matchingShips[0] || null;
 }
 
-function applyAdminCredentialReset(users = []) {
-  return users.map((user) => {
-    const normalizedEmail = sanitizeEmail(user?.email || '');
-    const isAdminTarget = user?.id === 'u1' || normalizedEmail === ADMIN_RESET_EMAIL;
-    if (!isAdminTarget) return user;
-
-    return {
-      ...user,
-      email: ADMIN_RESET_EMAIL,
-      hasCredential: true,
-      passwordSalt: ADMIN_RESET_SALT,
-      passwordHash: ADMIN_RESET_HASH,
-      authProvider: 'legacy',
-      firebaseUid: null,
-    };
-  });
-}
-
 function isFirebaseManagedUser(user) {
   return Boolean(user?.authProvider === 'firebase' || user?.firebaseUid);
 }
@@ -2409,31 +2421,138 @@ function canUserAccessApplication(user) {
   return Boolean(user.shipAssigned && user.status === 'active');
 }
 
-function createFirebaseBackedUserRecord(authUser, users = []) {
-  const safeEmail = sanitizeEmail(authUser?.email || '');
-  const displayName = sanitizeText(authUser?.displayName || safeEmail.split('@')[0] || 'Petugas Baru', 80) || 'Petugas Baru';
+function buildOperationalUserRecordFromAccess({
+  access = {},
+  profile = {},
+  authUser = null,
+  existingUser = null,
+  users = [],
+} = {}) {
+  const safeEmail = sanitizeEmail(
+    access.email
+    || profile.email
+    || authUser?.email
+    || existingUser?.email
+    || '',
+  );
+  const safeName = sanitizeText(
+    profile.name
+    || access.name
+    || authUser?.displayName
+    || existingUser?.name
+    || safeEmail.split('@')[0]
+    || 'Personil Operasional',
+    80,
+  ) || 'Personil Operasional';
+  const nextUserId = existingUser?.id || profile.id || access.legacyUserId || `u${Date.now()}`;
+
   return normalizeUserRecord({
-    id: `u${Date.now()}`,
-    name: displayName,
-    role: ACCESS_ROLES.PETUGAS,
-    type: 'BUJP',
-    status: 'off-duty',
-    shipAssigned: null,
+    ...(existingUser || {}),
+    id: nextUserId,
+    name: safeName,
+    role: access.role || profile.role || existingUser?.role || ACCESS_ROLES.PETUGAS,
+    type: profile.type || access.type || existingUser?.type || 'BUJP',
+    workerNumber: profile.workerNumber || access.workerNumber || existingUser?.workerNumber || '',
+    status: access.status || profile.status || existingUser?.status || 'off-duty',
+    shipAssigned: access.shipAssigned || profile.shipAssigned || existingUser?.shipAssigned || null,
     email: safeEmail,
-    phone: sanitizePhone(authUser?.phoneNumber || ''),
-    emergencyRelation: 'Orang Tua',
-    photoUrl: sanitizeUrl(authUser?.photoURL || '') || createUserAvatar(displayName, users.length),
+    phone: sanitizePhone(profile.phone || authUser?.phoneNumber || existingUser?.phone || ''),
+    photoUrl: sanitizeUrl(profile.photoUrl || authUser?.photoURL || existingUser?.photoUrl || '') || createUserAvatar(safeName, users.length),
     authProvider: 'firebase',
-    firebaseUid: authUser?.uid || null,
+    firebaseUid: authUser?.uid || access.uid || existingUser?.firebaseUid || null,
     hasCredential: false,
     passwordSalt: '',
     passwordHash: '',
   }, users.length);
 }
 
+function upsertOperationalUserRecord(users = [], payload = {}) {
+  const safeUsers = Array.isArray(users) ? users : [];
+  const access = payload?.access || {};
+  const authUser = payload?.authUser || null;
+  const profile = payload?.profile || {};
+  const targetUser = safeUsers.find((user) => (
+    (access.legacyUserId && String(user?.id) === String(access.legacyUserId))
+    || (authUser?.uid && String(user?.firebaseUid || '') === String(authUser.uid))
+    || (access.email && sanitizeEmail(user?.email || '') === sanitizeEmail(access.email))
+  )) || null;
+  const nextRecord = buildOperationalUserRecordFromAccess({
+    access,
+    profile,
+    authUser,
+    existingUser: targetUser,
+    users: safeUsers,
+  });
+
+  if (!targetUser) {
+    return [...safeUsers, nextRecord];
+  }
+
+  return safeUsers.map((user, index) => (
+    user.id !== targetUser.id
+      ? user
+      : normalizeUserRecord({
+          ...user,
+          ...nextRecord,
+          id: targetUser.id,
+        }, index)
+  ));
+}
+
+function readStorageSnapshot(primaryKey, legacyKey = '') {
+  const keys = [primaryKey, legacyKey].filter(Boolean);
+  for (const key of keys) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw) return raw;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function createPersistedUserSnapshot(user, sessionUserId = null) {
+  const isSessionUser = Boolean(sessionUserId && String(user?.id) === String(sessionUserId));
+  return {
+    id: user?.id || null,
+    name: sanitizeText(user?.name || '', 80) || 'User',
+    role: normalizeUserRole(user),
+    type: sanitizeText(user?.type || 'BUJP', 20) || 'BUJP',
+    workerNumber: sanitizeText(user?.workerNumber || '', 40),
+    status: sanitizeText(user?.status || '', 20) || 'off-duty',
+    shipAssigned: sanitizeText(user?.shipAssigned || '', 80) || null,
+    email: sanitizeEmail(user?.email || ''),
+    phone: sanitizePhone(user?.phone || ''),
+    photoUrl: sanitizeUrl(user?.photoUrl || '') || '',
+    authProvider: sanitizeText(user?.authProvider || 'none', 20).toLowerCase(),
+    firebaseUid: sanitizeText(user?.firebaseUid || '', 160) || null,
+    ...(isSessionUser
+      ? {
+          dob: sanitizeText(user?.dob || '', 20),
+          address: sanitizeMultilineText(user?.address || '', 180),
+          officeAddress: sanitizeMultilineText(user?.officeAddress || '', 180),
+          emergencyName: sanitizeText(user?.emergencyName || '', 80),
+          emergencyContact: sanitizePhone(user?.emergencyContact || ''),
+          emergencyRelation: sanitizeText(user?.emergencyRelation || '', 40) || 'Orang Tua',
+        }
+      : {}),
+  };
+}
+
+function sanitizeStateForLocalPersistence(data, options = {}) {
+  const sessionUserId = sanitizeText(options.sessionUserId || '', 160) || null;
+  return {
+    ...data,
+    usersData: Array.isArray(data?.usersData)
+      ? data.usersData.map((user) => createPersistedUserSnapshot(user, sessionUserId))
+      : [],
+  };
+}
+
 function loadPersistedState() {
   try {
-    const raw = window.localStorage.getItem(APP_STORAGE_KEY);
+    const raw = readStorageSnapshot(APP_STORAGE_KEY, LEGACY_APP_STORAGE_KEY);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
@@ -2450,9 +2569,18 @@ function loadPersistedState() {
     return null;
   }
 }
-function savePersistedState(data) { try { window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify({ version: 1, savedAt: new Date().toISOString(), data })); checkStorageQuota(); } catch (error) { console.error('Gagal menyimpan data lokal', error); } }
-function loadWeatherCache() { try { const raw = window.localStorage.getItem(WEATHER_STORAGE_KEY); if (!raw) return null; const parsed = JSON.parse(raw); if (!parsed?.savedAt || !parsed?.data) return null; if (Date.now() - new Date(parsed.savedAt).getTime() > WEATHER_TTL_MS) return null; return parsed.data; } catch { return null; } }
-function saveWeatherCache(data) { try { window.localStorage.setItem(WEATHER_STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data })); } catch (error) { console.error('Gagal menyimpan cache cuaca', error); } }
+function savePersistedState(data, options = {}) {
+  try {
+    const persistedData = sanitizeStateForLocalPersistence(data, options);
+    window.localStorage.setItem(APP_STORAGE_KEY, JSON.stringify({ version: 1, savedAt: new Date().toISOString(), data: persistedData }));
+    window.localStorage.removeItem(LEGACY_APP_STORAGE_KEY);
+    checkStorageQuota();
+  } catch (error) {
+    console.error('Gagal menyimpan data lokal', error);
+  }
+}
+function loadWeatherCache() { try { const raw = readStorageSnapshot(WEATHER_STORAGE_KEY, LEGACY_WEATHER_STORAGE_KEY); if (!raw) return null; const parsed = JSON.parse(raw); if (!parsed?.savedAt || !parsed?.data) return null; if (Date.now() - new Date(parsed.savedAt).getTime() > WEATHER_TTL_MS) return null; return parsed.data; } catch { return null; } }
+function saveWeatherCache(data) { try { window.localStorage.setItem(WEATHER_STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data })); window.localStorage.removeItem(LEGACY_WEATHER_STORAGE_KEY); } catch (error) { console.error('Gagal menyimpan cache cuaca', error); } }
 function sanitizeCloudAssetSegment(value, fallback = 'asset') {
   return sanitizeText(String(value || ''), 120)
     .trim()
@@ -2889,9 +3017,7 @@ export { ACCESS_ROLES, defaultLocationOptions, SHIP_STATUS_OPTIONS };
 export function AppProvider({ children }) {
   const initialCurrentShiftMeta = getShiftMeta(getTrustedDate());
   const initialShipsCollection = normalizeShipsCollection(persistedState?.shipsData || getInitialShipsData());
-  const initialUsersCollection = applyAdminCredentialReset(
-    normalizeUsersCollection(persistedState?.usersData || getMockUsersList()),
-  );
+  const initialUsersCollection = normalizeUsersCollection(persistedState?.usersData || getMockUsersList());
   const initialRawCheckpointsByShip = createCheckpointsByShipState(
     initialShipsCollection,
     persistedState?.checkpointsByShip,
@@ -2938,6 +3064,8 @@ export function AppProvider({ children }) {
   const [sessionUserId, setSessionUserId] = useState(() => loadAuthSession());
   const [firebaseAuthUser, setFirebaseAuthUser] = useState(null);
   const [firebaseAuthReady, setFirebaseAuthReady] = useState(() => !isFirebaseAuthEnabled);
+  const [authAccessState, setAuthAccessState] = useState(null);
+  const [authAccessBusy, setAuthAccessBusy] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -2957,6 +3085,7 @@ export function AppProvider({ children }) {
   const [shiftClock, setShiftClock] = useState(() => getTrustedNowMs());
   const [activeSOSAlert, setActiveSOSAlert] = useState(() => persistedState?.activeSOSAlert || null);
   const [sosHistory, setSosHistory] = useState(() => persistedState?.sosHistory || []);
+  const [pendingRegistrations, setPendingRegistrations] = useState([]);
   const hasAppliedRoleLandingRef = useRef(false);
 
   // Crew migration effect
@@ -3065,30 +3194,40 @@ export function AppProvider({ children }) {
   const sessionUserRecord = useMemo(() => usersData.find(user => user.id === sessionUserId) || null, [usersData, sessionUserId]);
   const firebaseAuthEmail = sanitizeEmail(firebaseAuthUser?.email || '');
   const firebaseAuthUid = sanitizeText(firebaseAuthUser?.uid || '', 160) || '';
+  const authAccessStatus = sanitizeText(authAccessState?.status || '', 20).toLowerCase() || 'anonymous';
+  const authAccessEnabled = Boolean(authAccessState?.access?.enabled);
   const currentUserRecord = useMemo(() => {
-    if (firebaseAuthEmail) {
+    if (isFirebaseAuthEnabled) {
+      if (!firebaseAuthReady || !firebaseAuthUser || !firebaseAuthEmail || !authAccessEnabled) {
+        return null;
+      }
+
       return resolvePreferredUserRecord(usersData, {
         sessionUserId,
         firebaseAuthEmail,
         firebaseAuthUid,
       }) || sessionUserRecord || null;
     }
-    if (!firebaseAuthReady && isFirebaseManagedUser(sessionUserRecord)) {
-      return null;
-    }
     return resolvePreferredUserRecord(usersData, {
       sessionUserId,
       firebaseAuthUid: sessionUserRecord?.firebaseUid || '',
       firebaseAuthEmail: sessionUserRecord?.email || '',
     }) || sessionUserRecord;
-  }, [firebaseAuthEmail, firebaseAuthReady, firebaseAuthUid, sessionUserId, sessionUserRecord, usersData]);
-  const effectiveSessionUser = currentUserRecord || sessionUserRecord || null;
+  }, [authAccessEnabled, firebaseAuthEmail, firebaseAuthReady, firebaseAuthUid, firebaseAuthUser, sessionUserId, sessionUserRecord, usersData]);
+  const effectiveSessionUser = isFirebaseAuthEnabled
+    ? currentUserRecord
+    : (currentUserRecord || sessionUserRecord || null);
   const currentUser = effectiveSessionUser?.name || '';
   const currentUserRole = effectiveSessionUser?.role || ACCESS_ROLES.PETUGAS;
   const isAdmin = currentUserRole === ACCESS_ROLES.ADMIN;
   const isPic = currentUserRole === ACCESS_ROLES.PIC;
   const isPetugas = currentUserRole === ACCESS_ROLES.PETUGAS;
   const currentUserId = effectiveSessionUser?.id || null;
+  const hasOperationalCloudAccess = useMemo(() => {
+    if (!isCloudSyncEnabled) return true;
+    if (!isFirebaseAuthEnabled) return Boolean(sessionUserId);
+    return Boolean(firebaseAuthUser && authAccessEnabled);
+  }, [authAccessEnabled, firebaseAuthUser, sessionUserId]);
   const getSOSRecipientUserIds = useCallback((shipName) => {
     const safeShipName = sanitizeText(shipName || '', 80);
     if (!safeShipName) return [];
@@ -3115,7 +3254,7 @@ export function AppProvider({ children }) {
   }, [shipsData, usersData]);
 
   useEffect(() => {
-    const landingUser = currentUserRecord || sessionUserRecord;
+    const landingUser = effectiveSessionUser;
 
     if (!landingUser) {
       hasAppliedRoleLandingRef.current = false;
@@ -3128,7 +3267,7 @@ export function AppProvider({ children }) {
     setCurrentPage(landingPage);
     setNotificationReturnPage(landingPage);
     hasAppliedRoleLandingRef.current = true;
-  }, [currentUserRecord, sessionUserRecord]);
+  }, [effectiveSessionUser]);
 
   const handleSOSTrigger = useCallback((lat, lng) => {
     if (!currentUserRecord) return;
@@ -3593,9 +3732,7 @@ export function AppProvider({ children }) {
     const receivedAtServerMs = resolveExternalTimestampMs(options.receivedAtServerMs);
 
     const nextShips = normalizeShipsCollection(nextState.shipsData || getInitialShipsData());
-    const nextUsers = applyAdminCredentialReset(
-      normalizeUsersCollection(nextState.usersData || getMockUsersList()),
-    );
+    const nextUsers = normalizeUsersCollection(nextState.usersData || getMockUsersList());
     const nextCheckpointsByShip = createCheckpointsByShipState(
       nextShips,
       nextState.checkpointsByShip,
@@ -4213,8 +4350,8 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     setUsersData((previousUsers) => {
-      const nextUsers = applyAdminCredentialReset(previousUsers);
-      // Reference equality is sufficient here — applyAdminCredentialReset returns same array if unchanged
+      const nextUsers = previousUsers;
+      // Effect ini mempertahankan referensi users tanpa mutasi tambahan saat boot awal.
       return previousUsers === nextUsers ? previousUsers : nextUsers;
     });
   }, []);
@@ -4986,6 +5123,10 @@ export function AppProvider({ children }) {
       setUserFormError('Password user minimal 8 karakter.');
       return;
     }
+    if (passwordInput && !isFirebaseAuthEnabled) {
+      setUserFormError('Firebase Auth wajib aktif untuk membuat user operasional baru.');
+      return;
+    }
 
     let authPayload = {
       hasCredential: false,
@@ -5015,19 +5156,9 @@ export function AppProvider({ children }) {
           setUserFormError(getFirebaseAuthErrorMessage(error));
           return;
         }
-      } else {
-        const credential = await createPasswordCredential(passwordInput);
-        authPayload = {
-          hasCredential: credential.hasCredential,
-          passwordSalt: credential.passwordSalt,
-          passwordHash: credential.passwordHash,
-          authProvider: 'legacy',
-          firebaseUid: null,
-        };
-        setUserFormNotice('Firebase Auth belum aktif, jadi user disimpan dengan kredensial lokal.');
       }
     } else {
-      setUserFormNotice('User disimpan tanpa password. Kredensial bisa diaktifkan nanti dari panel admin atau register mandiri.');
+      setUserFormNotice('User disimpan sebagai profil operasional. Akses login akan aktif setelah akun Firebase diikat.');
     }
 
     const role = ACCESS_ROLE_VALUES.includes(userFormData.role) ? userFormData.role : ACCESS_ROLES.PETUGAS;
@@ -5051,6 +5182,24 @@ export function AppProvider({ children }) {
       shipAssigned: null,
     };
     const nextUserRecord = normalizeUserRecord(newUser, usersData.length);
+    if (nextUserRecord.firebaseUid) {
+      try {
+        await syncOperationalUserAccess({
+          uid: nextUserRecord.firebaseUid,
+          email: nextUserRecord.email,
+          name: nextUserRecord.name,
+          role: nextUserRecord.role,
+          status: nextUserRecord.status,
+          shipAssigned: nextUserRecord.shipAssigned || '',
+          type: nextUserRecord.type,
+          workerNumber: nextUserRecord.workerNumber || '',
+          legacyUserId: nextUserRecord.id,
+        });
+      } catch (error) {
+        console.error('Gagal sinkronisasi akses user baru', error);
+        setUserFormNotice('Profil user tersimpan, tetapi akses cloud perlu disinkronkan ulang oleh admin.');
+      }
+    }
     setUsersData(prev => [...prev, nextUserRecord]);
     setShowUserForm(false);
     setUserFormData(createUserFormState());
@@ -5081,6 +5230,10 @@ export function AppProvider({ children }) {
       setUserFormError('Password user minimal 8 karakter.');
       return;
     }
+    if (!isFirebaseUser && passwordInput && !isFirebaseAuthEnabled) {
+      setUserFormError('Firebase Auth wajib aktif untuk mengikat ulang kredensial user.');
+      return;
+    }
 
     let authPayload = null;
     if (!isFirebaseUser && passwordInput) {
@@ -5103,16 +5256,6 @@ export function AppProvider({ children }) {
           setUserFormError(getFirebaseAuthErrorMessage(error));
           return;
         }
-      } else {
-        const credential = await createPasswordCredential(passwordInput);
-        authPayload = {
-          hasCredential: credential.hasCredential,
-          passwordSalt: credential.passwordSalt,
-          passwordHash: credential.passwordHash,
-          authProvider: 'legacy',
-          firebaseUid: null,
-        };
-        setUserFormNotice('Firebase Auth belum aktif, jadi password baru disimpan secara lokal.');
       }
     }
 
@@ -5146,6 +5289,25 @@ export function AppProvider({ children }) {
       photoUrl: selectedUser.photoUrl || currentRecord?.photoUrl || createUserAvatar(safeName, selectedUserIndex),
     }, selectedUserIndex);
 
+    if (previewUser.firebaseUid) {
+      try {
+        await syncOperationalUserAccess({
+          uid: previewUser.firebaseUid,
+          email: previewUser.email,
+          name: previewUser.name,
+          role: previewUser.role,
+          status: previewUser.status,
+          shipAssigned: previewUser.shipAssigned || '',
+          type: previewUser.type,
+          workerNumber: previewUser.workerNumber || '',
+          legacyUserId: previewUser.id,
+        });
+      } catch (error) {
+        console.error('Gagal sinkronisasi akses user terpilih', error);
+        setUserFormNotice('Perubahan profil tersimpan lokal, tetapi akses cloud belum sinkron penuh.');
+      }
+    }
+
     setUsersData(prev => prev.map((u, index) => {
       if (u.id !== selectedUser.id) return u;
       const nextUser = {
@@ -5165,8 +5327,17 @@ export function AppProvider({ children }) {
       message: `Anda yakin ingin menghapus akun ${targetUser.name}? Seluruh data penugasan akan dihapus.`,
       confirmText: 'YA, HAPUS',
       cancelText: 'BATAL',
-      onConfirm: () => {
+      onConfirm: async () => {
         const deletedAt = new Date().toISOString();
+        if (targetUser?.firebaseUid) {
+          try {
+            await revokeOperationalUserAccess({
+              uid: targetUser.firebaseUid,
+            });
+          } catch (error) {
+            console.error('Gagal revoke akses operasional user', error);
+          }
+        }
         setDeletedRecords(previousDeletedRecords => markDeletedRecord(previousDeletedRecords, 'users', id, deletedAt));
         setUsersData(prev => prev.filter(u => u.id !== id)); 
         setShipsData(prev => prev.map(ship => ({ ...ship, personnel: ship.personnel.filter(userId => userId !== id), personnelNextMonth: ship.personnelNextMonth.filter(userId => userId !== id) }))); 
@@ -5176,6 +5347,59 @@ export function AppProvider({ children }) {
     });
   }, [isAdmin, usersData, sessionUserId]);
   const handleEditUserPhotoUpload = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setSelectedUser(prev => ({...prev, photoUrl: url})); }, []);
+  const handleApprovePendingUser = useCallback(async (pendingRegistration) => {
+    if (!isAdmin || !pendingRegistration?.uid) return;
+
+    clearUserManagementFeedback();
+    try {
+      const approvalResult = await approvePendingRegistration({
+        uid: pendingRegistration.uid,
+        role: ACCESS_ROLES.PETUGAS,
+        status: 'off-duty',
+        shipAssigned: '',
+        type: pendingRegistration.type || 'BUJP',
+        workerNumber: pendingRegistration.workerNumber || '',
+      });
+      const profileSeed = {
+        id: `u${Date.now()}`,
+        name: pendingRegistration.name,
+        email: pendingRegistration.email,
+        phone: pendingRegistration.phone,
+        photoUrl: pendingRegistration.photoUrl,
+        type: pendingRegistration.type || 'BUJP',
+        workerNumber: pendingRegistration.workerNumber || '',
+      };
+      setUsersData((previousUsers) => upsertOperationalUserRecord(previousUsers, {
+        access: approvalResult?.access || {},
+        profile: profileSeed,
+        authUser: {
+          uid: pendingRegistration.uid,
+          email: pendingRegistration.email,
+          displayName: pendingRegistration.name,
+          phoneNumber: pendingRegistration.phone,
+          photoURL: pendingRegistration.photoUrl,
+        },
+      }));
+      setUserFormNotice(`Registrasi ${pendingRegistration.name} disetujui. Aktivasi login penuh menunggu penugasan kapal.`);
+    } catch (error) {
+      console.error('Gagal approve onboarding pending', error);
+      setUserFormError('Approval onboarding gagal diproses. Coba lagi.');
+    }
+  }, [clearUserManagementFeedback, isAdmin]);
+  const handleRejectPendingUser = useCallback(async (pendingRegistration) => {
+    if (!isAdmin || !pendingRegistration?.uid) return;
+
+    clearUserManagementFeedback();
+    try {
+      await rejectPendingRegistration({
+        uid: pendingRegistration.uid,
+      });
+      setUserFormNotice(`Registrasi ${pendingRegistration.name} ditolak.`);
+    } catch (error) {
+      console.error('Gagal reject onboarding pending', error);
+      setUserFormError('Penolakan onboarding gagal diproses. Coba lagi.');
+    }
+  }, [clearUserManagementFeedback, isAdmin]);
 
   // Progress & incident meta handlers
   const handleAddProgress = useCallback((incidentId) => {
@@ -5497,6 +5721,9 @@ export function AppProvider({ children }) {
   // Auth handlers
   const resetAuthSession = useCallback((message = 'Sesi Anda telah berakhir. Silakan login kembali.') => {
     setSessionUserId(null);
+    setAuthAccessState(null);
+    setAuthAccessBusy(false);
+    setPendingRegistrations([]);
     setCurrentPage('home');
     setActiveShipId(null);
     setSelectedIncident(null);
@@ -5528,6 +5755,16 @@ export function AppProvider({ children }) {
     }
     resetAuthSession(message);
   }, [firebaseAuthUser, resetAuthSession]);
+  const finalizeAuthorizedLogin = useCallback((resolvedUser) => {
+    const landingPage = getDefaultPageForRole(resolvedUser.role);
+    setSessionUserId(resolvedUser.id);
+    setCurrentPage(landingPage);
+    setActiveShipId(null);
+    setNotificationReturnPage(landingPage);
+    hasAppliedRoleLandingRef.current = true;
+    setAuthMode('login');
+    setAuthForm(createAuthFormState());
+  }, []);
   const handleLogin = useCallback(async () => {
     const safeEmail = sanitizeEmail(authForm.email);
     const passwordInput = sanitizeText(authForm.password, 120);
@@ -5535,85 +5772,69 @@ export function AppProvider({ children }) {
       setAuthError('Email dan password wajib diisi.');
       return;
     }
+    if (!isFirebaseAuthEnabled) {
+      setAuthError('Firebase Auth wajib aktif sebelum login operasional dijalankan.');
+      return;
+    }
 
     setAuthBusy(true);
+    setAuthAccessBusy(true);
     setAuthError('');
     setAuthNotice('');
 
     try {
       const localUser = usersData.find(item => (item.email || '').toLowerCase() === safeEmail) || null;
-      if (isFirebaseAuthEnabled) {
-        try {
-          const credential = await loginWithFirebaseEmail(safeEmail, passwordInput);
-          let resolvedUser = localUser;
+      const credential = await loginWithFirebaseEmail(safeEmail, passwordInput);
+      const accessResult = await resolveOperationalAccess();
+      setAuthAccessState(accessResult || null);
 
-          if (!resolvedUser) {
-            resolvedUser = createFirebaseBackedUserRecord(credential.user, usersData);
-            setUsersData(prev => [...prev, resolvedUser]);
-          }
-
-          if (!canUserAccessApplication(resolvedUser)) {
-            await logoutFirebaseUser();
-            setAuthError('Petugas off-duty atau belum punya penugasan kapal tidak bisa login.');
-            return;
-          }
-
-          const landingPage = getDefaultPageForRole(resolvedUser.role);
-          setSessionUserId(resolvedUser.id);
-          setCurrentPage(landingPage);
-          setActiveShipId(null);
-          setNotificationReturnPage(landingPage);
-          hasAppliedRoleLandingRef.current = true;
-          setAuthMode('login');
-          setAuthForm(createAuthFormState());
+      if (!accessResult?.access) {
+        await logoutFirebaseUser();
+        if (accessResult?.status === 'pending') {
+          setAuthError('Registrasi Anda masih menunggu approval admin.');
           return;
-        } catch (error) {
-          const canFallbackToLegacy = Boolean(
-            localUser
-            && !isFirebaseManagedUser(localUser)
-            && localUser.hasCredential
-            && localUser.passwordHash
-            && localUser.passwordSalt,
-          );
-
-          if (!canFallbackToLegacy) {
-            setAuthError(getFirebaseAuthErrorMessage(error));
-            return;
-          }
         }
-      }
-
-      if (!localUser) {
-        setAuthError('Akun tidak ditemukan.');
-        return;
-      }
-      if (!localUser.hasCredential || !localUser.passwordHash || !localUser.passwordSalt) {
-        setAuthError('Akun ini belum punya password aktif. Minta admin untuk mengatur ulang kredensial.');
+        if (accessResult?.status === 'rejected') {
+          setAuthError('Registrasi Anda ditolak admin. Hubungi admin operasional.');
+          return;
+        }
+        setAuthError('Akun Firebase ini belum memiliki akses operasional SmartPatrol.');
         return;
       }
 
-      const isValid = await verifyPasswordCredential(localUser, passwordInput);
-      if (!isValid) {
-        setAuthError('Password yang Anda masukkan tidak cocok.');
-        return;
-      }
-      if (!canUserAccessApplication(localUser)) {
-        setAuthError('Petugas off-duty atau belum punya penugasan kapal tidak bisa login.');
+      const resolvedUser = buildOperationalUserRecordFromAccess({
+        access: accessResult.access,
+        profile: accessResult.profile,
+        authUser: credential.user,
+        existingUser: localUser,
+        users: usersData,
+      });
+      setUsersData((previousUsers) => upsertOperationalUserRecord(previousUsers, {
+        access: accessResult.access,
+        profile: accessResult.profile,
+        authUser: credential.user,
+      }));
+
+      if (!accessResult.access.enabled || !canUserAccessApplication(resolvedUser)) {
+        await logoutFirebaseUser();
+        setAuthError('Akun Anda sudah tervalidasi, tetapi belum aktif untuk operasi. Tunggu assignment admin.');
         return;
       }
 
-      const landingPage = getDefaultPageForRole(localUser.role);
-      setSessionUserId(localUser.id);
-      setCurrentPage(landingPage);
-      setActiveShipId(null);
-      setNotificationReturnPage(landingPage);
-      hasAppliedRoleLandingRef.current = true;
-      setAuthMode('login');
-      setAuthForm(createAuthFormState());
+      finalizeAuthorizedLogin(resolvedUser);
+    } catch (error) {
+      try {
+        await logoutFirebaseUser();
+      } catch {
+        // Abaikan cleanup logout jika login memang gagal sebelum sesi Firebase terbentuk.
+      }
+      setAuthAccessState(null);
+      setAuthError(getFirebaseAuthErrorMessage(error));
     } finally {
       setAuthBusy(false);
+      setAuthAccessBusy(false);
     }
-  }, [authForm, usersData]);
+  }, [authForm, finalizeAuthorizedLogin, usersData]);
   const handleRegister = useCallback(async () => {
     const safeName = sanitizeText(authForm.name, 80);
     const safeEmail = sanitizeEmail(authForm.email);
@@ -5622,12 +5843,6 @@ export function AppProvider({ children }) {
     const safeType = sanitizeText(authForm.type, 20) || 'BUJP';
     const safeWorkerNumber = sanitizeText(authForm.workerNumber, 40);
     const safePhone = sanitizePhone(authForm.phone);
-    const safeDob = sanitizeText(authForm.dob, 20);
-    const safeAddress = sanitizeMultilineText(authForm.address, 180);
-    const safeOfficeAddress = sanitizeMultilineText(authForm.officeAddress, 180);
-    const safeEmergencyName = sanitizeText(authForm.emergencyName, 80);
-    const safeEmergencyContact = sanitizePhone(authForm.emergencyContact);
-    const safeEmergencyRelation = sanitizeText(authForm.emergencyRelation, 40) || 'Orang Tua';
     const existingUser = usersData.find(user => (user.email || '').toLowerCase() === safeEmail) || null;
 
     if (!safeName || !safeEmail || !passwordInput || !confirmPassword) {
@@ -5642,10 +5857,6 @@ export function AppProvider({ children }) {
       setAuthError('Konfirmasi password belum sama.');
       return;
     }
-    if (existingUser?.role && existingUser.role !== ACCESS_ROLES.PETUGAS) {
-      setAuthError('Akun ADMIN atau PIC harus dimigrasikan manual oleh pengelola sistem.');
-      return;
-    }
     if (existingUser && isFirebaseManagedUser(existingUser)) {
       setAuthError('Email ini sudah terdaftar di Firebase.');
       return;
@@ -5656,55 +5867,93 @@ export function AppProvider({ children }) {
     }
 
     setAuthBusy(true);
+    setAuthAccessBusy(true);
     setAuthError('');
     setAuthNotice('');
 
     try {
       const credential = await registerWithFirebaseEmail(safeEmail, passwordInput);
-      const nextUser = normalizeUserRecord({
-        ...(existingUser || {}),
-        id: existingUser?.id || `u${Date.now()}`,
-        name: existingUser?.name || safeName,
-        role: existingUser?.role || ACCESS_ROLES.PETUGAS,
-        type: existingUser?.type || safeType,
-        workerNumber: existingUser?.workerNumber || safeWorkerNumber,
-        status: existingUser?.status || 'off-duty',
-        shipAssigned: existingUser?.shipAssigned || null,
-        email: safeEmail,
-        password: '',
-        hasCredential: false,
-        passwordSalt: '',
-        passwordHash: '',
-        authProvider: 'firebase',
-        firebaseUid: credential.user.uid,
-        phone: existingUser?.phone || safePhone,
-        dob: existingUser?.dob || safeDob,
-        address: existingUser?.address || safeAddress,
-        officeAddress: existingUser?.officeAddress || safeOfficeAddress,
-        emergencyName: existingUser?.emergencyName || safeEmergencyName,
-        emergencyContact: existingUser?.emergencyContact || safeEmergencyContact,
-        emergencyRelation: existingUser?.emergencyRelation || safeEmergencyRelation,
-        photoUrl: existingUser?.photoUrl || authForm.photoUrl || createUserAvatar(existingUser?.name || safeName, usersData.length),
-      }, usersData.length);
+      let uploadedPhoto = {
+        photoUrl: '',
+        photoPath: '',
+      };
 
-      setUsersData(prev => (
-        existingUser
-          ? prev.map((user, index) => (user.id === existingUser.id ? normalizeUserRecord(nextUser, index) : user))
-          : [...prev, nextUser]
-      ));
+      if (authForm.photoUrl) {
+        try {
+          uploadedPhoto = await uploadRegistrationPhotoAsset({
+            uid: credential.user.uid,
+            photoUrl: authForm.photoUrl,
+          });
+        } catch (photoError) {
+          console.error('Gagal upload foto registrasi ke storage onboarding', photoError);
+        }
+      }
+
+      const accessResult = await resolveOperationalAccess();
+      setAuthAccessState(accessResult || null);
+
+      if (accessResult?.access) {
+        const resolvedUser = buildOperationalUserRecordFromAccess({
+          access: accessResult.access,
+          profile: accessResult.profile,
+          authUser: credential.user,
+          existingUser,
+          users: usersData,
+        });
+
+        setUsersData((previousUsers) => upsertOperationalUserRecord(previousUsers, {
+          access: accessResult.access,
+          profile: accessResult.profile,
+          authUser: credential.user,
+        }));
+
+        if (accessResult.access.enabled && canUserAccessApplication(resolvedUser)) {
+          setAuthNotice('Akun operasional berhasil diikat ke Firebase Auth.');
+          finalizeAuthorizedLogin(resolvedUser);
+          return;
+        }
+
+        await logoutFirebaseUser();
+        setAuthAccessState(null);
+        setAuthMode('login');
+        setAuthForm(createAuthFormState({ email: safeEmail }));
+        setAuthNotice('Akun berhasil diikat ke Firebase Auth, tetapi akses operasional masih menunggu aktivasi admin.');
+        return;
+      }
+
+      if (accessResult?.status !== 'pending') {
+        await createPendingRegistration({
+          uid: credential.user.uid,
+          email: safeEmail,
+          name: safeName,
+          phone: safePhone,
+          photoUrl: uploadedPhoto.photoUrl,
+          photoPath: uploadedPhoto.photoPath,
+          type: safeType,
+          workerNumber: safeWorkerNumber,
+        });
+      }
 
       await logoutFirebaseUser();
+      setAuthAccessState(null);
       setAuthMode('login');
       setAuthForm(createAuthFormState({ email: safeEmail }));
       setAuthNotice(existingUser
-        ? 'Aktivasi Firebase Auth berhasil. Silakan login kembali dengan akun cloud Anda.'
-        : 'Registrasi berhasil. Akun petugas baru bisa login setelah admin memberi penugasan kapal.');
+        ? 'Akun Firebase berhasil dibuat. Tunggu verifikasi admin untuk mengaktifkan akses operasional.'
+        : 'Registrasi berhasil dikirim. Tunggu approval admin sebelum akun diaktifkan.');
     } catch (error) {
+      try {
+        await logoutFirebaseUser();
+      } catch {
+        // Abaikan cleanup logout jika registrasi gagal sebelum sesi Firebase terbentuk.
+      }
+      setAuthAccessState(null);
       setAuthError(getFirebaseAuthErrorMessage(error));
     } finally {
       setAuthBusy(false);
+      setAuthAccessBusy(false);
     }
-  }, [authForm, usersData]);
+  }, [authForm, finalizeAuthorizedLogin, usersData]);
 
   // Persistence effects
   useEffect(() => {
@@ -5712,12 +5961,14 @@ export function AppProvider({ children }) {
       savePersistedState({
         ...sharedState,
         theme,
+      }, {
+        sessionUserId,
       });
     }, 1000); // Debounce local persistence 1s
     return () => clearTimeout(timerId);
-  }, [sharedState, theme]);
+  }, [sessionUserId, sharedState, theme]);
   useEffect(() => {
-    if (!isCloudSyncEnabled) return () => {};
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => {};
 
     return subscribeToCloudAppState((cloudPayload) => {
       handleIncomingCloudPayload(cloudPayload, {
@@ -5728,9 +5979,9 @@ export function AppProvider({ children }) {
       setCloudSyncBootstrapped(true);
       console.error('Gagal subscribe data patroli cloud', error);
     });
-  }, [handleIncomingCloudPayload]);
+  }, [handleIncomingCloudPayload, hasOperationalCloudAccess]);
   useEffect(() => {
-    if (!isCloudSyncEnabled) return () => {};
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => {};
 
     let isDisposed = false;
 
@@ -5806,9 +6057,9 @@ export function AppProvider({ children }) {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
     };
-  }, [refreshCloudSharedState]);
+  }, [hasOperationalCloudAccess, refreshCloudSharedState]);
   useEffect(() => {
-    if (!isCloudSyncEnabled || !isCloudWriteEnabled || isOffline || !cloudSyncBootstrapped) return;
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline || !cloudSyncBootstrapped) return;
 
     const timerId = setTimeout(() => {
       const cloudReadyState = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
@@ -5876,7 +6127,7 @@ export function AppProvider({ children }) {
     }, 2000); // Debounce cloud sync 2s
 
     return () => clearTimeout(timerId);
-  }, [applyCloudSharedState, cloudSyncBootstrapped, currentShiftMeta.key, isOffline, prepareSharedStateForCloudSync, sharedState]);
+  }, [applyCloudSharedState, cloudSyncBootstrapped, currentShiftMeta.key, hasOperationalCloudAccess, isOffline, prepareSharedStateForCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
@@ -5887,69 +6138,113 @@ export function AppProvider({ children }) {
     return subscribeToFirebaseAuthChanges((nextUser) => {
       setFirebaseAuthUser(nextUser);
       setFirebaseAuthReady(true);
+      if (!nextUser) {
+        setAuthAccessState(null);
+        setAuthAccessBusy(false);
+      }
     });
   }, []);
   useEffect(() => {
-    if (!firebaseAuthReady) return;
-    const safeEmail = sanitizeEmail(firebaseAuthUser?.email || '');
-    if (!safeEmail) return;
-
-    const matchedUser = resolvePreferredUserRecord(usersData, {
-      sessionUserId,
-      firebaseAuthEmail: safeEmail,
-      firebaseAuthUid: firebaseAuthUser?.uid || '',
-    });
-    if (!matchedUser) {
-      setUsersData(prev => [...prev, createFirebaseBackedUserRecord(firebaseAuthUser, prev)]);
+    if (!isFirebaseAuthEnabled || !firebaseAuthReady) return;
+    if (!firebaseAuthUser) {
+      setAuthAccessState(null);
       return;
     }
 
-    const needsFirebaseBinding = matchedUser.authProvider !== 'firebase' || matchedUser.firebaseUid !== firebaseAuthUser.uid;
-    if (needsFirebaseBinding) {
-      setUsersData(prev => prev.map((user, index) => (
-        user.id !== matchedUser.id
-          ? user
-          : normalizeUserRecord({
-            ...user,
-            authProvider: 'firebase',
-            firebaseUid: firebaseAuthUser.uid,
-            hasCredential: false,
-            passwordSalt: '',
-            passwordHash: '',
-          }, index)
-      )));
-    }
+    let cancelled = false;
+    setAuthAccessBusy(true);
 
-    if (sessionUserId !== matchedUser.id) {
+    resolveOperationalAccess()
+      .then((accessResult) => {
+        if (cancelled) return;
+        setAuthAccessState(accessResult || null);
+        if (accessResult?.access) {
+          setUsersData((previousUsers) => upsertOperationalUserRecord(previousUsers, {
+            access: accessResult.access,
+            profile: accessResult.profile,
+            authUser: firebaseAuthUser,
+          }));
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Gagal memuat akses operasional user aktif', error);
+        setAuthAccessState(null);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthAccessBusy(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [firebaseAuthReady, firebaseAuthUser]);
+  useEffect(() => {
+    if (!isFirebaseAuthEnabled || !firebaseAuthUser || !authAccessState?.access) return;
+    const matchedUser = resolvePreferredUserRecord(usersData, {
+      sessionUserId,
+      firebaseAuthEmail: firebaseAuthUser.email || '',
+      firebaseAuthUid: firebaseAuthUser.uid || '',
+    });
+    if (matchedUser?.id && matchedUser.id !== sessionUserId) {
       setSessionUserId(matchedUser.id);
     }
-  }, [firebaseAuthReady, firebaseAuthUser, sessionUserId, usersData]);
+  }, [authAccessState, firebaseAuthUser, sessionUserId, usersData]);
+  useEffect(() => {
+    if (!isFirebaseAuthEnabled || !firebaseAuthReady) return;
+    if (firebaseAuthUser || !sessionUserId) return;
+    resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
+  }, [firebaseAuthReady, firebaseAuthUser, resetAuthSession, sessionUserId]);
+  useEffect(() => {
+    if (!isAdmin || !hasOperationalCloudAccess) {
+      setPendingRegistrations([]);
+      return () => {};
+    }
+
+    return subscribeToPendingRegistrations((entries) => {
+      setPendingRegistrations(entries);
+    }, (error) => {
+      console.error('Gagal memuat onboarding pending', error);
+    });
+  }, [hasOperationalCloudAccess, isAdmin]);
   useEffect(() => {
     if (!sessionUserId) return;
     const activeUser = currentUserRecord || usersData.find(user => user.id === sessionUserId);
     if (!activeUser) {
-      handleLogout('Sesi login tidak lagi valid.');
+      resetAuthSession('Sesi login tidak lagi valid.');
       return;
     }
-    // Graceful session handling: Jangan tendang user jika mereka punya kredensial lokal (hybrid/legacy)
-    // atau jika mereka adalah Admin/PIC yang sedang mengelola sistem.
-    const isStrictFirebaseUser = isFirebaseManagedUser(activeUser) && !activeUser.hasCredential;
-    const isAuthMissing = isFirebaseAuthEnabled && firebaseAuthReady && !firebaseAuthUser;
-    
-    if (isStrictFirebaseUser && isAuthMissing && !isAdmin && !isPic) {
-      resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
-      return;
+
+    if (isFirebaseAuthEnabled) {
+      if (!firebaseAuthReady || authAccessBusy) return;
+      if (!firebaseAuthUser || !authAccessEnabled) {
+        resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
+        return;
+      }
+      if (authAccessStatus === 'restricted') {
+        handleLogout('Akses operasional Anda sedang nonaktif. Hubungi admin untuk assignment ulang.');
+        return;
+      }
+      if (authAccessStatus === 'rejected') {
+        handleLogout('Registrasi Anda ditolak admin operasional.');
+        return;
+      }
+      if (authAccessStatus === 'pending') {
+        handleLogout('Registrasi Anda masih menunggu approval admin.');
+        return;
+      }
     }
-    
+
     if (!canUserAccessApplication(activeUser)) {
       handleLogout('Petugas off-duty atau tanpa penugasan kapal tidak bisa tetap login.');
       return;
     }
-
     if (activeUser.role === ACCESS_ROLES.PETUGAS && !assignedShipForCurrentUser) {
       handleLogout('Petugas yang tidak lagi terdaftar di armada aktif tidak bisa tetap login.');
     }
-  }, [assignedShipForCurrentUser, currentUserRecord, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
+  }, [assignedShipForCurrentUser, authAccessBusy, authAccessEnabled, authAccessStatus, currentUserRecord, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
   useEffect(() => { if (!currentUserRecord) return; if (!isAdmin && (currentPage === 'users' || currentPage === 'ships' || currentPage === 'daily-report')) { setCurrentPage('home'); setActiveShipId(null); setShowShipForm(false); setShowShipDocForm(false); setShowUserForm(false); setSelectedUser(null); } }, [currentPage, currentUserRecord, isAdmin]);
   useEffect(() => { if (activeShipId) return; setShowShipDocForm(false); }, [activeShipId]);
   useEffect(() => {
@@ -6070,6 +6365,8 @@ export function AppProvider({ children }) {
   ]);
   const authValue = useMemo(() => ({
     sessionUserId,
+    authAccessStatus,
+    authAccessBusy,
     authMode,
     setAuthMode,
     authBusy,
@@ -6082,6 +6379,8 @@ export function AppProvider({ children }) {
     handleLogout,
     handleAuthPhotoUpload,
   }), [
+    authAccessBusy,
+    authAccessStatus,
     authBusy,
     authError,
     authForm,
@@ -6324,6 +6623,7 @@ export function AppProvider({ children }) {
   ]);
   const userManagementValue = useMemo(() => ({
     usersData,
+    pendingRegistrations,
     showUserForm,
     setShowUserForm,
     userFormData,
@@ -6338,13 +6638,18 @@ export function AppProvider({ children }) {
     handleDeleteUser,
     handleUserPhotoUpload,
     handleEditUserPhotoUpload,
+    handleApprovePendingUser,
+    handleRejectPendingUser,
   }), [
     clearUserManagementFeedback,
+    handleApprovePendingUser,
     handleDeleteUser,
     handleEditUserPhotoUpload,
+    handleRejectPendingUser,
     handleSaveUser,
     handleUpdateUser,
     handleUserPhotoUpload,
+    pendingRegistrations,
     selectedUser,
     showUserForm,
     userFormData,

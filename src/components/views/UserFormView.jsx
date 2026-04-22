@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyediakan form pembuatan user operasional oleh admin SmartPatrol.
+Caller: UsersPage saat admin memilih aksi tambah user.
+Dependensi: User management context, AsyncImage, dan ikon Lucide.
+Main Functions: Mengisi profil user baru, membuat akun Firebase Auth opsional, dan menyimpan profil operasional.
+Side Effects: Memicu handler simpan user serta upload foto profil ke state form user.
+*/
+
 import React from 'react';
 import { useUsers } from '../../context/AppContextRuntime';
 import { ChevronDown, Camera, UserPlus } from 'lucide-react';
@@ -108,7 +116,7 @@ export default function UserFormView({ isInline = false }) {
             </div>
           </div>
 
-          <p className="text-[10px] text-cyan-600 leading-relaxed">Jika password diisi dan Firebase Auth aktif, akun ini akan langsung dibuat di Firebase. Jika password dikosongkan, user hanya tersimpan sebagai profil lokal.</p>
+          <p className="text-[10px] text-cyan-600 leading-relaxed">Jika password diisi, admin akan langsung membuat akun Firebase Auth untuk user ini. Jika password dikosongkan, user hanya disiapkan sebagai profil operasional sampai akun Firebase diikat.</p>
 
           <div className="grid grid-cols-2 gap-3">
             <div>

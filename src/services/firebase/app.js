@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -26,6 +27,7 @@ const firebaseApp = isFirebaseConfigured
 
 const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null;
 const firebaseDb = firebaseApp ? getFirestore(firebaseApp) : null;
+const firebaseFunctions = firebaseApp ? getFunctions(firebaseApp, 'asia-southeast2') : null;
 const firebaseStorage = firebaseApp ? getStorage(firebaseApp) : null;
 
 export {
@@ -33,6 +35,7 @@ export {
   firebaseAuth,
   firebaseConfig,
   firebaseDb,
+  firebaseFunctions,
   firebaseStorage,
   isFirebaseConfigured,
 };

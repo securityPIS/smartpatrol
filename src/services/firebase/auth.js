@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyediakan wrapper Firebase Auth dan normalisasi pesan error SmartPatrol.
+Caller: AppContextRuntime dan modul onboarding/admin yang butuh login, register, atau provision akun Firebase.
+Dependensi: Firebase app singleton dan SDK Auth.
+Main Functions: Login/register email-password, provision user tanpa menimpa sesi admin, logout, dan subscribe auth state.
+Side Effects: Membuat/menghapus sesi Firebase Auth aktif dan akun sementara untuk provision admin.
+*/
+
 import {
   createUserWithEmailAndPassword,
   getAuth,
@@ -41,6 +49,24 @@ function getFirebaseAuthErrorMessage(error) {
   }
   if (code === 'auth/network-request-failed') {
     return 'Jaringan gagal menjangkau Firebase. Periksa koneksi internet.';
+  }
+  if (code === 'firebase-functions-not-configured') {
+    return 'Cloud Functions SmartPatrol belum dikonfigurasi.';
+  }
+  if (code === 'firebase-firestore-not-configured') {
+    return 'Firestore SmartPatrol belum dikonfigurasi.';
+  }
+  if (code === 'functions/permission-denied') {
+    return 'Akses Anda ditolak oleh kebijakan keamanan SmartPatrol.';
+  }
+  if (code === 'functions/unauthenticated') {
+    return 'Sesi Firebase tidak valid. Silakan login ulang.';
+  }
+  if (code === 'functions/not-found') {
+    return 'Data operasional yang diminta tidak ditemukan.';
+  }
+  if (code === 'functions/invalid-argument') {
+    return 'Data yang dikirim ke layanan keamanan SmartPatrol tidak valid.';
   }
   if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
     return 'Email atau password Firebase tidak cocok.';

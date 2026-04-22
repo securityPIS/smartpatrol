@@ -1,6 +1,6 @@
 # SYSTEM_MAP — SmartPatrol
 
-> Peta sistem otomatis. Terakhir diperbarui: 2026-04-21.
+> Peta sistem otomatis. Terakhir diperbarui: 2026-04-22.
 > Bahasa pemrograman: **JavaScript (React 19 + Vite 8)**.
 
 ---
@@ -15,7 +15,7 @@
 | **UI** | Single Page App, responsive (mobile-first + desktop sidebar), dark theme Chakra Petch font, glassmorphism style |
 | **Backend** | Firebase (Auth, Firestore, Storage, Cloud Functions, Hosting) |
 | **Database** | Firestore (single document `smartpatrol/shared-state`) + localStorage + IndexedDB (gambar) |
-| **Auth** | Firebase Auth (email/password) + local hash fallback (SHA-256 + salt) |
+| **Auth** | Firebase Auth (email/password) sebagai sumber utama. Approval akses operasional memakai `userAccess/{uid}` dan onboarding publik memakai `pendingRegistrations/{uid}`. |
 | **Hosting** | Firebase Hosting (region: `asia-southeast2`) |
 | **Pola arsitektur** | **Offline-first SPA** — state disimpan di localStorage, disinkronkan ke Firestore via merge. Tidak ada REST API tradisional; semua logika bisnis ada di client-side React Context. Cloud Function hanya menyediakan trusted server time. |
 
@@ -23,13 +23,20 @@
 
 ## Core Logic Flow (Function-Level Flowchart)
 
-### 1. Login → Session
+### 1. Login → Session / Onboarding
 
 ```
 LoginPage[handleLogin] → AppContextRuntime[handleLogin]
   → firebase/auth[loginWithFirebaseEmail] → Firebase Auth
-  → matchLocalUserByFirebaseUid / matchSeedCredential
+  → firebase/access[resolveOperationalAccess] → Cloud Function[resolveOperationalAccess]
+  → userAccess/{uid}.enabled === true
   → saveAuthSession(localStorage) → setSessionUserId → render AppShell
+
+LoginPage[handleRegister] → Firebase Auth[registerWithFirebaseEmail]
+  → uploadRegistrationPhotoAsset (opsional) → Storage[registration-assets/{uid}/...]
+  → createPendingRegistration → Firestore[pendingRegistrations/{uid}]
+  → Admin review di UsersPage → Cloud Function[approvePendingRegistration]
+  → Cloud Function menulis userAccess/{uid} + custom claims
 ```
 
 ### 2. Patrol Checkpoint (inti patroli)
@@ -121,8 +128,8 @@ SmartPatrol/
 ├── package.json                  # Dependencies (react 19, firebase 12, lucide-react, tailwind 4)
 ├── AGENTS.md                     # Pedoman kerja agent/developer: tracing, edit scope, security, dokumentasi
 ├── firebase.json                 # Hosting, functions, Firestore rules, Storage rules
-├── firestore.rules               # Firestore security (staging: allow all smartpatrol/*)
-├── storage.rules                 # Storage security (state-assets/**)
+├── firestore.rules               # Firestore security: shared-state hanya untuk userAccess enabled, onboarding publik ke pendingRegistrations/*
+├── storage.rules                 # Storage security: aset operasional di state-assets/** dan onboarding di registration-assets/{uid}/**
 ├── .env.example                  # Firebase config keys
 ├── .env.local                    # Local dev overrides
 ├── .env.production               # Cloud sync flags
@@ -141,17 +148,19 @@ SmartPatrol/
 │   ├── services/
 │   │   ├── firebase/
 │   │   │   ├── app.js            # Firebase SDK init (getApp, getAuth, getFirestore, getStorage)
-│   │   │   ├── auth.js           # Login/register/provision/logout Firebase Auth
-│   │   │   └── cloudState.js     # Firestore CRUD: subscribe, fetch, save, upload asset
+│   │   │   ├── auth.js           # Login/register/provision/logout Firebase Auth + normalisasi error auth/callable
+│   │   │   ├── access.js         # Pending registration, approval hooks, binding akses operasional, upload aset onboarding
+│   │   │   └── cloudState.js     # Firestore CRUD: subscribe, fetch, save, upload asset state operasional
 │   │   └── time/
 │   │       ├── trustedTime.js    # NTP-like trusted clock: sync, tamper detection, offline session
+│   │       ├── trustedTimePolicy.js # Helper murni drift/tamper untuk audit dan smoke test
 │   │       └── timeAudit.js      # Audit trail metadata: trust level, verification status
 │   │
 │   ├── pages/
 │   │   ├── PatrolPage.jsx        # Halaman utama PETUGAS: checkpoint list, shift info, countdown
 │   │   ├── HistoryPage.jsx       # Riwayat patroli per shift
 │   │   ├── IncidentsPage.jsx     # Daftar insiden (CRUD + progress tracking)
-│   │   ├── LoginPage.jsx         # Form login/register (Firebase Auth + local hash)
+│   │   ├── LoginPage.jsx         # Form login/register dengan onboarding publik terisolasi
 │   │   ├── DailyReportPage.jsx   # Dashboard Admin: laporan harian per kapal per shift
 │   │   ├── ShipsPage.jsx         # Manajemen armada kapal (CRUD kapal, dokumen, crew assignment)
 │   │   ├── UsersPage.jsx         # Daftar user (Admin-only)
@@ -207,7 +216,8 @@ SmartPatrol/
 │       └── storageQuota.js       # Cek usage localStorage (warning >80%)
 │
 ├── functions/
-│   ├── index.js                  # Cloud Function: getServerTime (region asia-southeast2)
+│   ├── accessModels.js           # Normalisasi payload onboarding dan akses operasional
+│   ├── index.js                  # Cloud Functions: trusted time, resolve access, approval onboarding, revoke access
 │   └── package.json              # Dependencies cloud functions
 │
 ├── public/
@@ -220,7 +230,8 @@ SmartPatrol/
 │   └── user_guideline.md
 │
 └── tests/
-    └── e2e/                      # (kosong)
+    ├── e2e/                      # (kosong)
+    └── security/                 # Smoke test auth-access, rules containment, dan trusted time
 ```
 
 ---
@@ -238,17 +249,19 @@ SmartPatrol/
 
 | File | Fungsi Publik | Peran |
 |---|---|---|
-| `services/firebase/app.js` | `firebaseApp`, `firebaseAuth`, `firebaseDb`, `firebaseStorage`, `isFirebaseConfigured` | Inisialisasi Firebase SDK singleton dari env vars. |
+| `services/firebase/app.js` | `firebaseApp`, `firebaseAuth`, `firebaseDb`, `firebaseFunctions`, `firebaseStorage`, `isFirebaseConfigured` | Inisialisasi Firebase SDK singleton dari env vars. |
 | `services/firebase/auth.js` | `loginWithFirebaseEmail`, `registerWithFirebaseEmail`, `provisionFirebaseEmailUser`, `logoutFirebaseUser`, `subscribeToFirebaseAuthChanges` | Wrapper Firebase Auth. `provisionFirebaseEmailUser` membuat akun baru tanpa mengganti sesi admin (isolated temp app). |
-| `services/firebase/cloudState.js` | `subscribeToCloudAppState`, `fetchCloudAppState`, `saveCloudAppState`, `uploadCloudDataUrlAsset` | CRUD Firestore single-document (`smartpatrol/shared-state`). Menggunakan `runTransaction` untuk merge. Upload gambar ke Firebase Storage path `state-assets/`. |
+| `services/firebase/access.js` | `createPendingRegistration`, `uploadRegistrationPhotoAsset`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `subscribeToPendingRegistrations` | Lapisan onboarding terisolasi dan sidecar authz. Public register hanya menulis `pendingRegistrations/{uid}`, sedangkan approval/binding akses operasional dijalankan lewat Cloud Functions. |
+| `services/firebase/cloudState.js` | `subscribeToCloudAppState`, `fetchCloudAppState`, `saveCloudAppState`, `uploadCloudDataUrlAsset` | CRUD Firestore single-document (`smartpatrol/shared-state`). Menggunakan `runTransaction` untuk merge. Akses client sekarang digate oleh `userAccess/{uid}` di rules. |
 | `services/time/trustedTime.js` | `initializeTrustedTime`, `getTrustedNowMs`, `getTrustedDate`, `getTrustedTimeSnapshot`, `createTrustedTimestampRecord`, `syncServerTime`, `detectClockTampering`, `subscribeTrustedTime`, `startOfflineSession`, `finishOfflineSession` | NTP-like clock: sinkronisasi ke server, deteksi tamper via `performance.now()` drift, offline session tracking. |
+| `services/time/trustedTimePolicy.js` | `calculateClockDriftMs`, `isClockDriftSuspicious` | Helper murni untuk menghitung drift audit trusted time dan smoke test. |
 | `services/time/timeAudit.js` | `buildTimeAuditInfo`, `summarizeTimeAudit`, `normalizeTimeAuditRecord`, `markTimeAuditRecordReceived`, `resolveTimeVerificationStatus`, `hasTimeAuditMetadata` | Audit trail setiap record: menentukan trust level (`server-trusted`, `offline-trusted`, `offline-interrupted`, `unverified`) dan verification status (`verified`, `pending-sync`, `needs-review`, `suspicious`, `legacy`). |
 
 ### Pages
 
 | File | Komponen | Peran |
 |---|---|---|
-| `pages/LoginPage.jsx` | `LoginPage` | Login via Firebase Auth (email/password) atau local hash. Registrasi user baru. |
+| `pages/LoginPage.jsx` | `LoginPage` | Login via Firebase Auth. Registrasi publik hanya menyimpan profil onboarding terbatas dan menunggu approval admin. |
 | `pages/PatrolPage.jsx` | `PatrolPage` | Halaman utama petugas: daftar checkpoint, tab Info/Checkpoint, modal status petugas shift, progress bar, countdown shift, summary aman/temuan/missed. |
 | `pages/HistoryPage.jsx` | `HistoryPage` | Riwayat patroli: list shift sebelumnya dan untuk admin menampilkan shift `ON GOING` di urutan teratas agar progres patroli aktif bisa dipantau cepat. |
 | `pages/IncidentsPage.jsx` | `IncidentsPage` | Manajemen insiden: list, filter, buat baru, progress tracking, dokumentasi. |
@@ -301,7 +314,7 @@ SmartPatrol/
 
 | File | Fungsi | Peran |
 |---|---|---|
-| `functions/index.js` | `getServerTime` | HTTP Cloud Function (GET): mengembalikan `serverNowMs` untuk sinkronisasi trusted time. Region `asia-southeast2`, max 5 instances. |
+| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess` | Trusted server time + kontrol binding/approval akses operasional. Region `asia-southeast2`. |
 
 ### Data
 
@@ -323,8 +336,15 @@ SmartPatrol/
 
 ### Skema Data (Firestore Single Document)
 
-Seluruh state aplikasi disimpan dalam **satu dokumen** Firestore:
+State operasional utama masih disimpan dalam **satu dokumen** Firestore:
 `smartpatrol/shared-state`
+
+Sidecar authz/security:
+
+```
+pendingRegistrations/{uid} -> profil onboarding publik terbatas (pending/approved/rejected)
+userAccess/{uid} -> role, status, shipAssigned, enabled flag, dan sumber approval untuk rules
+```
 
 ```
 {
@@ -345,8 +365,7 @@ Seluruh state aplikasi disimpan dalam **satu dokumen** Firestore:
     ],
     usersData: [                    // Array user
       { id, name, role, type, status, shipAssigned, email,
-        hasCredential, passwordSalt, passwordHash,
-        firebaseUid,                // mapped dari Firebase Auth
+        firebaseUid, authProvider,  // mapped dari Firebase Auth / binding operasional
         phone, dob, address, officeAddress,
         emergencyName, emergencyContact, emergencyRelation,
         photoUrl, credentialUpdatedAt,
@@ -407,15 +426,20 @@ Seluruh state aplikasi disimpan dalam **satu dokumen** Firestore:
 
 | Storage | Key | Fungsi |
 |---|---|---|
-| localStorage | `smartpatrol.legacy.local.v1` | State utama (serialized JSON) |
-| localStorage | `smartpatrol.legacy.weather.v1` | Cache cuaca (TTL 30 menit) |
+| localStorage | `smartpatrol.secure.local.v2` | State utama yang sudah dipangkas: tidak lagi menyimpan hash password dan membatasi profil sensitif user lain |
+| localStorage | `smartpatrol.weather.local.v2` | Cache cuaca (TTL 30 menit) |
 | localStorage | `smartpatrol.auth.local.v1` | Session user ID |
 | localStorage | `smartpatrol.trusted-time.v1` | Anchor trusted time |
 | IndexedDB | `smartpatrol-images` / store `photos` | Foto checkpoint/insiden offline (key: `idb://img-{timestamp}-{random}`) |
 
 ### Firebase Storage
 
-Path: `state-assets/**` — gambar checkpoint/insiden yang di-upload ke cloud saat sync.
+Path:
+
+```
+state-assets/** -> aset operasional checkpoint/insiden
+registration-assets/{uid}/** -> aset onboarding publik milik pemilik registrasi
+```
 
 ### Migration / Seed
 
@@ -435,10 +459,10 @@ Path: `state-assets/**` — gambar checkpoint/insiden yang di-upload ke cloud sa
 | Service | Tujuan | Modul Pemanggil |
 |---|---|---|
 | **Firebase Auth** | Autentikasi email/password | `services/firebase/auth.js` → `AppContextRuntime` |
-| **Firestore** | Penyimpanan state terpusat (single doc sync) | `services/firebase/cloudState.js` → `AppContextRuntime` |
+| **Firestore** | Penyimpanan state operasional terpusat + sidecar authz (`pendingRegistrations`, `userAccess`) | `services/firebase/cloudState.js`, `services/firebase/access.js` → `AppContextRuntime` |
 | **Firebase Storage** | Upload foto/dokumen ke cloud | `services/firebase/cloudState.js` (`uploadCloudDataUrlAsset`) |
 | **Firebase Hosting** | Deploy SPA | `firebase.json` |
-| **Firebase Cloud Functions** | Server time endpoint (`/api/server-time`) | `functions/index.js` → `services/time/trustedTime.js` |
+| **Firebase Cloud Functions** | Server time endpoint (`/api/server-time`) + approval/binding akses operasional | `functions/index.js` → `services/time/trustedTime.js`, `services/firebase/access.js` |
 | **Open-Meteo API** | Data cuaca real-time (suhu, angin, kondisi) | `AppContextRuntime` (inline fetch di weatherEffect, ~baris 4900-an) |
 | **Google Maps** | Link ke koordinat kapal | `utils/formatters.js` (`buildMapsUrl`) |
 | **Navigator Geolocation API** | Koordinat GPS untuk SOS | `components/SOSButton.jsx` |
@@ -452,12 +476,12 @@ Path: `state-assets/**` — gambar checkpoint/insiden yang di-upload ke cloud sa
 |---|---|
 | **Mega-file context** | `AppContextRuntime.jsx` (6043 baris, 242KB) berisi SEMUA logika bisnis dalam satu file. Sangat sulit di-maintain. `AppContext.jsx` (4462 baris) masih ada sebagai versi lama — potensi kebingungan mana yang aktif. |
 | **Single document Firestore** | Seluruh state disimpan dalam satu dokumen Firestore (`smartpatrol/shared-state`). Ada limit 1MB per dokumen Firestore — bisa tercapai jika data banyak (foto base64, history panjang). |
-| **Firestore rules terbuka** | `allow read, write: if true` — siapa saja bisa membaca/menulis. Cocok untuk staging, **risiko tinggi di production**. |
-| **Storage rules terbuka** | `allow read, write: if true` pada `state-assets/**` — sama seperti Firestore. |
+| **Single document Firestore** | `smartpatrol/shared-state` masih jadi blast radius besar. Rules kini sudah dibatasi ke `userAccess.enabled`, tetapi konflik merge lintas-domain masih menjadi risiko arsitektur. |
+| **Storage operasional shared** | `state-assets/**` sekarang hanya bisa diakses user operasional yang enabled, tetapi aset operasional masih belum dipecah per-domain. |
 | **Offline image sync** | Gambar disimpan di IndexedDB lokal, di-upload ke Firebase Storage saat sync. Race condition saat multiple device sync bersamaan bisa menyebabkan gambar hilang/terganti (bugs sebelumnya terdokumentasi). |
 | **Weather API inline** | Panggilan ke Open-Meteo API di-embed langsung di `AppContextRuntime` tanpa abstraksi service terpisah. |
-| **Hash-based local auth** | Password hash SHA-256 + salt disimpan di state dan di-sync ke Firestore. Ini bukan best practice — seharusnya sepenuhnya delegasi ke Firebase Auth. |
-| **Tidak ada testing** | Folder `tests/e2e/` kosong. Tidak ada unit/integration test. |
+| **Legacy hash cleanup belum tuntas** | Flow login/register aktif sudah dipindahkan ke Firebase Auth + sidecar approval. Namun helper legacy di mega-file masih perlu dibersihkan tuntas pada refactor berikutnya. |
+| **Coverage test masih minimum** | Sudah ada smoke test `tests/security/*`, tetapi belum ada integration test emulator untuk rules/callable dan belum ada e2e UI. |
 | **Dynamic import minimal** | Beberapa modal menggunakan lazy import via `FormModals.jsx` dan `DetailModals.jsx`, tapi mayoritas page di-import eager di `App.jsx`. |
 | **repair.cjs** | Script perbaikan manual yang memodifikasi `AppContextRuntime.jsx` secara langsung — fragile dan hanya dijalankan sekali. |
 | **Trusted time drift** | Deteksi tamper bergantung pada `performance.now()` vs `Date.now()` — bisa false positive saat device sleep/resume. |

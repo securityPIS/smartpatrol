@@ -1,9 +1,48 @@
+// Tujuan: Mengunci Storage SmartPatrol agar aset operasional dan onboarding terpisah.
+// Caller: Firebase Storage rules engine untuk upload/download client web SmartPatrol.
+// Dependensi: Dokumen Firestore userAccess/{uid} sebagai sumber otorisasi.
+// Main Functions: Mengizinkan state-assets hanya untuk user operasional enabled dan registration-assets hanya untuk owner/admin.
+// Side Effects: Menolak akses publik ke aset patroli dan onboarding.
+
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userAccessDoc() {
+      return firestore.get(/databases/(default)/documents/userAccess/$(request.auth.uid));
+    }
+
+    function hasUserAccessDoc() {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/userAccess/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return hasUserAccessDoc()
+        && userAccessDoc().data.role == 'ADMIN'
+        && userAccessDoc().data.enabled == true;
+    }
+
+    function hasOperationalAssetAccess() {
+      return hasUserAccessDoc()
+        && userAccessDoc().data.enabled == true
+        && userAccessDoc().data.reviewState == 'approved';
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
     match /state-assets/{allPaths=**} {
-      // Staging rule: allow report photos uploaded by the web client to be shared across devices.
-      allow read, write: if true;
+      allow read, write: if hasOperationalAssetAccess();
+    }
+
+    match /registration-assets/{uid}/{allPaths=**} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isOwner(uid) || isAdmin();
     }
 
     match /{allPaths=**} {

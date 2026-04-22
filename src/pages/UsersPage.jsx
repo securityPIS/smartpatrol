@@ -1,15 +1,35 @@
+/*
+Tujuan: Menampilkan daftar user operasional dan antrean onboarding pending untuk admin SmartPatrol.
+Caller: Halaman admin saat membuka modul manajemen user.
+Dependensi: Hook role/user management, AsyncImage, dan ikon Lucide.
+Main Functions: Review user operasional, buka form/detail user, approve onboarding, dan reject onboarding.
+Side Effects: Memicu handler approval/reject onboarding dan memilih user aktif di panel admin.
+*/
+
 import React from 'react';
 import { useRole, useUsers } from '../context/AppContextRuntime';
-import { Users, PlusCircle, User, Ship } from 'lucide-react';
+import { CheckCircle2, PlusCircle, Ship, User, Users, XCircle } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 
 import UserFormView from '../components/views/UserFormView';
 import UserDetailView from '../components/views/UserDetailView';
 
 const UsersPage = React.memo(function UsersPage() {
-  const { usersData, setSelectedUser, selectedUser, setShowUserForm, showUserForm, clearUserManagementFeedback } = useUsers();
+  const {
+    usersData,
+    pendingRegistrations,
+    setSelectedUser,
+    selectedUser,
+    setShowUserForm,
+    showUserForm,
+    clearUserManagementFeedback,
+    handleApprovePendingUser,
+    handleRejectPendingUser,
+  } = useUsers();
   const { isAdmin } = useRole();
   if (!isAdmin) return null;
+
+  const pendingQueue = pendingRegistrations.filter((entry) => entry.status === 'pending');
 
   const showRightPane = selectedUser || showUserForm;
   const handleUserSelect = (user) => {
@@ -30,6 +50,51 @@ const UsersPage = React.memo(function UsersPage() {
             <PlusCircle className="w-3.5 h-3.5" /> Tambah
           </button>
         </div>
+        {pendingQueue.length > 0 && (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-300">Onboarding Pending</p>
+                <p className="text-xs text-amber-100/90 mt-1">Registrasi publik sudah terisolasi. Admin perlu approval sebelum akun masuk ke data operasional.</p>
+              </div>
+              <span className="px-2 py-1 rounded-full bg-amber-400/15 border border-amber-400/30 text-[10px] font-black text-amber-200">{pendingQueue.length}</span>
+            </div>
+            <div className="space-y-2">
+              {pendingQueue.map((entry) => (
+                <div key={entry.uid} className="rounded-xl border border-amber-500/20 bg-[#0b1229]/70 p-3 flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl overflow-hidden border border-amber-500/20 bg-[#070b19] shrink-0">
+                    {entry.photoUrl ? (
+                      <AsyncImage src={entry.photoUrl} alt={entry.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-amber-300"><User className="w-4 h-4" /></div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-amber-50 truncate">{entry.name}</p>
+                    <p className="text-[11px] text-amber-200/80 truncate">{entry.email}</p>
+                    <p className="text-[10px] text-amber-300/80 mt-1">Instansi: {entry.type || 'BUJP'}{entry.workerNumber ? ` • ${entry.workerNumber}` : ''}</p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      onClick={() => handleApprovePendingUser(entry)}
+                      className="px-2.5 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 transition-colors"
+                      title="Setujui registrasi"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleRejectPendingUser(entry)}
+                      className="px-2.5 py-2 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 transition-colors"
+                      title="Tolak registrasi"
+                    >
+                      <XCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="space-y-3">
           {usersData.map((user) => {
             const isSelected = selectedUser?.id === user.id;

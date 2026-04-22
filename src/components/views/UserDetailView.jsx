@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyediakan panel detail user untuk update profil, role, dan assignment secara aman.
+Caller: UsersPage saat admin atau owner profile memilih satu user.
+Dependensi: Context role/UI/users, AsyncImage, dan ikon Lucide.
+Main Functions: Edit profil user, simpan perubahan, dan menampilkan status akun Firebase/Auth.
+Side Effects: Memicu sinkronisasi perubahan user ke AppContextRuntime dan dialog konfirmasi hapus/simpan.
+*/
+
 import React from 'react';
 import { ACCESS_ROLES, useRole, useUI, useUsers } from '../../context/AppContextRuntime';
 import { ChevronDown, Trash2, Camera, Save, AlertTriangle, CheckCircle2 } from 'lucide-react';
@@ -75,11 +83,11 @@ export default function UserDetailView({ isInline = false }) {
           {isFirebaseAccount && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2 text-xs text-amber-200">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <p>Email dan password akun ini dikelola oleh Firebase Auth. Pada fase ini admin hanya mengubah profil, role, dan penugasan lokalnya.</p>
+              <p>Email dan password akun ini dikelola oleh Firebase Auth. Perubahan role, status, dan penugasan akan ikut disinkronkan ke akses cloud terproteksi.</p>
             </div>
           )}
           {!isFirebaseAccount && (
-            <p className="text-[10px] text-cyan-600 leading-relaxed">Isi password jika Anda ingin menyambungkan user legacy ini ke Firebase Auth. Jika Firebase Auth belum aktif, password akan tetap disimpan secara lokal.</p>
+            <p className="text-[10px] text-cyan-600 leading-relaxed">Isi password jika Anda ingin membuat akun Firebase Auth untuk profil ini. SmartPatrol tidak lagi mengandalkan password legacy dari state lokal.</p>
           )}
 
           <div className="grid grid-cols-2 gap-3">

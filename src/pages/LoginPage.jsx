@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyajikan form login Firebase Auth dan registrasi publik terisolasi SmartPatrol.
+Caller: App shell saat belum ada sesi user operasional aktif.
+Dependensi: Auth context runtime, ikon Lucide, dan AsyncImage untuk foto onboarding.
+Main Functions: Login user operasional, kirim registrasi publik, dan upload foto profil onboarding.
+Side Effects: Memicu handler auth/register context serta menyimpan foto onboarding ke state form.
+*/
+
 import React from 'react';
 import { useAuth } from '../context/AppContextRuntime';
 import { Shield, Ship, Eye, EyeOff, Camera } from 'lucide-react';
@@ -58,7 +66,7 @@ export default function LoginPage() {
                 <input type="text" value={authForm.name} onChange={e => setAuthForm({ ...authForm, name: e.target.value })} placeholder="Masukkan nama lengkap" className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
               </div>
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
-                Role akun akan ditentukan admin setelah registrasi. Form ini hanya mengisi data profil user.
+                Registrasi publik hanya membuat akun Firebase Auth dan profil onboarding terbatas. Role, assignment, dan akses operasional akan ditentukan admin setelah approval.
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -105,41 +113,8 @@ export default function LoginPage() {
                   <input type="tel" value={authForm.phone} onChange={e => setAuthForm({ ...authForm, phone: e.target.value })} placeholder="0812..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm" />
                 </div>
                 <div>
-                  <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Tgl Lahir</label>
-                  <input type="date" value={authForm.dob} onChange={e => setAuthForm({ ...authForm, dob: e.target.value })} className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm [color-scheme:dark]" />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Alamat Rumah</label>
-                <textarea rows={2} value={authForm.address} onChange={e => setAuthForm({ ...authForm, address: e.target.value })} placeholder="Alamat domisili..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm resize-none" />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-mono text-cyan-500 mb-1.5 block uppercase tracking-widest pl-1">Alamat Kantor</label>
-                <textarea rows={2} value={authForm.officeAddress} onChange={e => setAuthForm({ ...authForm, officeAddress: e.target.value })} placeholder="Alamat kantor / posko..." className="w-full bg-[#0b1229] border border-cyan-800/50 rounded-xl p-3.5 text-sm text-cyan-50 focus:border-cyan-400 outline-none shadow-sm resize-none" />
-              </div>
-
-              <div className="p-4 border border-rose-900/50 bg-rose-950/10 rounded-xl space-y-4">
-                <p className="text-[10px] text-rose-500 font-bold uppercase tracking-widest border-b border-rose-900/30 pb-2">Kontak Darurat</p>
-                <div>
-                  <label className="text-[10px] font-mono text-rose-400 mb-1.5 block uppercase tracking-widest pl-1">Nama</label>
-                  <input type="text" value={authForm.emergencyName} onChange={e => setAuthForm({ ...authForm, emergencyName: e.target.value })} placeholder="Nama kontak darurat" className="w-full bg-[#070b19] border border-rose-900/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-rose-500 outline-none shadow-sm" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[10px] font-mono text-rose-400 mb-1.5 block uppercase tracking-widest pl-1">No. HP</label>
-                    <input type="tel" value={authForm.emergencyContact} onChange={e => setAuthForm({ ...authForm, emergencyContact: e.target.value })} placeholder="08..." className="w-full bg-[#070b19] border border-rose-900/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-rose-500 outline-none shadow-sm" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-mono text-rose-400 mb-1.5 block uppercase tracking-widest pl-1">Hubungan</label>
-                    <select value={authForm.emergencyRelation} onChange={e => setAuthForm({ ...authForm, emergencyRelation: e.target.value })} className="w-full bg-[#070b19] border border-rose-900/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-rose-500 outline-none appearance-none shadow-sm">
-                      <option value="Orang Tua">Orang Tua</option>
-                      <option value="Suami/Istri">Suami/Istri</option>
-                      <option value="Anak">Anak</option>
-                      <option value="Saudara">Saudara</option>
-                      <option value="Rekan Kerja">Rekan Kerja</option>
-                    </select>
+                  <div className="rounded-xl border border-cyan-800/50 bg-[#0b1229] p-3.5 h-full flex items-center">
+                    <p className="text-[11px] text-cyan-300/80 leading-relaxed">Data sensitif seperti alamat, tanggal lahir, dan kontak darurat akan diisi setelah akun operasional disetujui admin.</p>
                   </div>
                 </div>
               </div>
@@ -147,7 +122,7 @@ export default function LoginPage() {
           )}
 
           <button onClick={authMode === 'login' ? handleLogin : handleRegister} disabled={authBusy} className="w-full py-4 bg-cyan-600 hover:bg-cyan-500 text-white font-black uppercase tracking-widest text-xs rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] disabled:opacity-50 flex items-center justify-center gap-2">
-            {authBusy ? <span className="animate-pulse">Memproses...</span> : authMode === 'login' ? 'Login' : 'Daftar Akun'}
+            {authBusy ? <span className="animate-pulse">Memproses...</span> : authMode === 'login' ? 'Login' : 'Kirim Registrasi'}
           </button>
         </div>
 
