@@ -4957,24 +4957,59 @@ export function AppProvider({ children }) {
     setShowShipDocForm(false);
     setNewShipDoc(createShipDocumentState());
   }, []);
-  const handleTogglePersonnel = useCallback((userId) => { 
+  const syncManagedUserOperationalAccess = useCallback(async (userRecord, overrides = {}) => {
+    if (!isAdmin || !hasOperationalCloudAccess || !isFirebaseAuthEnabled) return true;
+
+    const firebaseUid = sanitizeText(overrides.uid || userRecord?.firebaseUid || '', 160) || '';
+    const safeEmail = sanitizeEmail(overrides.email || userRecord?.email || '');
+    if (!firebaseUid || !safeEmail) return true;
+
+    try {
+      await syncOperationalUserAccess({
+        uid: firebaseUid,
+        email: safeEmail,
+        name: sanitizeText(overrides.name || userRecord?.name || '', 80) || safeEmail.split('@')[0] || 'Personil',
+        role: ACCESS_ROLE_VALUES.includes(overrides.role || userRecord?.role)
+          ? (overrides.role || userRecord?.role)
+          : ACCESS_ROLES.PETUGAS,
+        status: sanitizeText(overrides.status || userRecord?.status || '', 20).toLowerCase() || 'off-duty',
+        shipAssigned: sanitizeText(overrides.shipAssigned || userRecord?.shipAssigned || '', 80),
+        type: sanitizeText(overrides.type || userRecord?.type || 'BUJP', 20) || 'BUJP',
+        workerNumber: sanitizeText(overrides.workerNumber || userRecord?.workerNumber || '', 40),
+        legacyUserId: sanitizeText(overrides.legacyUserId || userRecord?.id || '', 160) || null,
+      });
+      return true;
+    } catch (error) {
+      console.error('Gagal sinkronisasi akses operasional personel', error);
+      setUserFormNotice('Perubahan penugasan tersimpan, tetapi akses login cloud user perlu disinkronkan ulang oleh admin.');
+      return false;
+    }
+  }, [hasOperationalCloudAccess, isAdmin]);
+  const handleTogglePersonnel = useCallback(async (userId) => { 
     if (!isAdmin || !activeShip) return; 
     const targetArray = scheduleMonth === 'current' ? activeShip.personnel : activeShip.personnelNextMonth; 
     const isAssigned = targetArray.includes(userId); 
+    const targetUser = usersData.find(u => u.id === userId) || null;
     if (isAssigned) { 
       updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) }); 
-      if(scheduleMonth === 'current') setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: null, status: 'off-duty'} : u)); 
+      if(scheduleMonth === 'current') {
+        setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: null, status: 'off-duty'} : u));
+        await syncManagedUserOperationalAccess(targetUser, {
+          shipAssigned: '',
+          status: 'off-duty',
+        });
+      }
     } else { 
-      const user = usersData.find(u => u.id === userId);
-      setAssignPopupData({ userId, name: user?.name, role: user?.role, scheduleType: scheduleMonth });
+      setAssignPopupData({ userId, name: targetUser?.name, role: targetUser?.role, scheduleType: scheduleMonth });
       setShowAssignPopup(true);
     } 
-  }, [isAdmin, activeShip, scheduleMonth, updateActiveShip, usersData]);
+  }, [isAdmin, activeShip, scheduleMonth, syncManagedUserOperationalAccess, updateActiveShip, usersData]);
 
-  const handleConfirmAssign = useCallback((userId, startDate, endDate, isTBC) => {
+  const handleConfirmAssign = useCallback(async (userId, startDate, endDate, isTBC) => {
     if (!isAdmin || !activeShip || !assignPopupData) return;
     
     const scheduleType = assignPopupData.scheduleType || 'current';
+    const targetUser = usersData.find((user) => user.id === userId) || null;
     
     // Automatically route to 'next assignment' or 'current' based on the date,
     // falling back to the tab they initiated it from if no start date is provided.
@@ -5012,13 +5047,17 @@ export function AppProvider({ children }) {
 
     if (finalScheduleType === 'current') {
       setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: activeShip.name, status: 'active'} : u));
+      await syncManagedUserOperationalAccess(targetUser, {
+        shipAssigned: activeShip.name,
+        status: 'active',
+      });
     } else {
       setUsersData(prev => prev.map(u => u.id === userId && u.status !== 'active' ? {...u, shipAssigned: null, status: 'off-duty'} : u));
     }
     
     setShowAssignPopup(false);
     setAssignPopupData(null);
-  }, [isAdmin, activeShip, updateActiveShip, assignPopupData]);
+  }, [isAdmin, activeShip, assignPopupData, syncManagedUserOperationalAccess, updateActiveShip, usersData]);
   const handleAddShipCp = useCallback(() => {
     if (!isAdmin || !activeShip) return;
     const safeName = sanitizeText(newShipCp.name, 80);
@@ -5843,6 +5882,8 @@ export function AppProvider({ children }) {
     try {
       const localUser = usersData.find(item => (item.email || '').toLowerCase() === safeEmail) || null;
       const credential = await loginWithFirebaseEmail(safeEmail, passwordInput);
+      setFirebaseAuthUser(credential.user);
+      setFirebaseAuthReady(true);
       const accessResult = await resolveOperationalAccess();
       setAuthAccessState(accessResult || null);
 
@@ -6234,9 +6275,9 @@ export function AppProvider({ children }) {
   }, [authAccessState, firebaseAuthUser, sessionUserId, usersData]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled || !firebaseAuthReady) return;
-    if (firebaseAuthUser || !sessionUserId) return;
+    if (authBusy || authAccessBusy || firebaseAuthUser || !sessionUserId) return;
     resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
-  }, [firebaseAuthReady, firebaseAuthUser, resetAuthSession, sessionUserId]);
+  }, [authAccessBusy, authBusy, firebaseAuthReady, firebaseAuthUser, resetAuthSession, sessionUserId]);
   useEffect(() => {
     if (!isAdmin || !hasOperationalCloudAccess) {
       setPendingRegistrations([]);
@@ -6258,7 +6299,7 @@ export function AppProvider({ children }) {
     }
 
     if (isFirebaseAuthEnabled) {
-      if (!firebaseAuthReady || authAccessBusy) return;
+      if (!firebaseAuthReady || authBusy || authAccessBusy) return;
       if (!firebaseAuthUser || !authAccessEnabled) {
         resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
         return;
@@ -6284,7 +6325,7 @@ export function AppProvider({ children }) {
     if (activeUser.role === ACCESS_ROLES.PETUGAS && !assignedShipForCurrentUser) {
       handleLogout('Petugas yang tidak lagi terdaftar di armada aktif tidak bisa tetap login.');
     }
-  }, [assignedShipForCurrentUser, authAccessBusy, authAccessEnabled, authAccessStatus, currentUserRecord, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
+  }, [assignedShipForCurrentUser, authAccessBusy, authAccessEnabled, authAccessStatus, authBusy, currentUserRecord, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
   useEffect(() => { if (!currentUserRecord) return; if (!isAdmin && (currentPage === 'users' || currentPage === 'ships' || currentPage === 'daily-report')) { setCurrentPage('home'); setActiveShipId(null); setShowShipForm(false); setShowShipDocForm(false); setShowUserForm(false); setSelectedUser(null); } }, [currentPage, currentUserRecord, isAdmin]);
   useEffect(() => { if (activeShipId) return; setShowShipDocForm(false); }, [activeShipId]);
   useEffect(() => {

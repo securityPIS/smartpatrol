@@ -37,6 +37,11 @@ LoginPage[handleRegister] → Firebase Auth[registerWithFirebaseEmail]
   → createPendingRegistration → Firestore[pendingRegistrations/{uid}]
   → Admin review di UsersPage → Cloud Function[approvePendingRegistration]
   → Cloud Function menulis userAccess/{uid} + custom claims
+
+ShipsPage[handleConfirmAssign / handleTogglePersonnel]
+  → update usersData + shipsData lokal/cloud
+  → syncOperationalUserAccess → Firestore[userAccess/{uid}]
+  → status/shipAssigned aktif sinkron untuk izin login petugas
 ```
 
 ### 2. Patrol Checkpoint (inti patroli)
