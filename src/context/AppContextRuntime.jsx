@@ -2056,6 +2056,41 @@ function mergeEntitiesById(baseItems = [], nextItems = [], options = {}) {
   return Array.from(merged.values());
 }
 
+function getEntityMergeTimestamp(item) {
+  if (!item || typeof item !== 'object') return 0;
+
+  return (
+    resolveExternalTimestampMs(item.updatedAtTrustedMs)
+    || resolveExternalTimestampMs(item.updatedAtClientMs)
+    || resolveExternalTimestampMs(item.updatedAt)
+    || resolveExternalTimestampMs(item.createdAt)
+    || 0
+  );
+}
+
+function mergeVersionedEntity(baseItem = {}, nextItem = {}) {
+  const baseTimestamp = getEntityMergeTimestamp(baseItem);
+  const nextTimestamp = getEntityMergeTimestamp(nextItem);
+
+  if (nextTimestamp >= baseTimestamp) {
+    return { ...baseItem, ...nextItem };
+  }
+
+  return { ...nextItem, ...baseItem };
+}
+
+function createLocalEntityUpdateMeta() {
+  const trustedNowMs = getTrustedNowMs();
+  const fallbackNowMs = Date.now();
+  const resolvedNowMs = Number.isFinite(trustedNowMs) ? trustedNowMs : fallbackNowMs;
+
+  return {
+    updatedAt: new Date(resolvedNowMs).toISOString(),
+    updatedAtClientMs: fallbackNowMs,
+    updatedAtTrustedMs: resolvedNowMs,
+  };
+}
+
 function mergeIncidentMetaCollection(baseMeta = {}, nextMeta = {}) {
   const mergedMeta = { ...(baseMeta || {}) };
 
@@ -2229,11 +2264,15 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const resolvedActiveShiftKey = nextState.activeShiftKey || baseState.activeShiftKey || null;
   const baseUsers = normalizeUsersCollection(baseState.usersData || []);
   const nextUsers = normalizeUsersCollection(nextState.usersData || []);
-  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers), deletedRecords.users);
+  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers, {
+    merge: (baseUser, nextUser) => mergeVersionedEntity(baseUser, nextUser),
+  }), deletedRecords.users);
   const baseShips = normalizeShipsCollection(baseState.shipsData || []);
   const nextShips = normalizeShipsCollection(nextState.shipsData || []);
   const mergedShips = pruneShipPersonnelAssignments(
-    omitDeletedEntities(mergeEntitiesById(baseShips, nextShips), deletedRecords.ships),
+    omitDeletedEntities(mergeEntitiesById(baseShips, nextShips, {
+      merge: (baseShip, nextShip) => mergeVersionedEntity(baseShip, nextShip),
+    }), deletedRecords.ships),
     mergedUsers,
   );
   const shipIds = Array.from(new Set([
@@ -5484,9 +5523,10 @@ export function AppProvider({ children }) {
   const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
   const updateActiveShip = useCallback((updates) => {
     if (!isAdmin || !activeShipId) return;
+    const mutationMeta = createLocalEntityUpdateMeta();
     setShipsData(prev => prev.map((ship) => {
       if (ship.id !== activeShipId) return ship;
-      return normalizeShipRecord({ ...ship, ...updates });
+      return normalizeShipRecord({ ...ship, ...updates, ...mutationMeta });
     }));
   }, [isAdmin, activeShipId]);
   const openShipDocForm = useCallback(() => {
@@ -5526,6 +5566,19 @@ export function AppProvider({ children }) {
       return false;
     }
   }, [hasOperationalCloudAccess, isAdmin]);
+  const updateUserRecordLocally = useCallback((userId, updates) => {
+    if (!userId) return;
+    const mutationMeta = createLocalEntityUpdateMeta();
+    setUsersData((previousUsers) => previousUsers.map((user, index) => (
+      user.id !== userId
+        ? user
+        : normalizeUserRecord({
+            ...user,
+            ...updates,
+            ...mutationMeta,
+          }, index)
+    )));
+  }, []);
   const handleTogglePersonnel = useCallback(async (userId) => { 
     if (!isAdmin || !activeShip) return; 
     const targetArray = scheduleMonth === 'current' ? activeShip.personnel : activeShip.personnelNextMonth; 
@@ -5534,17 +5587,23 @@ export function AppProvider({ children }) {
     if (isAssigned) { 
       updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) }); 
       if(scheduleMonth === 'current') {
-        setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: null, status: 'off-duty'} : u));
+        updateUserRecordLocally(userId, {
+          shipAssigned: null,
+          status: 'off-duty',
+        });
+        requestCloudSync('urgent');
         await syncManagedUserOperationalAccess(targetUser, {
           shipAssigned: '',
           status: 'off-duty',
         });
+      } else {
+        requestCloudSync('urgent');
       }
     } else { 
       setAssignPopupData({ userId, name: targetUser?.name, role: targetUser?.role, scheduleType: scheduleMonth });
       setShowAssignPopup(true);
     } 
-  }, [isAdmin, activeShip, scheduleMonth, syncManagedUserOperationalAccess, updateActiveShip, usersData]);
+  }, [activeShip, isAdmin, requestCloudSync, scheduleMonth, syncManagedUserOperationalAccess, updateActiveShip, updateUserRecordLocally, usersData]);
 
   const handleConfirmAssign = useCallback(async (userId, startDate, endDate, isTBC) => {
     if (!isAdmin || !activeShip || !assignPopupData) return;
@@ -5587,18 +5646,28 @@ export function AppProvider({ children }) {
     });
 
     if (finalScheduleType === 'current') {
-      setUsersData(prev => prev.map(u => u.id === userId ? {...u, shipAssigned: activeShip.name, status: 'active'} : u));
+      updateUserRecordLocally(userId, {
+        shipAssigned: activeShip.name,
+        status: 'active',
+      });
+      requestCloudSync('urgent');
       await syncManagedUserOperationalAccess(targetUser, {
         shipAssigned: activeShip.name,
         status: 'active',
       });
     } else {
-      setUsersData(prev => prev.map(u => u.id === userId && u.status !== 'active' ? {...u, shipAssigned: null, status: 'off-duty'} : u));
+      if (targetUser?.status !== 'active') {
+        updateUserRecordLocally(userId, {
+          shipAssigned: null,
+          status: 'off-duty',
+        });
+      }
+      requestCloudSync('urgent');
     }
     
     setShowAssignPopup(false);
     setAssignPopupData(null);
-  }, [isAdmin, activeShip, assignPopupData, syncManagedUserOperationalAccess, updateActiveShip, usersData]);
+  }, [activeShip, assignPopupData, isAdmin, requestCloudSync, syncManagedUserOperationalAccess, updateActiveShip, updateUserRecordLocally, usersData]);
   const handleAddShipCp = useCallback(() => {
     if (!isAdmin || !activeShip) return;
     const safeName = sanitizeText(newShipCp.name, 80);
@@ -6362,7 +6431,7 @@ export function AppProvider({ children }) {
   }, []);
 
   // Auth handlers
-  const resetAuthSession = useCallback((message = 'Sesi Anda telah berakhir. Silakan login kembali.') => {
+  const clearOperationalSessionState = useCallback(() => {
     setSessionUserId(null);
     setAuthAccessState(null);
     setAuthAccessBusy(false);
@@ -6384,10 +6453,13 @@ export function AppProvider({ children }) {
     setNewProgress({ comment: '', photoUrl: null });
     setNewShipDoc(createShipDocumentState());
     setAuthMode('login');
+  }, []);
+  const resetAuthSession = useCallback((message = 'Sesi Anda telah berakhir. Silakan login kembali.') => {
+    clearOperationalSessionState();
     setAuthError('');
     setAuthNotice(message);
     setAuthForm(createAuthFormState());
-  }, []);
+  }, [clearOperationalSessionState]);
   const handleLogout = useCallback(async (message = 'Sesi Anda telah berakhir. Silakan login kembali.') => {
     if (firebaseAuthUser) {
       try {
@@ -6435,6 +6507,7 @@ export function AppProvider({ children }) {
 
       if (!accessResult?.access) {
         await logoutFirebaseUser();
+        clearOperationalSessionState();
         if (accessResult?.status === 'pending') {
           setAuthError('Registrasi Anda masih menunggu approval admin.');
           return;
@@ -6462,6 +6535,7 @@ export function AppProvider({ children }) {
 
       if (!accessResult.access.enabled || !canUserAccessApplication(resolvedUser)) {
         await logoutFirebaseUser();
+        clearOperationalSessionState();
         setAuthError('Akun Anda sudah tervalidasi, tetapi belum aktif untuk operasi. Tunggu assignment admin.');
         return;
       }
@@ -6473,7 +6547,7 @@ export function AppProvider({ children }) {
       } catch {
         // Abaikan cleanup logout jika login memang gagal sebelum sesi Firebase terbentuk.
       }
-      setAuthAccessState(null);
+      clearOperationalSessionState();
       setAuthError(getFirebaseAuthErrorMessage(error));
     } finally {
       setAuthBusy(false);
