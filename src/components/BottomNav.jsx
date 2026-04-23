@@ -2,7 +2,7 @@
 Tujuan: Menyediakan navigasi bawah mobile yang menyesuaikan urutan menu berdasarkan role user.
 Caller: App shell pada layout mobile.
 Dependensi: UI context, role context, history context, ships context, dan SOSButton.
-Main Functions: Merender tab navigasi mobile, badge notifikasi, dan shortcut SOS.
+Main Functions: Merender tab navigasi mobile, badge notifikasi, shortcut SOS, dan urutan menu role-aware.
 Side Effects: Mengubah currentPage, mereset activeShipId, dan menutup detail riwayat aktif.
 */
 
@@ -16,14 +16,22 @@ const BottomNav = React.memo(function BottomNav() {
   const { setActiveShipId, activeShipId } = useShips();
   const { closeHistoryEntry, selectedHistoryEntry } = useHistory();
   const { unreadNotificationCount } = useNotifications();
-  const { isAdmin } = useRole();
+  const { isAdmin, isPic } = useRole();
+  const isPrivilegedRole = isAdmin || isPic;
 
-  const tabs = [
-    {id: 'history', icon: <FileText className="w-5 h-5 mb-0.5"/>, label: 'Riwayat'},
-    ...(isAdmin ? [{id: 'daily-report', icon: <BarChart3 className="w-5 h-5 mb-0.5"/>, label: 'Report'}] : [{id: 'home', icon: <Home className="w-5 h-5 mb-0.5"/>, label: 'Patroli'}]),
-    {id: 'incidents', icon: <AlertOctagon className="w-5 h-5 mb-0.5"/>, label: 'Temuan'},
-    {id: 'notifications', icon: <Bell className="w-5 h-5 mb-0.5"/>, label: 'Notif'}
-  ];
+  const tabs = isPrivilegedRole
+    ? [
+        {id: 'history', icon: <FileText className="w-5 h-5 mb-0.5"/>, label: 'Riwayat'},
+        {id: 'incidents', icon: <AlertOctagon className="w-5 h-5 mb-0.5"/>, label: 'Temuan'},
+        {id: 'daily-report', icon: <BarChart3 className="w-5 h-5 mb-0.5"/>, label: 'Report'},
+        {id: 'notifications', icon: <Bell className="w-5 h-5 mb-0.5"/>, label: 'Notif'}
+      ]
+    : [
+        {id: 'home', icon: <Home className="w-5 h-5 mb-0.5"/>, label: 'Patroli'},
+        {id: 'incidents', icon: <AlertOctagon className="w-5 h-5 mb-0.5"/>, label: 'Temuan'},
+        {id: 'history', icon: <FileText className="w-5 h-5 mb-0.5"/>, label: 'Riwayat'},
+        {id: 'notifications', icon: <Bell className="w-5 h-5 mb-0.5"/>, label: 'Notif'}
+      ];
   const leftTabs = tabs.slice(0, 2);
   const rightTabs = tabs.slice(2);
 

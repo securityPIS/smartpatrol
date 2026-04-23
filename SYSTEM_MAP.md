@@ -278,7 +278,7 @@ SmartPatrol/
 | `pages/PatrolPage.jsx` | `PatrolPage` | Halaman utama petugas: daftar checkpoint, tab Info/Checkpoint, modal status petugas shift, progress bar, countdown shift, summary aman/temuan/missed. |
 | `pages/HistoryPage.jsx` | `HistoryPage` | Riwayat patroli: list shift sebelumnya dan untuk admin menampilkan shift `ON GOING` di urutan teratas agar progres patroli aktif bisa dipantau cepat. |
 | `pages/IncidentsPage.jsx` | `IncidentsPage` | Manajemen insiden: list, filter, buat baru, progress tracking, dokumentasi. |
-| `pages/DailyReportPage.jsx` | `DailyReportPage` | Dashboard Admin: laporan harian per kapal + shift, statistik, detail report. |
+| `pages/DailyReportPage.jsx` | `DailyReportPage` | Dashboard Admin/PIC: laporan harian per kapal + shift, statistik, detail report. |
 | `pages/ShipsPage.jsx` | `ShipsPage` | CRUD armada kapal, dokumen, checkpoint definition, assign/transfer crew. |
 | `pages/UsersPage.jsx` | `UsersPage` | List user (Admin only), klik untuk detail. |
 | `pages/NotificationsPage.jsx` | `NotificationsPage` | Notifikasi sistem: shift change, checkpoint pending, dll. |
@@ -288,8 +288,8 @@ SmartPatrol/
 | File | Komponen | Peran |
 |---|---|---|
 | `components/Header.jsx` | `Header` | Top bar dengan judul halaman, jam real-time, dropdown notifikasi dan settings. |
-| `components/BottomNav.jsx` | `BottomNav` | Navigasi bawah mobile (4 tab utama). |
-| `components/SideNav.jsx` | `SideNav` | Sidebar desktop: navigasi + info user + tombol SOS. |
+| `components/BottomNav.jsx` | `BottomNav` | Navigasi bawah mobile dengan urutan tab berbeda untuk PETUGAS vs ADMIN/PIC. |
+| `components/SideNav.jsx` | `SideNav` | Sidebar desktop dengan urutan tab berbeda untuk PETUGAS vs ADMIN/PIC, plus info user + tombol SOS. |
 | `components/SOSButton.jsx` | `SOSButton` | Tombol floating SOS: tekan → dialog konfirmasi → ambil GPS → trigger alarm. |
 | `components/TimeAuditStatus.jsx` | `TimeAuditBadge`, `TimeAuditPills`, `TimeAuditRecordCard`, `TimeAuditSummaryCard` | Komponen UI untuk menampilkan status audit waktu (badge, card, summary). |
 | `components/AsyncImage.jsx` | `AsyncImage` | Image loader yang mendukung `idb://` key (resolve dari IndexedDB). |

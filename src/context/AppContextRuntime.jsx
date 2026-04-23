@@ -71,7 +71,7 @@ const SHIFT_NOTIFICATION_DEBUG_KEY = 'smartpatrol.debug.shiftNotifications';
 const CLOUD_SYNC_DEBUG_KEY = 'smartpatrol.debug.cloudSync';
 
 function getDefaultPageForRole(role) {
-  return role === ACCESS_ROLES.ADMIN ? 'daily-report' : 'home';
+  return role === ACCESS_ROLES.ADMIN || role === ACCESS_ROLES.PIC ? 'daily-report' : 'home';
 }
 const MINUTE_IN_MS = 60 * 1000;
 const SHIFT_SEQUENCE = [

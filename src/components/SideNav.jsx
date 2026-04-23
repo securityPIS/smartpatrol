@@ -1,8 +1,8 @@
 /*
-Tujuan: Menyediakan navigasi samping desktop dengan prioritas menu yang berbeda untuk admin dan petugas.
+Tujuan: Menyediakan navigasi samping desktop dengan prioritas menu yang berbeda untuk role operasional.
 Caller: App shell pada layout desktop.
 Dependensi: UI context, role context, history context, ships context, notifications context, dan SOSButton.
-Main Functions: Merender tab desktop, status aktif menu, badge notifikasi, dan shortcut SOS.
+Main Functions: Merender tab desktop, status aktif menu, badge notifikasi, shortcut SOS, dan urutan menu role-aware.
 Side Effects: Mengubah currentPage, mereset activeShipId, dan menutup detail riwayat aktif.
 */
 
@@ -16,15 +16,22 @@ const SideNav = React.memo(function SideNav() {
   const { setActiveShipId, activeShipId } = useShips();
   const { closeHistoryEntry, selectedHistoryEntry } = useHistory();
   const { unreadNotificationCount } = useNotifications();
-  const { isAdmin } = useRole();
+  const { isAdmin, isPic } = useRole();
+  const isPrivilegedRole = isAdmin || isPic;
 
-  const tabs = [
-    {id: 'history', icon: <FileText className="w-5 h-5"/>, label: 'Riwayat'},
-    ...(isAdmin ? [] : [{id: 'home', icon: <Home className="w-5 h-5"/>, label: 'Patroli'}]),
-    {id: 'incidents', icon: <AlertOctagon className="w-5 h-5"/>, label: 'Temuan'},
-    {id: 'notifications', icon: <Bell className="w-5 h-5"/>, label: 'Notif'},
-    ...(isAdmin ? [{id: 'daily-report', icon: <BarChart3 className="w-5 h-5"/>, label: 'Report'}] : [])
-  ];
+  const tabs = isPrivilegedRole
+    ? [
+        {id: 'history', icon: <FileText className="w-5 h-5"/>, label: 'Riwayat'},
+        {id: 'incidents', icon: <AlertOctagon className="w-5 h-5"/>, label: 'Temuan'},
+        {id: 'daily-report', icon: <BarChart3 className="w-5 h-5"/>, label: 'Report'},
+        {id: 'notifications', icon: <Bell className="w-5 h-5"/>, label: 'Notif'}
+      ]
+    : [
+        {id: 'home', icon: <Home className="w-5 h-5"/>, label: 'Patroli'},
+        {id: 'incidents', icon: <AlertOctagon className="w-5 h-5"/>, label: 'Temuan'},
+        {id: 'history', icon: <FileText className="w-5 h-5"/>, label: 'Riwayat'},
+        {id: 'notifications', icon: <Bell className="w-5 h-5"/>, label: 'Notif'}
+      ];
 
   return (
     <div className="hidden lg:flex flex-col w-[100px] bg-[#0b1229] border-r border-cyan-800/50 h-screen sticky top-0 py-6 overflow-y-auto shrink-0 z-50">

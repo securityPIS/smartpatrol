@@ -8,6 +8,7 @@ const Header = React.memo(function Header() {
   const { clearUserManagementFeedback, setSelectedUser, setShowUserForm } = useUsers();
   const { setActiveShipId, setShowShipForm, closeShipDocForm, setIsEditingShipInfo } = useShips();
   const { handleLogout } = useAuth();
+  const canAccessDashboard = isAdmin || isPic;
 
   return (
     <div className="sticky top-0 z-40 bg-[#0b1229]/90 backdrop-blur-md border-b border-cyan-800 px-4 py-3 flex justify-between items-center shadow-[0_4px_15px_rgba(6,182,212,0.1)]">
@@ -56,18 +57,20 @@ const Header = React.memo(function Header() {
               >
                 <UserCog className="w-4 h-4" /> Edit Data Saya
               </button>
+              {canAccessDashboard && (
+                <button
+                  onClick={() => {
+                    setActiveShipId(null);
+                    setCurrentPage('daily-report');
+                    setShowSettingsDropdown(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50"
+                >
+                  <BarChart3 className="w-4 h-4" /> Daily Report
+                </button>
+              )}
               {isAdmin && (
                 <>
-                  <button
-                    onClick={() => {
-                      setActiveShipId(null);
-                      setCurrentPage('daily-report');
-                      setShowSettingsDropdown(false);
-                    }}
-                    className="w-full text-left px-4 py-2 text-xs font-bold text-cyan-300 flex items-center gap-2 hover:bg-cyan-900/50"
-                  >
-                    <BarChart3 className="w-4 h-4" /> Daily Report
-                  </button>
                   <button
                     onClick={() => {
                       clearUserManagementFeedback();

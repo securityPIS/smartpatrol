@@ -99,13 +99,14 @@ class PageErrorBoundary extends React.Component {
 function AppShell() {
   const { sessionUserId } = useAuth();
   const { currentPage, theme, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, confirmDialog, setConfirmDialog } = useUI();
-  const { isAdmin } = useRole();
+  const { isAdmin, isPic } = useRole();
   const { pendingPatrolCameraCapture, activePatrolItem } = usePatrol();
   const { showIncidentModal, selectedIncident } = useIncidents();
   const { showShipForm, showShipDocForm, showAssignPopup } = useShips();
   const { showUserForm, selectedUser } = useUsers();
   const { selectedReportDetail, previewPhoto } = useReports();
   const { activeSOSAlert } = useSOS();
+  const canAccessDashboard = isAdmin || isPic;
 
   if (!sessionUserId) {
     return (
@@ -157,11 +158,11 @@ function AppShell() {
             {currentPage === 'incidents' && <IncidentsPage />}
             {currentPage === 'history' && <HistoryPage />}
             {currentPage === 'notifications' && <NotificationsPage />}
-            {currentPage === 'daily-report' && (isAdmin ? <DailyReportPage /> : <PatrolPage />)}
+            {currentPage === 'daily-report' && (canAccessDashboard ? <DailyReportPage /> : <PatrolPage />)}
             {currentPage === 'users' && (isAdmin ? <UsersPage /> : <PatrolPage />)}
             {currentPage === 'ships' && (isAdmin ? <ShipsPage /> : <PatrolPage />)}
             {!['home', 'incidents', 'history', 'notifications', 'daily-report', 'users', 'ships'].includes(currentPage) && (
-              isAdmin ? <DailyReportPage /> : <PatrolPage />
+              canAccessDashboard ? <DailyReportPage /> : <PatrolPage />
             )}
           </PageErrorBoundary>
         </main>
