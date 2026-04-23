@@ -3605,23 +3605,6 @@ export function AppProvider({ children }) {
 
     setCloudSyncKick((previousValue) => previousValue + 1);
   }, []);
-  const emitCloudSyncSignal = useCallback((options = {}) => {
-    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) {
-      return Promise.resolve(null);
-    }
-
-    const signalPayload = createCloudSyncSignalPayload({
-      ...options,
-      actorUserId: options.actorUserId || currentUserId || '',
-      instanceId: appInstanceIdRef.current,
-    });
-
-    return publishCloudSyncSignal(signalPayload)
-      .catch((error) => {
-        console.warn('Gagal memancarkan sinyal sinkronisasi cloud', error);
-        return null;
-      });
-  }, [currentUserId, hasOperationalCloudAccess, isOffline]);
 
 // SOS Hooks moved to resolve TDZ
 
@@ -3672,6 +3655,23 @@ export function AppProvider({ children }) {
     if (!isFirebaseAuthEnabled) return Boolean(sessionUserId);
     return Boolean(firebaseAuthUser && authAccessEnabled);
   }, [authAccessEnabled, firebaseAuthUser, sessionUserId]);
+  const emitCloudSyncSignal = useCallback((options = {}) => {
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) {
+      return Promise.resolve(null);
+    }
+
+    const signalPayload = createCloudSyncSignalPayload({
+      ...options,
+      actorUserId: options.actorUserId || currentUserId || '',
+      instanceId: appInstanceIdRef.current,
+    });
+
+    return publishCloudSyncSignal(signalPayload)
+      .catch((error) => {
+        console.warn('Gagal memancarkan sinyal sinkronisasi cloud', error);
+        return null;
+      });
+  }, [currentUserId, hasOperationalCloudAccess, isOffline]);
   const getSOSRecipientUserIds = useCallback((shipName) => {
     const safeShipName = sanitizeText(shipName || '', 80);
     if (!safeShipName) return [];
