@@ -62,10 +62,10 @@ const firebaseApp = isFirebaseConfigured
 function createFirestoreInstance(app) {
   try {
     return initializeFirestore(app, {
-      // Auto long-polling lebih stabil pada PWA/mobile field devices yang
-      // sering bermasalah dengan WebChannel sehingga listener realtime terasa
-      // lambat atau tidak konsisten lintas perangkat.
-      experimentalAutoDetectLongPolling: true,
+      // PWA mobile Safari/iOS lebih stabil bila dipaksa long-polling penuh.
+      // Target utama aplikasi ini adalah reliabilitas lintas perangkat, jadi
+      // kita prioritaskan koneksi realtime yang konsisten dibanding throughput puncak.
+      experimentalForceLongPolling: true,
       useFetchStreams: false,
     });
   } catch (error) {

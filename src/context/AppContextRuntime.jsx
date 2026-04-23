@@ -28,8 +28,10 @@ import {
   fetchCloudAppState,
   isCloudSyncEnabled,
   isCloudWriteEnabled,
+  publishCloudSyncSignal,
   saveCloudAppState,
   subscribeToCloudAppState,
+  subscribeToCloudSyncSignal,
   uploadCloudDataUrlAsset,
 } from '../services/firebase/cloudState';
 import {
@@ -3008,7 +3010,7 @@ function fitSharedStateToCloudBudget(stateSnapshot = {}) {
     }
 
     if (candidateSizeBytes <= CLOUD_SYNC_SOFT_PAYLOAD_LIMIT_BYTES) {
-      console.warn('Payload cloud dipangkas agar commit Firestore tetap ringan.', {
+      logCloudSyncDebug('payload-trimmed', {
         beforeBytes: baseSizeBytes,
         afterBytes: candidateSizeBytes,
         trimProfile,
@@ -3144,6 +3146,55 @@ function compactHistoryEntryForCloudSync(entry = {}) {
     ...entry,
     shipSnapshot: compactShipSnapshotForCloudSync(entry.shipSnapshot),
     weatherSnapshot: compactWeatherSnapshotForCloudSync(entry.weatherSnapshot),
+  };
+}
+
+function compactSOSRecordForCloudSignal(sos = {}) {
+  if (!sos || typeof sos !== 'object') return null;
+
+  return {
+    id: sanitizeText(sos.id || '', 120) || null,
+    senderUserId: sanitizeText(sos.senderUserId || '', 120) || null,
+    senderName: sanitizeText(sos.senderName || '', 80) || '',
+    senderRole: sanitizeText(sos.senderRole || '', 40) || '',
+    shipName: sanitizeText(sos.shipName || '', 80) || '',
+    lat: normalizeSnapshotCoordinate(sos.lat),
+    lng: normalizeSnapshotCoordinate(sos.lng),
+    triggeredAt: typeof sos.triggeredAt === 'string' ? sos.triggeredAt : null,
+    createdAt: typeof sos.createdAt === 'string' ? sos.createdAt : null,
+    updatedAt: typeof sos.updatedAt === 'string' ? sos.updatedAt : null,
+    senderAcknowledgedAt: typeof sos.senderAcknowledgedAt === 'string' ? sos.senderAcknowledgedAt : null,
+    senderAcknowledgedBy: sanitizeText(sos.senderAcknowledgedBy || '', 120) || null,
+    resolvedAt: typeof sos.resolvedAt === 'string' ? sos.resolvedAt : null,
+    resolvedBy: sanitizeText(sos.resolvedBy || '', 80) || '',
+    status: sanitizeText(sos.status || '', 20) || 'active',
+    confirmedBy: mergeSOSRecordArrays(sos.confirmedBy),
+    targetUserIds: mergeSOSRecordArrays(sos.targetUserIds),
+    targetShipIds: mergeSOSRecordArrays(sos.targetShipIds),
+    targetShipNames: mergeSOSRecordArrays(sos.targetShipNames),
+    ...compactTimeAuditFieldsForCloudSync(sos),
+  };
+}
+
+function createCloudSyncSignalPayload(options = {}) {
+  const clientUpdatedAt = Number.isFinite(options.clientUpdatedAt)
+    ? options.clientUpdatedAt
+    : Date.now();
+  const reason = sanitizeText(options.reason || 'state-sync', 60) || 'state-sync';
+  const priority = sanitizeText(options.priority || 'normal', 20) || 'normal';
+  const actorUserId = sanitizeText(options.actorUserId || '', 120) || '';
+  const shipName = sanitizeText(options.shipName || '', 80) || '';
+  const instanceId = sanitizeText(options.instanceId || '', 120) || '';
+
+  return {
+    revision: `${reason}-${clientUpdatedAt}-${Math.random().toString(36).slice(2, 8)}`,
+    reason,
+    priority,
+    clientUpdatedAt,
+    actorUserId,
+    shipName,
+    instanceId,
+    activeSOSAlert: compactSOSRecordForCloudSignal(options.activeSOSAlert),
   };
 }
 
@@ -3528,17 +3579,23 @@ export function AppProvider({ children }) {
   const [patrolTab, setPatrolTab] = useState('checkpoint');
   const [showShiftStatusModal, setShowShiftStatusModal] = useState(false);
   const [cloudSyncBootstrapped, setCloudSyncBootstrapped] = useState(() => !isCloudSyncEnabled);
+  const appInstanceIdRef = useRef(`cloud-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const previousUsersDataRef = useRef(usersData);
   const lastSharedStateRef = useRef('');
   const lastCloudSharedStateRef = useRef('');
   const latestCloudSharedStateRef = useRef(null);
+  const lastCloudClientUpdatedAtRef = useRef(0);
+  const lastCloudSignalRevisionRef = useRef('');
   const cloudAssetCacheRef = useRef(new Map());
   const localAssetAvailabilityRef = useRef(new Map());
   const cloudSyncPriorityRef = useRef('normal');
   const cloudSyncPriorityVersionRef = useRef(0);
   const cloudSaveQueueRef = useRef(Promise.resolve());
   const cloudFetchInFlightRef = useRef(false);
+  const cloudSignalRefreshTimerRef = useRef(null);
   const localSharedStateRef = useRef(null);
+  const activeSOSAlertRef = useRef(activeSOSAlert);
+  const sosHistoryRef = useRef(sosHistory);
   const [cloudSyncKick, setCloudSyncKick] = useState(0);
   const requestCloudSync = useCallback((priority = 'normal') => {
     if (priority === 'urgent') {
@@ -3548,6 +3605,23 @@ export function AppProvider({ children }) {
 
     setCloudSyncKick((previousValue) => previousValue + 1);
   }, []);
+  const emitCloudSyncSignal = useCallback((options = {}) => {
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) {
+      return Promise.resolve(null);
+    }
+
+    const signalPayload = createCloudSyncSignalPayload({
+      ...options,
+      actorUserId: options.actorUserId || currentUserId || '',
+      instanceId: appInstanceIdRef.current,
+    });
+
+    return publishCloudSyncSignal(signalPayload)
+      .catch((error) => {
+        console.warn('Gagal memancarkan sinyal sinkronisasi cloud', error);
+        return null;
+      });
+  }, [currentUserId, hasOperationalCloudAccess, isOffline]);
 
 // SOS Hooks moved to resolve TDZ
 
@@ -3707,8 +3781,15 @@ export function AppProvider({ children }) {
     if (nextSOSIncident) {
       setSelectedIncident(nextSOSIncident);
     }
+    void emitCloudSyncSignal({
+      reason: 'sos-active',
+      priority: 'urgent',
+      clientUpdatedAt: Date.now(),
+      activeSOSAlert: newSOS,
+      shipName: senderShipName,
+    });
     requestCloudSync('urgent');
-  }, [currentUserRecord, getSOSRecipientUserIds, requestCloudSync, shipsData]);
+  }, [currentUserRecord, emitCloudSyncSignal, getSOSRecipientUserIds, requestCloudSync, shipsData]);
 
   const resolveSOSActionTarget = useCallback((targetSOS = null) => {
     const targetId = typeof targetSOS === 'string'
@@ -3739,8 +3820,15 @@ export function AppProvider({ children }) {
       previousAlert?.id === updatedSOS.id ? updatedSOS : previousAlert
     ));
     setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
+    void emitCloudSyncSignal({
+      reason: 'sos-confirmed',
+      priority: 'urgent',
+      clientUpdatedAt: Date.now(),
+      activeSOSAlert: updatedSOS,
+      shipName: updatedSOS.shipName,
+    });
     requestCloudSync('urgent');
-  }, [currentUserId, requestCloudSync, resolveSOSActionTarget]);
+  }, [currentUserId, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget]);
 
   const handleSOSAcknowledgeSelf = useCallback((targetSOS = null) => {
     const actionableSOS = resolveSOSActionTarget(targetSOS);
@@ -3765,8 +3853,15 @@ export function AppProvider({ children }) {
       previousAlert?.id === updatedSOS.id ? updatedSOS : previousAlert
     ));
     setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
+    void emitCloudSyncSignal({
+      reason: 'sos-acknowledged',
+      priority: 'urgent',
+      clientUpdatedAt: Date.now(),
+      activeSOSAlert: updatedSOS,
+      shipName: updatedSOS.shipName,
+    });
     requestCloudSync('urgent');
-  }, [currentUserId, requestCloudSync, resolveSOSActionTarget]);
+  }, [currentUserId, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget]);
 
   const handleSOSDismiss = useCallback((targetSOS = null) => {
     const actionableSOS = resolveSOSActionTarget(targetSOS);
@@ -3791,8 +3886,15 @@ export function AppProvider({ children }) {
       previousAlert?.id === updatedSOS.id ? null : previousAlert
     ));
     setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, updatedSOS));
+    void emitCloudSyncSignal({
+      reason: 'sos-resolved',
+      priority: 'urgent',
+      clientUpdatedAt: Date.now(),
+      activeSOSAlert: updatedSOS,
+      shipName: updatedSOS.shipName,
+    });
     requestCloudSync('urgent');
-  }, [currentUserRecord, requestCloudSync, resolveSOSActionTarget]);
+  }, [currentUserRecord, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget]);
 
   const assignedShipForCurrentUser = useMemo(() => {
     return resolveAssignedShipForUser(currentUserRecord, shipsData);
@@ -3966,6 +4068,12 @@ export function AppProvider({ children }) {
   useEffect(() => {
     localSharedStateRef.current = sharedState;
   }, [sharedState]);
+  useEffect(() => {
+    activeSOSAlertRef.current = activeSOSAlert;
+  }, [activeSOSAlert]);
+  useEffect(() => {
+    sosHistoryRef.current = sosHistory;
+  }, [sosHistory]);
   const hasUploadableLocalAssets = useCallback(async (stateSnapshot) => {
     const candidateUrls = collectLocalOnlyAssetUrls(stateSnapshot);
 
@@ -4361,13 +4469,21 @@ export function AppProvider({ children }) {
     const payloadState = cloudPayload?.state && typeof cloudPayload.state === 'object'
       ? cloudPayload.state
       : null;
+    const payloadClientUpdatedAt = resolveExternalTimestampMs(cloudPayload?.clientUpdatedAt);
 
     setCloudSyncBootstrapped(true);
+    if (Number.isFinite(payloadClientUpdatedAt)) {
+      lastCloudClientUpdatedAtRef.current = Math.max(
+        lastCloudClientUpdatedAtRef.current,
+        payloadClientUpdatedAt,
+      );
+    }
 
     logCloudSyncDebug('snapshot-received', {
       source: options.source || 'snapshot',
       hasState: Boolean(payloadState),
       activeShiftKey: payloadState?.activeShiftKey || null,
+      clientUpdatedAt: payloadClientUpdatedAt,
       notifications: Array.isArray(payloadState?.notifications) ? payloadState.notifications.length : 0,
       historyEntries: Array.isArray(payloadState?.historyEntries) ? payloadState.historyEntries.length : 0,
     });
@@ -5177,11 +5293,18 @@ export function AppProvider({ children }) {
           createdAt: submittedItem.completedAt,
         }]);
       }
+      void emitCloudSyncSignal({
+        reason: 'checkpoint-updated',
+        priority: 'urgent',
+        clientUpdatedAt: Date.now(),
+        activeSOSAlert: activeSOSAlertRef.current,
+        shipName: operationalShipName,
+      });
       requestCloudSync('urgent');
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, emitCloudSyncSignal, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -6483,6 +6606,94 @@ export function AppProvider({ children }) {
 
     let isDisposed = false;
 
+    const clearPendingRefresh = () => {
+      if (cloudSignalRefreshTimerRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(cloudSignalRefreshTimerRef.current);
+        cloudSignalRefreshTimerRef.current = null;
+      }
+    };
+
+    const runSignalRefresh = async (signal, attempt = 0) => {
+      if (isDisposed) return;
+      const expectedClientUpdatedAt = resolveExternalTimestampMs(signal?.clientUpdatedAt) || 0;
+      if (expectedClientUpdatedAt > 0 && lastCloudClientUpdatedAtRef.current >= expectedClientUpdatedAt) {
+        return;
+      }
+
+      await refreshCloudSharedState({
+        source: attempt === 0 ? 'signal-refresh' : `signal-refresh-${attempt}`,
+        preferServer: true,
+        clearWhenEmpty: false,
+      });
+
+      if (isDisposed) return;
+      if (expectedClientUpdatedAt > 0 && lastCloudClientUpdatedAtRef.current >= expectedClientUpdatedAt) {
+        return;
+      }
+      if (attempt >= 7) return;
+
+      const retryDelayMs = attempt === 0
+        ? 250
+        : Math.min(2000, 500 + (attempt * 250));
+
+      if (typeof window !== 'undefined') {
+        cloudSignalRefreshTimerRef.current = window.setTimeout(() => {
+          runSignalRefresh(signal, attempt + 1);
+        }, retryDelayMs);
+      }
+    };
+
+    const unsubscribe = subscribeToCloudSyncSignal((signalPayload) => {
+      const signal = signalPayload?.signal && typeof signalPayload.signal === 'object'
+        ? signalPayload.signal
+        : null;
+      const revision = sanitizeText(signal?.revision || '', 160);
+
+      if (!signal || !revision) return;
+      if (signal.instanceId === appInstanceIdRef.current) return;
+      if (revision === lastCloudSignalRevisionRef.current) return;
+
+      lastCloudSignalRevisionRef.current = revision;
+
+      logCloudSyncDebug('signal-received', {
+        reason: signal.reason || 'state-sync',
+        priority: signal.priority || 'normal',
+        clientUpdatedAt: signal.clientUpdatedAt || null,
+      });
+
+      if (signal.activeSOSAlert) {
+        const currentSOS = (
+          activeSOSAlertRef.current?.id === signal.activeSOSAlert.id
+            ? activeSOSAlertRef.current
+            : sosHistoryRef.current.find((entry) => entry.id === signal.activeSOSAlert.id)
+        ) || null;
+        const mergedSOS = mergeSOSRecords(currentSOS || {}, signal.activeSOSAlert);
+
+        setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, mergedSOS));
+        setActiveSOSAlert((previousAlert) => (
+          resolveLatestActiveSOSAlert(mergeSOSHistoryCollection(
+            [...(Array.isArray(sosHistoryRef.current) ? sosHistoryRef.current : []), previousAlert].filter(Boolean),
+            [mergedSOS],
+          ))
+        ));
+      }
+
+      clearPendingRefresh();
+      runSignalRefresh(signal, 0);
+    }, (error) => {
+      console.error('Gagal subscribe sinyal sinkronisasi cloud', error);
+    });
+    return () => {
+      isDisposed = true;
+      clearPendingRefresh();
+      unsubscribe();
+    };
+  }, [hasOperationalCloudAccess, refreshCloudSharedState]);
+  useEffect(() => {
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => {};
+
+    let isDisposed = false;
+
     const runRefresh = (source, options = {}) => {
       if (isDisposed) return;
       refreshCloudSharedState({
@@ -6527,7 +6738,7 @@ export function AppProvider({ children }) {
             preferServer: true,
             clearWhenEmpty: false,
           });
-        }, 45000)
+        }, 15000)
       : null;
 
     if (typeof window !== 'undefined') {
@@ -6618,11 +6829,13 @@ export function AppProvider({ children }) {
               users: preparedState.usersData.length,
             });
             const receivedAtServerMs = getTrustedNowMs();
+            const commitClientUpdatedAt = Date.now();
             const verifiedPreparedState = markSharedStateTimeAuditReceived(
               mergeSharedStateSnapshots({}, preparedState),
               receivedAtServerMs,
             );
             const savedState = await saveCloudAppState(verifiedPreparedState, {
+              clientUpdatedAt: commitClientUpdatedAt,
               mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
                 mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
               ),
@@ -6635,8 +6848,19 @@ export function AppProvider({ children }) {
 
             if (!committedSerializedState) return;
 
+            lastCloudClientUpdatedAtRef.current = Math.max(
+              lastCloudClientUpdatedAtRef.current,
+              commitClientUpdatedAt,
+            );
             applyCloudSharedState(committedState, {
               receivedAtServerMs,
+            });
+            void emitCloudSyncSignal({
+              reason: shouldSkipAssetUpload ? 'state-sync-urgent' : 'state-sync',
+              priority: shouldSkipAssetUpload ? 'urgent' : 'normal',
+              clientUpdatedAt: commitClientUpdatedAt,
+              activeSOSAlert: committedState.activeSOSAlert,
+              shipName: operationalShipName,
             });
 
             if (shouldSkipAssetUpload && latestHasPendingLocalAssets) {
@@ -6654,7 +6878,7 @@ export function AppProvider({ children }) {
     }, syncDelayMs);
 
     return () => clearTimeout(timerId);
-  }, [applyCloudSharedState, cloudSyncBootstrapped, cloudSyncKick, currentShiftMeta.key, hasOperationalCloudAccess, hasUploadableLocalAssets, isOffline, prepareSharedStateForCloudSync, requestCloudSync, sharedState]);
+  }, [applyCloudSharedState, cloudSyncBootstrapped, cloudSyncKick, currentShiftMeta.key, emitCloudSyncSignal, hasOperationalCloudAccess, hasUploadableLocalAssets, isOffline, operationalShipName, prepareSharedStateForCloudSync, requestCloudSync, sharedState]);
   useEffect(() => { saveAuthSession(sessionUserId); }, [sessionUserId]);
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {

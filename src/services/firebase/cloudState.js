@@ -1,3 +1,11 @@
+/*
+Tujuan: Menyediakan adapter sinkronisasi cloud SmartPatrol untuk shared state, sinyal realtime ringan, dan upload aset operasional.
+Caller: AppContextRuntime dan service Firebase lain yang perlu baca/tulis state operasional.
+Dependensi: Firebase Firestore, Functions, Storage, dan singleton app Firebase client.
+Main Functions: Subscribe snapshot shared-state, publish sinyal sinkronisasi kecil, simpan state cloud, dan upload aset patroli.
+Side Effects: Membaca/menulis dokumen Firestore `smartpatrol/*`, memanggil callable upload aset, dan mengunggah blob ke Storage.
+*/
+
 import {
   doc,
   getDoc,
@@ -13,12 +21,16 @@ import { firebaseDb, firebaseFunctions, firebaseStorage } from './app';
 
 const CLOUD_STATE_COLLECTION = 'smartpatrol';
 const CLOUD_STATE_DOCUMENT = 'shared-state';
+const CLOUD_SIGNAL_DOCUMENT = 'shared-signal';
 const CLOUD_STATE_SCHEMA_VERSION = 1;
 const isCloudSyncAllowedByEnv = import.meta.env.VITE_ENABLE_CLOUD_SYNC !== '0';
 const isCloudWriteAllowedByEnv = import.meta.env.VITE_ENABLE_CLOUD_SYNC_WRITE !== '0';
 
 const cloudStateRef = firebaseDb
   ? doc(firebaseDb, CLOUD_STATE_COLLECTION, CLOUD_STATE_DOCUMENT)
+  : null;
+const cloudSignalRef = firebaseDb
+  ? doc(firebaseDb, CLOUD_STATE_COLLECTION, CLOUD_SIGNAL_DOCUMENT)
   : null;
 
 const isCloudSyncEnabled = Boolean(firebaseDb) && isCloudSyncAllowedByEnv;
@@ -29,6 +41,23 @@ export function subscribeToCloudAppState(callback, onError) {
 
   return onSnapshot(
     cloudStateRef,
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        callback(null);
+        return;
+      }
+
+      callback(snapshot.data());
+    },
+    onError,
+  );
+}
+
+export function subscribeToCloudSyncSignal(callback, onError) {
+  if (!cloudSignalRef) return () => {};
+
+  return onSnapshot(
+    cloudSignalRef,
     (snapshot) => {
       if (!snapshot.exists()) {
         callback(null);
@@ -64,7 +93,7 @@ export async function fetchCloudAppState(options = {}) {
 }
 
 export async function saveCloudAppState(state, options = {}) {
-  const { mergeState } = options;
+  const { mergeState, clientUpdatedAt = Date.now() } = options;
   if (!cloudStateRef || !isCloudWriteEnabled) return state;
 
   if (typeof mergeState === 'function') {
@@ -77,7 +106,7 @@ export async function saveCloudAppState(state, options = {}) {
 
       transaction.set(cloudStateRef, {
         schemaVersion: CLOUD_STATE_SCHEMA_VERSION,
-        clientUpdatedAt: Date.now(),
+        clientUpdatedAt,
         updatedAt: serverTimestamp(),
         state: resolvedState,
       });
@@ -88,12 +117,32 @@ export async function saveCloudAppState(state, options = {}) {
 
   await setDoc(cloudStateRef, {
     schemaVersion: CLOUD_STATE_SCHEMA_VERSION,
-    clientUpdatedAt: Date.now(),
+    clientUpdatedAt,
     updatedAt: serverTimestamp(),
     state,
   });
 
   return state;
+}
+
+export async function publishCloudSyncSignal(signal) {
+  if (!cloudSignalRef || !isCloudWriteEnabled || !signal || typeof signal !== 'object') return null;
+
+  const clientUpdatedAt = Number.isFinite(signal.clientUpdatedAt)
+    ? signal.clientUpdatedAt
+    : Date.now();
+
+  await setDoc(cloudSignalRef, {
+    schemaVersion: CLOUD_STATE_SCHEMA_VERSION,
+    clientUpdatedAt,
+    updatedAt: serverTimestamp(),
+    signal: {
+      ...signal,
+      clientUpdatedAt,
+    },
+  });
+
+  return signal;
 }
 
 export async function uploadCloudDataUrlAsset({ dataUrl, path }) {

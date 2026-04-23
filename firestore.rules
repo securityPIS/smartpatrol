@@ -39,6 +39,10 @@ service cloud.firestore {
       allow read, write: if hasOperationalSharedStateAccess();
     }
 
+    match /smartpatrol/shared-signal {
+      allow read, write: if hasOperationalSharedStateAccess();
+    }
+
     match /smartpatrol/{document=**} {
       allow read, write: if false;
     }

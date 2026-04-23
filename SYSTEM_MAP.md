@@ -14,7 +14,7 @@
 | **Framework** | React 19 + Vite 8 + TailwindCSS v4 |
 | **UI** | Single Page App, responsive (mobile-first + desktop sidebar), dark theme Chakra Petch font, glassmorphism style |
 | **Backend** | Firebase (Auth, Firestore, Storage, Cloud Functions, Hosting) |
-| **Database** | Firestore (single document `smartpatrol/shared-state`, diperlakukan sebagai blob state tanpa query field) + localStorage + IndexedDB (gambar) |
+| **Database** | Firestore (dokumen `smartpatrol/shared-state` sebagai blob state + `smartpatrol/shared-signal` sebagai pemicu refresh realtime cepat) + localStorage + IndexedDB (gambar) |
 | **Auth** | Firebase Auth (email/password) sebagai sumber utama. Approval akses operasional memakai `userAccess/{uid}` dan onboarding publik memakai `pendingRegistrations/{uid}`. |
 | **Hosting** | Firebase Hosting (region: `asia-southeast2`) |
 | **Pola arsitektur** | **Offline-first SPA** — state disimpan di localStorage, disinkronkan ke Firestore via merge. Tidak ada REST API tradisional; semua logika bisnis ada di client-side React Context. Cloud Function hanya menyediakan trusted server time. |
@@ -101,6 +101,10 @@ AppProvider useEffect:
     → auditIncomingCheckpoints (markTimeAuditRecordReceived + receivedAtServerMs)
     → mergeSharedStateSnapshots(localState, cloudState)
     → applyMergedState → setState × N domain
+  → subscribeToCloudSyncSignal(onSnapshot callback)
+    → signal doc kecil berubah
+    → refreshCloudSharedState(preferServer=true) retry cepat sampai `clientUpdatedAt` shared-state ikut maju
+    → khusus SOS: alert ringkas bisa dipasang lokal lebih dulu sambil menunggu state penuh
 
 scheduleCloudSync (debounced write):
   → createCloudSyncStateSnapshot(localState)
