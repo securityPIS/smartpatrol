@@ -9,7 +9,10 @@ test('firestore rules tidak lagi public-open dan punya koleksi security sidecar'
   assert.match(rules, /match \/smartpatrol\/shared-state/);
   assert.match(rules, /match \/pendingRegistrations\/\{uid\}/);
   assert.match(rules, /match \/userAccess\/\{uid\}/);
+  assert.match(rules, /match \/patrolReports\/\{shiftKey\}\/ships\/\{shipId\}\/checkpoints\/\{checkpointId\}/);
   assert.match(rules, /hasOperationalSharedStateAccess/);
+  assert.match(rules, /isValidPatrolReportWrite/);
+  assert.match(rules, /isAssignedOperationalShip/);
 });
 
 test('storage rules memisahkan aset onboarding dari aset operasional', async () => {

@@ -1,6 +1,6 @@
 # SYSTEM_MAP — SmartPatrol
 
-> Peta sistem otomatis. Terakhir diperbarui: 2026-04-22.
+> Peta sistem otomatis. Terakhir diperbarui: 2026-04-25.
 > Bahasa pemrograman: **JavaScript (React 19 + Vite 8)**.
 
 ---
@@ -14,7 +14,7 @@
 | **Framework** | React 19 + Vite 8 + TailwindCSS v4 |
 | **UI** | Single Page App, responsive (mobile-first + desktop sidebar), dark theme Chakra Petch font, glassmorphism style |
 | **Backend** | Firebase (Auth, Firestore, Storage, Cloud Functions, Hosting) |
-| **Database** | Firestore (dokumen `smartpatrol/shared-state` sebagai blob state + `smartpatrol/shared-signal` sebagai pemicu refresh realtime cepat) + localStorage + IndexedDB (gambar) |
+| **Database** | Firestore (koleksi domain `patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}` untuk realtime laporan kecil + dokumen `smartpatrol/shared-state` sebagai fallback/cache global + `smartpatrol/shared-signal`) + localStorage + IndexedDB (gambar) |
 | **Auth** | Firebase Auth (email/password) sebagai sumber utama. Approval akses operasional memakai `userAccess/{uid}` dan onboarding publik memakai `pendingRegistrations/{uid}`. |
 | **Hosting** | Firebase Hosting (region: `asia-southeast2`) |
 | **Pola arsitektur** | **Offline-first SPA** — state disimpan di localStorage, disinkronkan ke Firestore via merge. Tidak ada REST API tradisional; semua logika bisnis ada di client-side React Context. Cloud Function hanya menyediakan trusted server time. |
@@ -65,6 +65,8 @@ PatrolPage[handleActionClick(checkpointId, type)]
     → createTrustedTimestampRecord() (NTP anchor)
     → normalizeTimeAuditRecord()
     → setCheckpointsByShip(updated)
+    → savePatrolReport(Firestore domain doc kecil, mediaStatus uploading/ready)
+    → uploadCloudDataUrlAsset(Storage) → update patrolReports photoUrl
     → scheduleCloudSync → saveCloudAppState(Firestore) via mergeSharedStateSnapshots
 ```
 
@@ -96,6 +98,9 @@ AppProvider init:
 
 ```
 AppProvider useEffect:
+  → subscribeToPatrolReports(active shift/ship)
+    → mergePatrolReportDocumentsIntoCheckpoints
+    → laporan lintas-device muncul dari doc kecil tanpa menunggu shared-state blob
   → subscribeToCloudAppState(onSnapshot callback)
   → handleCloudSnapshot(incomingData)
     → auditIncomingCheckpoints (markTimeAuditRecordReceived + receivedAtServerMs)
@@ -163,7 +168,8 @@ SmartPatrol/
 │   │   │   ├── app.js            # Firebase SDK init (getApp, getAuth, getFirestore, getStorage)
 │   │   │   ├── auth.js           # Login/register/provision/logout Firebase Auth + normalisasi error auth/callable
 │   │   │   ├── access.js         # Pending registration, approval hooks, binding akses operasional, upload aset onboarding
-│   │   │   └── cloudState.js     # Firestore CRUD: subscribe, fetch, save, upload asset state operasional
+│   │   │   ├── cloudState.js     # Firestore CRUD: subscribe, fetch, save, upload asset state operasional
+│   │   │   └── patrolReports.js  # Firestore domain report kecil per checkpoint untuk realtime lintas-device
 │   │   └── time/
 │   │       ├── trustedTime.js    # NTP-like trusted clock: sync, tamper detection, offline session
 │   │       ├── trustedTimePolicy.js # Helper murni drift/tamper untuk audit dan smoke test
@@ -266,6 +272,7 @@ SmartPatrol/
 | `services/firebase/auth.js` | `loginWithFirebaseEmail`, `registerWithFirebaseEmail`, `provisionFirebaseEmailUser`, `logoutFirebaseUser`, `subscribeToFirebaseAuthChanges` | Wrapper Firebase Auth. `provisionFirebaseEmailUser` membuat akun baru tanpa mengganti sesi admin (isolated temp app). |
 | `services/firebase/access.js` | `createPendingRegistration`, `uploadRegistrationPhotoAsset`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `subscribeToPendingRegistrations` | Lapisan onboarding terisolasi dan sidecar authz. Public register hanya menulis `pendingRegistrations/{uid}`, sedangkan approval/binding akses operasional dijalankan lewat Cloud Functions. |
 | `services/firebase/cloudState.js` | `subscribeToCloudAppState`, `fetchCloudAppState`, `saveCloudAppState`, `uploadCloudDataUrlAsset` | CRUD Firestore single-document (`smartpatrol/shared-state`). Menggunakan `runTransaction` untuk merge. Akses client sekarang digate oleh `userAccess/{uid}` di rules. |
+| `services/firebase/patrolReports.js` | `subscribeToPatrolReports`, `savePatrolReport` | CRUD Firestore domain kecil untuk `patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}`. Dipakai agar laporan patroli dan status media muncul realtime tanpa menunggu merge blob besar. |
 | `services/time/trustedTime.js` | `initializeTrustedTime`, `getTrustedNowMs`, `getTrustedDate`, `getTrustedTimeSnapshot`, `createTrustedTimestampRecord`, `syncServerTime`, `detectClockTampering`, `subscribeTrustedTime`, `startOfflineSession`, `finishOfflineSession` | NTP-like clock: sinkronisasi ke server, deteksi tamper via `performance.now()` drift, offline session tracking. |
 | `services/time/trustedTimePolicy.js` | `calculateClockDriftMs`, `isClockDriftSuspicious` | Helper murni untuk menghitung drift audit trusted time dan smoke test. |
 | `services/time/timeAudit.js` | `buildTimeAuditInfo`, `summarizeTimeAudit`, `normalizeTimeAuditRecord`, `markTimeAuditRecordReceived`, `resolveTimeVerificationStatus`, `hasTimeAuditMetadata` | Audit trail setiap record: menentukan trust level (`server-trusted`, `offline-trusted`, `offline-interrupted`, `unverified`) dan verification status (`verified`, `pending-sync`, `needs-review`, `suspicious`, `legacy`). |
@@ -357,6 +364,16 @@ Sidecar authz/security:
 ```
 pendingRegistrations/{uid} -> profil onboarding publik terbatas (pending/approved/rejected)
 userAccess/{uid} -> role, status, shipAssigned, enabled flag, dan sumber approval untuk rules
+```
+
+Domain report realtime:
+
+```
+patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}
+  -> satu dokumen kecil per checkpoint report aktif
+  -> metadata laporan, audit timestamp, GPS/cuaca, mediaStatus, photoUrl Storage
+  -> listener device lain merge langsung ke checkpointsByShip
+  -> shared-state tetap ditulis sebagai fallback/cache selama migrasi domain bertahap
 ```
 
 ```
@@ -472,7 +489,7 @@ registration-assets/{uid}/** -> aset onboarding publik milik pemilik registrasi
 | Service | Tujuan | Modul Pemanggil |
 |---|---|---|
 | **Firebase Auth** | Autentikasi email/password | `services/firebase/auth.js` → `AppContextRuntime` |
-| **Firestore** | Penyimpanan state operasional terpusat + sidecar authz (`pendingRegistrations`, `userAccess`) | `services/firebase/cloudState.js`, `services/firebase/access.js` → `AppContextRuntime` |
+| **Firestore** | Penyimpanan state operasional domain + fallback shared-state + sidecar authz (`pendingRegistrations`, `userAccess`) | `services/firebase/patrolReports.js`, `services/firebase/cloudState.js`, `services/firebase/access.js` → `AppContextRuntime` |
 | **Firebase Storage** | Upload foto/dokumen ke cloud | `services/firebase/cloudState.js` (`uploadCloudDataUrlAsset`) |
 | **Firebase Hosting** | Deploy SPA | `firebase.json` |
 | **Firebase Cloud Functions** | Server time endpoint (`/api/server-time`) + approval/binding akses operasional | `functions/index.js` → `services/time/trustedTime.js`, `services/firebase/access.js` |

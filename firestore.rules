@@ -31,6 +31,77 @@ service cloud.firestore {
         && userAccessDoc().data.reviewState == 'approved';
     }
 
+    function isAssignedOperationalShip(shipName) {
+      return hasOperationalSharedStateAccess()
+        && shipName is string
+        && userAccessDoc().data.shipAssigned == shipName;
+    }
+
+    function canReadPatrolReport() {
+      return hasOperationalSharedStateAccess()
+        && (isAdmin() || isAssignedOperationalShip(resource.data.shipName));
+    }
+
+    function hasValidPatrolReportKeys() {
+      return request.resource.data.keys().hasOnly([
+        'schemaVersion',
+        'clientUpdatedAt',
+        'serverUpdatedAt',
+        'firestoreId',
+        'id',
+        'checkpointId',
+        'checkpointName',
+        'name',
+        'desc',
+        'status',
+        'pendingOrigin',
+        'isTemporaryShiftNode',
+        'createdInShiftKey',
+        'shipId',
+        'shipName',
+        'shiftKey',
+        'incidentId',
+        'completedBy',
+        'completedByUserId',
+        'date',
+        'time',
+        'completedAt',
+        'updatedAt',
+        'resultType',
+        'photoUrl',
+        'galleryPhotos',
+        'mediaStatus',
+        'kejadian',
+        'penyebab',
+        'tindakLanjut',
+        'shipSnapshot',
+        'gpsSnapshot',
+        'weatherSnapshot',
+        'occurredAtTrustedMs',
+        'receivedAtServerMs',
+        'timeTrustLevel',
+        'verificationStatus',
+        'clockTamperDetected'
+      ]);
+    }
+
+    function isValidPatrolReportWrite(shiftKey, shipId, checkpointId) {
+      return hasOperationalSharedStateAccess()
+        && hasValidPatrolReportKeys()
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.clientUpdatedAt is number
+        && request.resource.data.serverUpdatedAt == request.time
+        && request.resource.data.shiftKey == shiftKey
+        && request.resource.data.shipId == shipId
+        && request.resource.data.checkpointId == checkpointId
+        && request.resource.data.shipName is string
+        && request.resource.data.status in ['pending', 'completed', 'missed']
+        && request.resource.data.mediaStatus in ['none', 'uploading', 'ready', 'failed']
+        && (request.resource.data.resultType == null
+          || request.resource.data.resultType in ['aman', 'temuan', 'missed'])
+        && (isAdmin() || isAssignedOperationalShip(request.resource.data.shipName));
+    }
+
     function isOwner(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
@@ -45,6 +116,12 @@ service cloud.firestore {
 
     match /smartpatrol/{document=**} {
       allow read, write: if false;
+    }
+
+    match /patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId} {
+      allow read: if canReadPatrolReport();
+      allow create, update: if isValidPatrolReportWrite(shiftKey, shipId, checkpointId);
+      allow delete: if false;
     }
 
     match /pendingRegistrations/{uid} {

@@ -35,6 +35,10 @@ import {
   uploadCloudDataUrlAsset,
 } from '../services/firebase/cloudState';
 import {
+  savePatrolReport,
+  subscribeToPatrolReports,
+} from '../services/firebase/patrolReports';
+import {
   approvePendingRegistration,
   createPendingRegistration,
   rejectPendingRegistration,
@@ -3237,6 +3241,136 @@ function compactCheckpointRecordForCloudSync(record = {}) {
   };
 }
 
+function createPatrolReportDomainRecord(checkpoint = {}, options = {}) {
+  if (!checkpoint || typeof checkpoint !== 'object') return null;
+
+  const checkpointId = sanitizeText(checkpoint.checkpointId || checkpoint.id || '', 160);
+  const shipId = sanitizeText(checkpoint.shipId || '', 160);
+  const shipName = sanitizeText(checkpoint.shipName || '', 100);
+  const shiftKey = sanitizeText(checkpoint.shiftKey || '', 160);
+  if (!checkpointId || !shipId || !shipName || !shiftKey) return null;
+
+  const photoUrl = typeof options.photoUrl === 'string'
+    ? options.photoUrl
+    : typeof checkpoint.photoUrl === 'string'
+      ? checkpoint.photoUrl
+      : null;
+  const galleryPhotos = Array.isArray(options.galleryPhotos)
+    ? options.galleryPhotos
+    : ensureArray(checkpoint.galleryPhotos);
+  const hasReadyMedia = Boolean(photoUrl)
+    || galleryPhotos.some((galleryPhoto) => Boolean(galleryPhoto?.photoUrl));
+  const mediaStatus = sanitizeText(options.mediaStatus || '', 20)
+    || (hasReadyMedia ? 'ready' : 'none');
+  const normalizedCheckpoint = compactCheckpointRecordForCloudSync({
+    ...checkpoint,
+    id: checkpointId,
+    checkpointId,
+    checkpointName: sanitizeText(checkpoint.checkpointName || checkpoint.name || '', 100),
+    shipId,
+    shipName,
+    shiftKey,
+    photoUrl,
+    galleryPhotos,
+  });
+  const normalizedGalleryPhotos = ensureArray(normalizedCheckpoint.galleryPhotos).map((galleryPhoto) => (
+    compactMediaAuditRecordForCloudSync({
+      ...galleryPhoto,
+      photoUrl: typeof galleryPhoto?.photoUrl === 'string' ? galleryPhoto.photoUrl : null,
+    })
+  ));
+
+  return {
+    checkpointId,
+    checkpointName: sanitizeText(checkpoint.checkpointName || checkpoint.name || '', 100),
+    id: checkpointId,
+    name: sanitizeText(checkpoint.name || checkpoint.checkpointName || '', 100),
+    desc: sanitizeText(checkpoint.desc || '', 240),
+    shipId,
+    shipName,
+    shiftKey,
+    status: sanitizeText(checkpoint.status || 'pending', 20) || 'pending',
+    pendingOrigin: sanitizeText(checkpoint.pendingOrigin || '', 40) || null,
+    isTemporaryShiftNode: Boolean(checkpoint.isTemporaryShiftNode),
+    createdInShiftKey: sanitizeText(checkpoint.createdInShiftKey || '', 160) || null,
+    incidentId: sanitizeText(checkpoint.incidentId || '', 180) || null,
+    completedBy: sanitizeText(checkpoint.completedBy || '', 100) || '',
+    completedByUserId: sanitizeText(checkpoint.completedByUserId || '', 160) || null,
+    date: sanitizeText(checkpoint.date || '', 40) || '',
+    time: sanitizeText(checkpoint.time || '', 20) || '',
+    completedAt: typeof checkpoint.completedAt === 'string' ? checkpoint.completedAt : null,
+    updatedAt: typeof checkpoint.updatedAt === 'string' ? checkpoint.updatedAt : null,
+    resultType: sanitizeText(checkpoint.resultType || '', 20) || null,
+    photoUrl,
+    galleryPhotos: normalizedGalleryPhotos,
+    mediaStatus,
+    kejadian: sanitizeMultilineText(checkpoint.kejadian || '', 320),
+    penyebab: sanitizeMultilineText(checkpoint.penyebab || '', 280),
+    tindakLanjut: sanitizeMultilineText(checkpoint.tindakLanjut || '', 280),
+    shipSnapshot: normalizedCheckpoint.shipSnapshot || null,
+    gpsSnapshot: normalizedCheckpoint.gpsSnapshot || null,
+    weatherSnapshot: normalizedCheckpoint.weatherSnapshot || null,
+    ...compactTimeAuditFieldsForCloudSync(checkpoint),
+  };
+}
+
+function createCheckpointFromPatrolReportDocument(report = {}) {
+  const checkpointId = sanitizeText(report.checkpointId || report.id || report.firestoreId || '', 160);
+  const shipId = sanitizeText(report.shipId || '', 160);
+  const shipName = sanitizeText(report.shipName || '', 100);
+  const shiftKey = sanitizeText(report.shiftKey || '', 160);
+  if (!checkpointId || !shipId || !shipName || !shiftKey) return null;
+
+  return normalizeTimeAuditRecord({
+    ...report,
+    id: checkpointId,
+    name: sanitizeText(report.name || report.checkpointName || '', 100),
+    shipId,
+    shipName,
+    shiftKey,
+    photoUrl: typeof report.photoUrl === 'string' ? report.photoUrl : null,
+    galleryPhotos: ensureArray(report.galleryPhotos),
+  }, {
+    fallbackTimestampKeys: ['completedAt', 'updatedAt', 'createdAt'],
+  });
+}
+
+function mergePatrolReportDocumentsIntoCheckpoints(previousState = {}, reportDocuments = []) {
+  if (!Array.isArray(reportDocuments) || reportDocuments.length === 0) return previousState;
+
+  let didChange = false;
+  const nextState = { ...(previousState || {}) };
+
+  reportDocuments.forEach((reportDocument) => {
+    const checkpointReport = createCheckpointFromPatrolReportDocument(reportDocument);
+    if (!checkpointReport?.shipId || !checkpointReport.id) return;
+
+    const currentShipCheckpoints = ensureArray(nextState[checkpointReport.shipId]);
+    const checkpointIndex = currentShipCheckpoints.findIndex((checkpoint) => (
+      String(checkpoint?.id) === String(checkpointReport.id)
+      || createCheckpointNameKey(checkpoint?.name) === createCheckpointNameKey(checkpointReport.name)
+    ));
+    const nextShipCheckpoints = [...currentShipCheckpoints];
+
+    if (checkpointIndex >= 0) {
+      const mergedCheckpoint = mergeCheckpointRecord(nextShipCheckpoints[checkpointIndex], checkpointReport);
+      if (serializeSharedStateSnapshot(mergedCheckpoint) === serializeSharedStateSnapshot(nextShipCheckpoints[checkpointIndex])) {
+        return;
+      }
+      nextShipCheckpoints[checkpointIndex] = mergedCheckpoint;
+    } else if (checkpointReport.status === 'completed' || checkpointReport.isTemporaryShiftNode) {
+      nextShipCheckpoints.push(checkpointReport);
+    } else {
+      return;
+    }
+
+    nextState[checkpointReport.shipId] = nextShipCheckpoints;
+    didChange = true;
+  });
+
+  return didChange ? nextState : previousState;
+}
+
 function compactIncidentRecordForCloudSync(record = {}) {
   if (!record || typeof record !== 'object') return record;
 
@@ -3704,6 +3838,8 @@ export function AppProvider({ children }) {
   const cloudSaveQueueRef = useRef(Promise.resolve());
   const cloudFetchInFlightRef = useRef(false);
   const cloudSignalRefreshTimerRef = useRef(null);
+  const patrolReportDomainWriteCacheRef = useRef(new Map());
+  const patrolReportDomainUploadInFlightRef = useRef(new Set());
   const localSharedStateRef = useRef(null);
   const activeSOSAlertRef = useRef(activeSOSAlert);
   const sosHistoryRef = useRef(sosHistory);
@@ -4022,6 +4158,19 @@ export function AppProvider({ children }) {
   const operationalShipName = currentUserRecord?.role === ACCESS_ROLES.ADMIN
     ? null
     : (operationalShip?.name || (isPetugas ? null : currentUserRecord?.shipAssigned || shipsData[0]?.name || null));
+  const patrolReportSubscriptionTargets = useMemo(() => {
+    if (!currentUserRecord || !currentShiftMeta?.key) return [];
+    if (isAdmin) {
+      return ensureArray(shipsData)
+        .filter(ship => ensureObject(ship) && ship.id)
+        .map(ship => ({ shipId: ship.id, shipName: '' }));
+    }
+
+    const assignedShip = operationalShip || assignedShipForCurrentUser;
+    return assignedShip?.id && assignedShip?.name
+      ? [{ shipId: assignedShip.id, shipName: assignedShip.name }]
+      : [];
+  }, [assignedShipForCurrentUser, currentShiftMeta?.key, currentUserRecord, isAdmin, operationalShip, shipsData]);
   const activeOperationalGuards = useMemo(
     () => ensureArray(usersData).filter(user => (
       user.shipAssigned === operationalShipName
@@ -4388,6 +4537,85 @@ export function AppProvider({ children }) {
       sosHistory: boundedStateSnapshot.sosHistory || [],
     });
   }, [prepareCloudPhotoUrl]);
+  const syncPatrolReportToDomain = useCallback(async (checkpoint, options = {}) => {
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return null;
+
+    const checkpointReport = createPatrolReportDomainRecord(checkpoint);
+    if (!checkpointReport) return null;
+
+    const reportKey = `${checkpointReport.shiftKey}|${checkpointReport.shipId}|${checkpointReport.checkpointId}`;
+    const galleryPhotos = ensureArray(checkpointReport.galleryPhotos);
+    const hasLocalMedia = isLocalOnlyAssetUrl(checkpointReport.photoUrl)
+      || galleryPhotos.some((galleryPhoto) => isLocalOnlyAssetUrl(galleryPhoto?.photoUrl));
+    const pendingReport = createPatrolReportDomainRecord(checkpointReport, {
+      photoUrl: hasLocalMedia ? stripLocalAssetUrlSync(checkpointReport.photoUrl) : checkpointReport.photoUrl,
+      galleryPhotos: galleryPhotos.map((galleryPhoto) => ({
+        ...galleryPhoto,
+        photoUrl: hasLocalMedia ? stripLocalAssetUrlSync(galleryPhoto?.photoUrl) : galleryPhoto?.photoUrl || null,
+      })),
+      mediaStatus: hasLocalMedia ? 'uploading' : checkpointReport.mediaStatus,
+    });
+
+    if (!pendingReport) return null;
+
+    const writeIfChanged = async (report) => {
+      const serializedReport = serializeSharedStateSnapshot(report);
+      if (!serializedReport || patrolReportDomainWriteCacheRef.current.get(reportKey) === serializedReport) {
+        return report;
+      }
+
+      await savePatrolReport(report, {
+        clientUpdatedAt: Date.now(),
+      });
+      patrolReportDomainWriteCacheRef.current.set(reportKey, serializedReport);
+      return report;
+    };
+
+    await writeIfChanged(pendingReport);
+
+    if (!hasLocalMedia || options.skipMediaUpload || patrolReportDomainUploadInFlightRef.current.has(reportKey)) {
+      return pendingReport;
+    }
+
+    patrolReportDomainUploadInFlightRef.current.add(reportKey);
+    try {
+      const [uploadedPhotoUrl, uploadedGalleryPhotos] = await Promise.all([
+        isLocalOnlyAssetUrl(checkpointReport.photoUrl)
+          ? prepareCloudPhotoUrl(
+              checkpointReport.photoUrl,
+              ['patrol-reports', checkpointReport.shipId, checkpointReport.shiftKey, checkpointReport.checkpointId, checkpointReport.photoUrl],
+            )
+          : Promise.resolve(checkpointReport.photoUrl),
+        Promise.all(galleryPhotos.map(async (galleryPhoto, galleryIndex) => ({
+          ...galleryPhoto,
+          photoUrl: isLocalOnlyAssetUrl(galleryPhoto?.photoUrl)
+            ? await prepareCloudPhotoUrl(
+                galleryPhoto.photoUrl,
+                ['patrol-reports-gallery', checkpointReport.shipId, checkpointReport.shiftKey, checkpointReport.checkpointId, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+              )
+            : galleryPhoto?.photoUrl || null,
+        }))),
+      ]);
+      const mediaReady = Boolean(uploadedPhotoUrl)
+        || uploadedGalleryPhotos.some((galleryPhoto) => Boolean(galleryPhoto?.photoUrl));
+      const readyReport = createPatrolReportDomainRecord(checkpointReport, {
+        photoUrl: uploadedPhotoUrl || null,
+        galleryPhotos: uploadedGalleryPhotos,
+        mediaStatus: mediaReady ? 'ready' : 'failed',
+      });
+
+      if (readyReport) {
+        await writeIfChanged(readyReport);
+      }
+
+      return readyReport || pendingReport;
+    } catch (error) {
+      console.error('Gagal sync domain laporan patroli', error);
+      return pendingReport;
+    } finally {
+      patrolReportDomainUploadInFlightRef.current.delete(reportKey);
+    }
+  }, [hasOperationalCloudAccess, isOffline, prepareCloudPhotoUrl]);
   const applyCloudSharedState = useCallback((nextState, options = {}) => {
     if (!nextState || typeof nextState !== 'object') return null;
     const receivedAtServerMs = resolveExternalTimestampMs(options.receivedAtServerMs);
@@ -4653,6 +4881,13 @@ export function AppProvider({ children }) {
       }
     }
   }, [handleIncomingCloudPayload]);
+  const applyPatrolReportDocuments = useCallback((reportDocuments = []) => {
+    if (!Array.isArray(reportDocuments) || reportDocuments.length === 0) return;
+    setCheckpointsByShip((previousState) => mergePatrolReportDocumentsIntoCheckpoints(
+      previousState,
+      reportDocuments,
+    ));
+  }, []);
   const getUsersByRole = useCallback((roles) => (
     usersData.filter(user => roles.includes(user.role)).map(user => user.id)
   ), [usersData]);
@@ -5422,11 +5657,12 @@ export function AppProvider({ children }) {
       }
       // Signal dikirim SETELAH data tersimpan ke cloud (di write effect baris ~6932),
       // bukan di sini. Sebelumnya signal prematur menyebabkan Device B fetch data lama.
+      void syncPatrolReportToDomain(submittedItem);
       requestCloudSync('urgent');
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, syncPatrolReportToDomain, updateOperationalShipCheckpoints, weatherInfo]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -5434,6 +5670,13 @@ export function AppProvider({ children }) {
       confirmText: 'YA, HAPUS',
       cancelText: 'BATAL',
       onConfirm: () => { 
+        const targetCheckpoint = checkpoints.find(checkpoint => String(checkpoint.id) === String(id));
+        const resetReport = targetCheckpoint
+          ? resetCheckpointForShift(targetCheckpoint, {
+              shiftKey: currentShiftMeta.key,
+              pendingOrigin: 'manual-reset',
+            })
+          : null;
         updateOperationalShipCheckpoints(prev => prev.map(c => (
           String(c.id) === String(id)
             ? resetCheckpointForShift(c, {
@@ -5442,10 +5685,15 @@ export function AppProvider({ children }) {
               })
             : c
         )));
+        if (resetReport) {
+          void syncPatrolReportToDomain(resetReport, {
+            skipMediaUpload: true,
+          });
+        }
         setSelectedReportDetail(null); 
       } 
     }); 
-  }, [currentShiftMeta.key, updateOperationalShipCheckpoints]);
+  }, [checkpoints, currentShiftMeta.key, syncPatrolReportToDomain, updateOperationalShipCheckpoints]);
   const handleAddReportGalleryPhoto = useCallback(async (reportId) => {
     if (!reportId || selectedReportDetail?.readOnly) return;
 
@@ -6758,6 +7006,43 @@ export function AppProvider({ children }) {
       console.error('Gagal subscribe data patroli cloud', error);
     });
   }, [handleIncomingCloudPayload, hasOperationalCloudAccess]);
+  useEffect(() => {
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess || !currentShiftMeta?.key) return () => {};
+    if (patrolReportSubscriptionTargets.length === 0) return () => {};
+
+    const unsubscribers = patrolReportSubscriptionTargets.map((target) => (
+      subscribeToPatrolReports({
+        shiftKey: currentShiftMeta.key,
+        shipId: target.shipId,
+        shipName: target.shipName,
+      }, applyPatrolReportDocuments, (error) => {
+        console.error('Gagal subscribe domain laporan patroli', error);
+      })
+    ));
+
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [applyPatrolReportDocuments, currentShiftMeta.key, hasOperationalCloudAccess, patrolReportSubscriptionTargets]);
+  useEffect(() => {
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return () => {};
+    if (patrolReportSubscriptionTargets.length === 0) return () => {};
+
+    const timerId = setTimeout(() => {
+      patrolReportSubscriptionTargets.forEach((target) => {
+        ensureArray(checkpointsByShip?.[target.shipId])
+          .filter((checkpoint) => (
+            checkpoint?.status === 'completed'
+            || getCheckpointPendingOrigin(checkpoint) === 'manual-reset'
+          ))
+          .forEach((checkpoint) => {
+            void syncPatrolReportToDomain(checkpoint);
+          });
+      });
+    }, 500);
+
+    return () => clearTimeout(timerId);
+  }, [checkpointsByShip, hasOperationalCloudAccess, isOffline, patrolReportSubscriptionTargets, syncPatrolReportToDomain]);
   useEffect(() => {
     if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => {};
 
