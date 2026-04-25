@@ -6991,8 +6991,6 @@ export function AppProvider({ children }) {
               receivedAtServerMs,
             );
 
-            // Kirim state save dan signal secara PARALLEL agar Device B
-            // menerima notifikasi lebih cepat (hemat 1 round-trip network).
             const signalPayload = {
               reason: shouldSkipAssetUpload ? 'state-sync-urgent' : 'state-sync',
               priority: shouldSkipAssetUpload ? 'urgent' : 'normal',
@@ -7001,15 +6999,16 @@ export function AppProvider({ children }) {
               shipName: operationalShipName,
             };
 
-            const [savedState] = await Promise.all([
-              saveCloudAppState(verifiedPreparedState, {
-                clientUpdatedAt: commitClientUpdatedAt,
-                mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
-                  mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
-                ),
-              }),
-              emitCloudSyncSignal(signalPayload),
-            ]);
+            const savedState = await saveCloudAppState(verifiedPreparedState, {
+              clientUpdatedAt: commitClientUpdatedAt,
+              mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
+                mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
+              ),
+            });
+
+            // Signal dikirim setelah commit shared-state selesai supaya device lain
+            // tidak fetch snapshot lama dan menunggu retry signal-refresh.
+            await emitCloudSyncSignal(signalPayload);
 
             const committedState = markSharedStateTimeAuditReceived(
               mergeSharedStateSnapshots({}, savedState || verifiedPreparedState),
@@ -7023,9 +7022,18 @@ export function AppProvider({ children }) {
               lastCloudClientUpdatedAtRef.current,
               commitClientUpdatedAt,
             );
-            applyCloudSharedState(committedState, {
-              receivedAtServerMs,
-            });
+            if (shouldSkipAssetUpload && latestHasPendingLocalAssets) {
+              // Jangan terapkan snapshot urgent ke device pengirim karena snapshot
+              // itu sengaja menghapus URL idb://. State lokal harus tetap menyimpan
+              // foto agar sync normal berikutnya bisa upload ke Firebase Storage.
+              localSharedStateRef.current = createSharedStateSnapshot(
+                mergeSharedStateSnapshots(localSharedStateRef.current || {}, latestStateForWrite),
+              );
+            } else {
+              applyCloudSharedState(committedState, {
+                receivedAtServerMs,
+              });
+            }
 
             if (shouldSkipAssetUpload && latestHasPendingLocalAssets) {
               requestCloudSync('normal');
