@@ -1,3 +1,11 @@
+/*
+Tujuan: Merender gambar lokal/cloud secara aman, termasuk URL idb:// dari IndexedDB.
+Caller: Halaman dan modal yang menampilkan foto patroli, insiden, kapal, user, dan onboarding.
+Dependensi: React PureComponent dan imageStore IndexedDB.
+Main Functions: Resolve source gambar async, tampilkan placeholder loading, dan render fallback saat gagal.
+Side Effects: Membaca foto dari IndexedDB lokal tanpa menulis state aplikasi.
+*/
+
 import React from 'react';
 import { loadImageFromDB } from '../utils/imageStore';
 
@@ -9,6 +17,7 @@ export default class AsyncImage extends React.PureComponent {
       loading: true,
     };
     this._isMounted = false;
+    this._resolveSeq = 0;
   }
 
   componentDidMount() {
@@ -28,26 +37,29 @@ export default class AsyncImage extends React.PureComponent {
 
   async resolveSource(src) {
     if (!this._isMounted) return;
+    const requestSeq = this._resolveSeq + 1;
+    this._resolveSeq = requestSeq;
+    const safeSrc = typeof src === 'string' ? src : '';
 
-    if (!src) {
+    if (!safeSrc) {
       this.setState({ dataUrl: null, loading: false });
       return;
     }
 
-    if (!src.startsWith('idb://')) {
-      this.setState({ dataUrl: src, loading: false });
+    if (!safeSrc.startsWith('idb://')) {
+      this.setState({ dataUrl: safeSrc, loading: false });
       return;
     }
 
-    this.setState({ loading: true });
+    this.setState({ dataUrl: null, loading: true });
 
     try {
-      const result = await loadImageFromDB(src);
-      if (!this._isMounted) return;
+      const result = await loadImageFromDB(safeSrc);
+      if (!this._isMounted || this._resolveSeq !== requestSeq || this.props.src !== safeSrc) return;
       this.setState({ dataUrl: result, loading: false });
     } catch (error) {
       console.error('AsyncImage error:', error);
-      if (!this._isMounted) return;
+      if (!this._isMounted || this._resolveSeq !== requestSeq || this.props.src !== safeSrc) return;
       this.setState({ dataUrl: null, loading: false });
     }
   }

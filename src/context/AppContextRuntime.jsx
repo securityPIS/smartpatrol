@@ -1709,6 +1709,161 @@ function getCheckpointPendingOrigin(checkpoint) {
     : null;
 }
 
+function getCheckpointMediaTimestamp(checkpoint) {
+  if (!checkpoint || typeof checkpoint !== 'object') return null;
+
+  const trustedTimestamp = Number(checkpoint.occurredAtTrustedMs);
+  if (Number.isFinite(trustedTimestamp) && trustedTimestamp > 0) {
+    return trustedTimestamp;
+  }
+
+  const parsedTimestamp = new Date(
+    checkpoint.occurredAtTrustedIso
+    || checkpoint.completedAt
+    || checkpoint.updatedAt
+    || checkpoint.createdAt
+    || '',
+  ).getTime();
+
+  return Number.isNaN(parsedTimestamp) || parsedTimestamp <= 0
+    ? null
+    : parsedTimestamp;
+}
+
+function isCheckpointResetRecord(checkpoint) {
+  return checkpoint?.status === 'pending'
+    && ['manual-reset', 'shift-reset'].includes(getCheckpointPendingOrigin(checkpoint));
+}
+
+function isSameCheckpointMediaRevision(leftCheckpoint, rightCheckpoint) {
+  if (!leftCheckpoint || !rightCheckpoint) return false;
+
+  const leftShiftKey = String(leftCheckpoint.shiftKey || '');
+  const rightShiftKey = String(rightCheckpoint.shiftKey || '');
+  if (leftShiftKey && rightShiftKey && leftShiftKey !== rightShiftKey) return false;
+
+  const leftResultType = String(leftCheckpoint.resultType || '');
+  const rightResultType = String(rightCheckpoint.resultType || '');
+  if (leftResultType && rightResultType && leftResultType !== rightResultType) return false;
+
+  const leftIncidentId = String(leftCheckpoint.incidentId || '');
+  const rightIncidentId = String(rightCheckpoint.incidentId || '');
+  if (leftIncidentId && rightIncidentId && leftIncidentId !== rightIncidentId) return false;
+
+  const leftTimestamp = getCheckpointMediaTimestamp(leftCheckpoint);
+  const rightTimestamp = getCheckpointMediaTimestamp(rightCheckpoint);
+  if (leftTimestamp !== null && rightTimestamp !== null) {
+    return leftTimestamp === rightTimestamp;
+  }
+
+  const leftCompletedAt = String(leftCheckpoint.completedAt || leftCheckpoint.occurredAtTrustedIso || '');
+  const rightCompletedAt = String(rightCheckpoint.completedAt || rightCheckpoint.occurredAtTrustedIso || '');
+  return Boolean(leftCompletedAt && rightCompletedAt && leftCompletedAt === rightCompletedAt);
+}
+
+function mergeCheckpointGalleryPhotoRecord(basePhoto = {}, nextPhoto = {}) {
+  const baseTimestamp = getCheckpointMediaTimestamp(basePhoto);
+  const nextTimestamp = getCheckpointMediaTimestamp(nextPhoto);
+  const shouldUseNext = (nextTimestamp || 0) >= (baseTimestamp || 0);
+  const preferredPhoto = shouldUseNext ? nextPhoto : basePhoto;
+  const fallbackPhoto = shouldUseNext ? basePhoto : nextPhoto;
+
+  return {
+    ...fallbackPhoto,
+    ...preferredPhoto,
+    id: preferredPhoto.id || fallbackPhoto.id,
+    photoUrl: resolveMergedAssetUrl(preferredPhoto.photoUrl, fallbackPhoto.photoUrl),
+    author: preferredPhoto.author || fallbackPhoto.author || '',
+  };
+}
+
+function mergeCheckpointGalleryPhotos(baseGallery = [], nextGallery = []) {
+  return mergeEntitiesById(baseGallery, nextGallery, {
+    getId: (item) => item?.id || item?.createdAt || item?.photoUrl,
+    merge: mergeCheckpointGalleryPhotoRecord,
+  });
+}
+
+function shouldKeepFallbackCheckpointMedia(preferredCheckpoint, fallbackCheckpoint) {
+  if (isCheckpointResetRecord(preferredCheckpoint)) return false;
+  return isSameCheckpointMediaRevision(preferredCheckpoint, fallbackCheckpoint);
+}
+
+function resolveMergedCheckpointPhotoUrl(preferredCheckpoint, fallbackCheckpoint) {
+  const preferredPhotoUrl = typeof preferredCheckpoint?.photoUrl === 'string'
+    ? preferredCheckpoint.photoUrl
+    : '';
+  const fallbackPhotoUrl = typeof fallbackCheckpoint?.photoUrl === 'string'
+    ? fallbackCheckpoint.photoUrl
+    : '';
+
+  if (preferredPhotoUrl) {
+    return isSameCheckpointMediaRevision(preferredCheckpoint, fallbackCheckpoint)
+      ? resolveMergedAssetUrl(preferredPhotoUrl, fallbackPhotoUrl)
+      : preferredPhotoUrl;
+  }
+
+  if (shouldKeepFallbackCheckpointMedia(preferredCheckpoint, fallbackCheckpoint)) {
+    return fallbackPhotoUrl || null;
+  }
+
+  return null;
+}
+
+function resolveMergedCheckpointGalleryPhotos(preferredCheckpoint, fallbackCheckpoint) {
+  const preferredGallery = ensureArray(preferredCheckpoint?.galleryPhotos);
+  const fallbackGallery = ensureArray(fallbackCheckpoint?.galleryPhotos);
+
+  if (preferredGallery.length > 0) {
+    return isSameCheckpointMediaRevision(preferredCheckpoint, fallbackCheckpoint)
+      ? mergeCheckpointGalleryPhotos(fallbackGallery, preferredGallery)
+      : preferredGallery;
+  }
+
+  if (shouldKeepFallbackCheckpointMedia(preferredCheckpoint, fallbackCheckpoint)) {
+    return fallbackGallery;
+  }
+
+  return [];
+}
+
+function finalizeMergedCheckpointRecord(preferredCheckpoint, fallbackCheckpoint, mergedCheckpoint) {
+  const nextCheckpoint = {
+    ...mergedCheckpoint,
+    photoUrl: resolveMergedCheckpointPhotoUrl(preferredCheckpoint, fallbackCheckpoint),
+    galleryPhotos: resolveMergedCheckpointGalleryPhotos(preferredCheckpoint, fallbackCheckpoint),
+  };
+
+  if (!isCheckpointResetRecord(preferredCheckpoint)) {
+    return nextCheckpoint;
+  }
+
+  return {
+    ...nextCheckpoint,
+    completedBy: '',
+    completedByUserId: null,
+    date: '',
+    time: '',
+    completedAt: null,
+    incidentId: null,
+    resultType: null,
+    photoUrl: null,
+    galleryPhotos: [],
+    mediaStatus: 'none',
+    kejadian: '',
+    penyebab: '',
+    tindakLanjut: '',
+    occurredAtTrustedMs: null,
+    occurredAtTrustedIso: null,
+    receivedAtServerMs: null,
+    timeTrustLevel: null,
+    verificationStatus: null,
+    offlineSessionId: null,
+    offlineSessionInterrupted: false,
+    clockTamperDetected: false,
+  };
+}
+
 function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
   if (!baseCheckpoint) return nextCheckpoint;
   if (!nextCheckpoint) return baseCheckpoint;
@@ -1734,12 +1889,12 @@ function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
       ? baseCheckpoint
       : nextCheckpoint;
 
-    return {
+    return finalizeMergedCheckpointRecord(preferredCheckpoint, fallbackCheckpoint, {
       ...fallbackCheckpoint,
       ...preferredCheckpoint,
       id: preferredCheckpoint.id || fallbackCheckpoint.id,
       name: preferredCheckpoint.name || fallbackCheckpoint.name,
-    };
+    });
   }
 
   const baseIsPending = baseCheckpoint?.status === 'pending';
@@ -1763,13 +1918,12 @@ function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
     );
 
     if (isSameShiftKey && !shouldPreferPendingManualReset) {
-      return {
+      return finalizeMergedCheckpointRecord(nonPendingCheckpoint, pendingCheckpoint, {
         ...pendingCheckpoint,
         ...nonPendingCheckpoint,
         id: nonPendingCheckpoint.id || pendingCheckpoint.id,
         name: nonPendingCheckpoint.name || pendingCheckpoint.name,
-        photoUrl: resolveMergedAssetUrl(nonPendingCheckpoint.photoUrl, pendingCheckpoint.photoUrl),
-      };
+      });
     }
   }
 
@@ -1790,13 +1944,12 @@ function mergeCheckpointRecord(baseCheckpoint, nextCheckpoint) {
   const preferredCheckpoint = shouldUseNext ? nextCheckpoint : baseCheckpoint;
   const fallbackCheckpoint = shouldUseNext ? baseCheckpoint : nextCheckpoint;
 
-  return {
+  return finalizeMergedCheckpointRecord(preferredCheckpoint, fallbackCheckpoint, {
     ...fallbackCheckpoint,
     ...preferredCheckpoint,
     id: preferredCheckpoint.id || fallbackCheckpoint.id,
     name: preferredCheckpoint.name || fallbackCheckpoint.name,
-    photoUrl: resolveMergedAssetUrl(preferredCheckpoint.photoUrl, fallbackCheckpoint.photoUrl),
-  };
+  });
 }
 
 function mergeCheckpointsCollection(baseCheckpoints = [], nextCheckpoints = []) {
@@ -4744,9 +4897,8 @@ export function AppProvider({ children }) {
         historyId: previousReport.historyId || matchedCheckpoint.historyId || null,
         // Preserve documentation fields — use matched if present, else keep original
         resultType: matchedCheckpoint.resultType || previousReport.resultType,
-        photoUrl: resolveMergedAssetUrl(matchedCheckpoint.photoUrl, previousReport.photoUrl),
-        galleryPhotos: (matchedCheckpoint.galleryPhotos?.length ? matchedCheckpoint.galleryPhotos : null)
-          || previousReport.galleryPhotos || [],
+        photoUrl: resolveMergedCheckpointPhotoUrl(matchedCheckpoint, previousReport),
+        galleryPhotos: resolveMergedCheckpointGalleryPhotos(matchedCheckpoint, previousReport),
         kejadian: matchedCheckpoint.kejadian || previousReport.kejadian || '',
         penyebab: matchedCheckpoint.penyebab || previousReport.penyebab || '',
         tindakLanjut: matchedCheckpoint.tindakLanjut || previousReport.tindakLanjut || '',
@@ -5233,9 +5385,8 @@ export function AppProvider({ children }) {
         historyId: previousReport.historyId || canonicalCheckpoint.historyId || null,
         // Preserve documentation fields — use canonical if present, else keep original
         resultType: canonicalCheckpoint.resultType || previousReport.resultType,
-        photoUrl: resolveMergedAssetUrl(canonicalCheckpoint.photoUrl, previousReport.photoUrl),
-        galleryPhotos: (canonicalCheckpoint.galleryPhotos?.length ? canonicalCheckpoint.galleryPhotos : null)
-          || previousReport.galleryPhotos || [],
+        photoUrl: resolveMergedCheckpointPhotoUrl(canonicalCheckpoint, previousReport),
+        galleryPhotos: resolveMergedCheckpointGalleryPhotos(canonicalCheckpoint, previousReport),
         kejadian: canonicalCheckpoint.kejadian || previousReport.kejadian || '',
         penyebab: canonicalCheckpoint.penyebab || previousReport.penyebab || '',
         tindakLanjut: canonicalCheckpoint.tindakLanjut || previousReport.tindakLanjut || '',
