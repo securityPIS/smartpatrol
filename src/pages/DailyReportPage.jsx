@@ -216,7 +216,7 @@ function MetricCard({ title, value, subtitle, accentClass, icon, children }) {
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">{title}</p>
           <p className={`mt-3 text-3xl font-black ${accentClass}`}>{value}</p>
-          {subtitle ? <p className="mt-2 text-xs text-cyan-300/75">{subtitle}</p> : null}
+          {subtitle ? <p className="mt-2 text-xs text-cyan-300/75 metric-subtitle">{subtitle}</p> : null}
         </div>
         <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border ${accentClass.includes('emerald') ? 'border-emerald-500/30 bg-emerald-500/10' : accentClass.includes('rose') ? 'border-rose-500/30 bg-rose-500/10' : accentClass.includes('yellow') ? 'border-yellow-500/30 bg-yellow-500/10' : 'border-cyan-500/30 bg-cyan-500/10'}`}>
           {icon}
@@ -404,6 +404,7 @@ function DailyReportTrendChart({ chartData }) {
                 fill="rgba(103,232,249,0.55)"
                 fontSize="10"
                 fontWeight="700"
+                className="chart-axis-text"
               >
                 {formatMetricNumber(guide.value, guide.value % 1 === 0 ? 0 : 1)}
               </text>
@@ -473,6 +474,7 @@ function DailyReportTrendChart({ chartData }) {
                   fill="rgba(103,232,249,0.88)"
                   fontSize="10"
                   fontWeight="800"
+                  className="chart-axis-text"
                 >
                   {label.primary}
                 </text>
@@ -484,6 +486,7 @@ function DailyReportTrendChart({ chartData }) {
                     fill="rgba(103,232,249,0.58)"
                     fontSize="8"
                     fontWeight="700"
+                    className="chart-axis-text"
                   >
                     {label.secondary}
                   </text>
@@ -766,18 +769,18 @@ const DailyReportPage = React.memo(function DailyReportPage() {
 
   return (
     <div className="min-h-full overflow-y-auto p-4 pb-8 text-cyan-50 animate-in fade-in space-y-6 scrollbar-thin scrollbar-thumb-cyan-900/50">
-      <section className="rounded-[2rem] border border-cyan-800/50 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.18),transparent_35%),linear-gradient(135deg,#0b1229,#070b19_55%,#03131d)] p-5 shadow-[0_0_40px_rgba(6,182,212,0.08)]">
+      <section className="rounded-[2rem] border border-cyan-800/50 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.18),transparent_35%),linear-gradient(135deg,#0b1229,#070b19_55%,#03131d)] p-5 shadow-[0_0_40px_rgba(6,182,212,0.08)] dashboard-header-card">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-2xl">
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-400">Admin Daily Report</p>
             <h2 className="mt-2 text-3xl font-black text-white">Ringkasan Penjagaan Kapal Non-Operasional</h2>
-            <p className="mt-3 text-sm leading-relaxed text-cyan-200/75">
+            <p className="mt-3 text-sm leading-relaxed text-cyan-200/75 dashboard-header-desc">
               Dashboard ini menyajikan rangkuman kegiatan patroli keamanan, status temuan yang belum terselesaikan, pembaruan aktivitas petugas jaga, serta informasi SOS selama periode waktu yang dipilih.
             </p>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:min-w-[440px]">
-            <label className="rounded-2xl border border-cyan-800/50 bg-[#070b19]/70 p-3">
+            <label className="rounded-2xl border border-cyan-800/50 bg-[#070b19]/70 p-3 dashboard-secondary-box">
               <span className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-cyan-500">
                 <CalendarRange className="h-3.5 w-3.5" />
                 Dari Tanggal
@@ -790,7 +793,7 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                 className="w-full rounded-xl border border-cyan-800/60 bg-[#0b1229] px-3 py-3 text-sm text-cyan-50 outline-none transition-colors focus:border-cyan-400"
               />
             </label>
-            <label className="rounded-2xl border border-cyan-800/50 bg-[#070b19]/70 p-3">
+            <label className="rounded-2xl border border-cyan-800/50 bg-[#070b19]/70 p-3 dashboard-secondary-box">
               <span className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-cyan-500">
                 <CalendarRange className="h-3.5 w-3.5" />
                 Sampai Tanggal
@@ -810,7 +813,7 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                     key={filter.id}
                     type="button"
                     onClick={() => applyQuickFilter(filter.daysBack)}
-                    className={`min-w-0 rounded-full border px-2 py-1.5 text-[9px] font-black uppercase tracking-[0.14em] transition-all ${
+                    className={`min-w-0 rounded-full border px-2 py-1.5 text-[9px] font-black uppercase tracking-[0.14em] transition-all dashboard-secondary-box dashboard-filter-btn ${
                       activeQuickFilter === filter.id
                         ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 shadow-[0_0_16px_rgba(34,211,238,0.12)]'
                         : 'border-cyan-800/50 bg-[#0b1229]/70 text-cyan-500 hover:border-cyan-600 hover:text-cyan-300'
@@ -825,13 +828,13 @@ const DailyReportPage = React.memo(function DailyReportPage() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-cyan-300/70">
-          <span className="rounded-full border border-cyan-800/60 bg-[#0b1229]/70 px-3 py-1.5">
+          <span className="rounded-full border border-cyan-800/60 bg-[#0b1229]/70 px-3 py-1.5 dashboard-secondary-box dashboard-info-badge">
             Periode: {formatDateKey(startDate)} - {formatDateKey(endDate)}
           </span>
-          <span className="rounded-full border border-cyan-800/60 bg-[#0b1229]/70 px-3 py-1.5">
+          <span className="rounded-full border border-cyan-800/60 bg-[#0b1229]/70 px-3 py-1.5 dashboard-secondary-box dashboard-info-badge">
             Entry patroli: {filteredEntries.length}
           </span>
-          <span className="rounded-full border border-cyan-800/60 bg-[#0b1229]/70 px-3 py-1.5">
+          <span className="rounded-full border border-cyan-800/60 bg-[#0b1229]/70 px-3 py-1.5 dashboard-secondary-box dashboard-info-badge">
             Kapal terdeteksi: {perShipBreakdown.length}
           </span>
         </div>
@@ -1037,10 +1040,9 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-cyan-600">#{index + 1}</span>
                     <p className="truncate text-sm font-black text-white">{guard.name}</p>
                   </div>
-                  <p className="mt-1 truncate text-xs text-cyan-300/75">{guard.ship} - {guard.checkpoint}</p>
+                  <p className="mt-1 truncate text-xs text-cyan-300/75 latest-guard-subtext">{guard.ship} - {guard.checkpoint}</p>
                 </div>
                 <div className="rounded-xl border border-cyan-800/50 bg-[#0b1229] px-3 py-2 text-right">
                   <p className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Jam</p>
@@ -1119,14 +1121,14 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                   <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${incident.photoUrl ? 'xl:col-span-2' : ''}`}>
                     <div className="rounded-xl border border-cyan-900/40 bg-[#0b1229] p-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Update Terakhir</p>
-                      <p className="mt-2 text-sm font-bold text-cyan-100">{incident.lastUpdateTime}</p>
-                      <p className="mt-2 text-xs leading-relaxed text-cyan-300/75">{incident.lastUpdateLabel}</p>
+                      <p className="mt-2 text-sm font-bold text-cyan-100 incident-card-subtext">{incident.lastUpdateTime}</p>
+                      <p className="mt-2 text-xs leading-relaxed text-cyan-300/75 incident-card-subtext">{incident.lastUpdateLabel}</p>
                     </div>
                     <div className="rounded-xl border border-cyan-900/40 bg-[#0b1229] p-3">
                       <p className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Pelapor dan Progress</p>
-                      <p className="mt-2 text-sm font-bold text-cyan-100">{incident.reportedBy || '-'}</p>
-                      <p className="mt-2 text-xs text-cyan-300/75">{incident.progressCount} update progres tercatat</p>
-                      <p className="mt-1 text-xs text-cyan-500/75">Dibuat: {incident.createdLabel}</p>
+                      <p className="mt-2 text-sm font-bold text-cyan-100 incident-card-subtext">{incident.reportedBy || '-'}</p>
+                      <p className="mt-2 text-xs text-cyan-300/75 incident-card-subtext">{incident.progressCount} update progres tercatat</p>
+                      <p className="mt-1 text-xs text-cyan-500/75 incident-card-subtext">Dibuat: {incident.createdLabel}</p>
                     </div>
                   </div>
                 </div>
@@ -1180,7 +1182,7 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-black text-rose-200">{timeLabel}</p>
-                        <p className="mt-1 text-[11px] text-cyan-300/70">{dateLabel}</p>
+                        <p className="mt-1 text-[11px] text-cyan-300/70 sos-card-date">{dateLabel}</p>
                       </div>
                     </div>
                   </div>

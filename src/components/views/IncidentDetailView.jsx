@@ -279,6 +279,7 @@ export default function IncidentDetailView({ isInline = false }) {
         <div className="w-full h-64 bg-[#0b1229] relative shrink-0 cursor-pointer group" onClick={() => setPreviewPhoto({ url: selectedIncident.photoUrl, author: selectedIncident.reportedBy, time: `${selectedIncident.date} ${selectedIncident.time}` })}>
           <AsyncImage src={selectedIncident.photoUrl} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" alt="Bukti" />
           <div className="absolute inset-0 bg-gradient-to-b from-[#070b19]/80 via-transparent to-[#070b19]"></div>
+          <div className="absolute inset-0 bg-gradient-to-tr from-white/80 via-transparent to-transparent light-vignette-bl opacity-0 pointer-events-none"></div>
           {!isInline && (
             <button onClick={(event) => { event.stopPropagation(); setSelectedIncident(null); }} className="absolute top-4 left-4 p-2 bg-black/50 text-white rounded-full backdrop-blur-md border border-white/20 hover:bg-black/70 transition-colors z-10" aria-label="Tutup detail"><ChevronDown className="w-6 h-6 rotate-90" /></button>
           )}
@@ -357,7 +358,7 @@ export default function IncidentDetailView({ isInline = false }) {
                   rows={4}
                   className="w-full bg-[#070b19]/70 border border-cyan-800/40 rounded-2xl p-4 text-sm text-cyan-50 focus:border-yellow-500/50 outline-none resize-none"
                 />
-              ) : renderInfoValue(selectedIncident.deskripsi, isSOSIncident ? 'text-rose-50/90' : 'text-yellow-50/90 font-medium')}
+              ) : renderInfoValue(selectedIncident.deskripsi, `${isSOSIncident ? 'text-rose-50/90' : 'text-yellow-50/90 font-medium'} incident-info-value`)}
             </div>
 
             <div className="bg-cyan-950/20 p-4 rounded-xl border border-cyan-900/30">
@@ -435,7 +436,7 @@ export default function IncidentDetailView({ isInline = false }) {
                   rows={3}
                   className="w-full bg-[#070b19]/70 border border-cyan-800/40 rounded-2xl p-4 text-sm text-cyan-50 focus:border-yellow-500/50 outline-none resize-none"
                 />
-              ) : renderInfoValue(selectedIncident.penyebab, isSOSIncident ? 'text-rose-50/80 italic' : 'text-yellow-50/80 italic')}
+              ) : renderInfoValue(selectedIncident.penyebab, `${isSOSIncident ? 'text-rose-50/80 italic' : 'text-yellow-50/80 italic'} incident-info-value`)}
             </div>
 
             <div className="bg-[#0b1229] p-4 rounded-xl border border-cyan-900/50">
@@ -460,7 +461,7 @@ export default function IncidentDetailView({ isInline = false }) {
                   rows={4}
                   className="w-full bg-[#070b19]/70 border border-cyan-800/40 rounded-2xl p-4 text-sm text-cyan-50 focus:border-emerald-500/50 outline-none resize-none"
                 />
-              ) : renderInfoValue(selectedIncident.tindakLanjut, isSOSIncident ? 'text-rose-50/90' : 'text-emerald-50/90')}
+              ) : renderInfoValue(selectedIncident.tindakLanjut, `${isSOSIncident ? 'text-rose-50/90' : 'text-emerald-50/90'} incident-info-value`)}
             </div>
 
 

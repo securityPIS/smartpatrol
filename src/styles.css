@@ -90,13 +90,62 @@ textarea {
 .pertamina-light .bg-\[\#070b19\]\/50,
 .pertamina-light .bg-\[\#070b19\]\/60,
 .pertamina-light .bg-\[\#070b19\]\/90,
-.pertamina-light .bg-\[\#070b19\]\/95 {
-  background-color: #f3f4f6 !important;
+.pertamina-light .bg-\[\#070b19\]\/95,
+.pertamina-light .bg-\[\#091022\] {
+  background-color: #ffffff !important;
 }
 
 .pertamina-light .bg-\[\#0b1229\],
 .pertamina-light .bg-\[\#0b1229\]\/90 {
   background-color: #ffffff !important;
+}
+
+.pertamina-light .bg-\[\#0f1734\] {
+  background-color: #e0f7fa !important; /* Light Cyan for selected history items */
+}
+
+/* Fix header gradient in light mode - Hide vignette as requested */
+.pertamina-light .bg-gradient-to-b.from-\[\#070b19\]\/80.to-\[\#070b19\],
+.pertamina-light .from-\[\#070b19\]\/80,
+.pertamina-light .to-\[\#070b19\] {
+  display: none !important;
+}
+
+/* Watermark Box Overrides */
+.pertamina-light .bg-black\/70 {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+  border-color: #2563eb !important;
+}
+
+.pertamina-light .bg-black\/70 .text-cyan-400,
+.pertamina-light .bg-black\/70 .text-cyan-100\/70,
+.pertamina-light .bg-black\/70 .text-white\/90,
+.pertamina-light .bg-black\/70 .text-yellow-400,
+.pertamina-light .bg-black\/70 .text-rose-300 {
+  color: #1d4ed8 !important; /* Pertamina Deep Blue */
+  opacity: 1 !important;
+}
+
+/* Time Badge & Audit Pills - Force solid background and white text in light mode */
+.pertamina-light .bg-opacity-10.bg-emerald-500,
+.pertamina-light .bg-opacity-10.bg-rose-500,
+.pertamina-light .bg-opacity-10.bg-yellow-500 {
+  background-opacity: 1 !important;
+  opacity: 1 !important;
+}
+
+.pertamina-light .bg-opacity-10.bg-emerald-500 { background-color: #16a34a !important; } /* Green 600 */
+.pertamina-light .bg-opacity-10.bg-rose-500 { background-color: #dc2626 !important; } /* Red 600 */
+.pertamina-light .bg-opacity-10.bg-yellow-500 { background-color: #ca8a04 !important; } /* Yellow 600 */
+
+.pertamina-light .bg-opacity-10.bg-emerald-500 .text-emerald-200,
+.pertamina-light .bg-opacity-10.bg-emerald-500 .text-emerald-300,
+.pertamina-light .bg-opacity-10.bg-rose-500 .text-rose-100,
+.pertamina-light .bg-opacity-10.bg-rose-500 .text-rose-200,
+.pertamina-light .bg-opacity-10.bg-yellow-500 .text-yellow-100,
+.pertamina-light .bg-opacity-10.bg-yellow-500 .text-yellow-200 {
+  color: #ffffff !important;
+  opacity: 1 !important;
 }
 
 /* Gradient overrides removed to fix image overlays */
@@ -135,9 +184,12 @@ textarea {
 /* Yellow/Amber Text -> Orange High Contrast */
 .pertamina-light .text-yellow-100,
 .pertamina-light .text-yellow-100\/70,
+.pertamina-light .text-yellow-200,
+.pertamina-light .text-yellow-300,
 .pertamina-light .text-yellow-400,
 .pertamina-light .text-yellow-500,
 .pertamina-light .text-yellow-600,
+.pertamina-light .text-amber-200,
 .pertamina-light .text-amber-400,
 .pertamina-light .text-amber-500 {
   color: #ea580c !important; /* Orange 600 */
@@ -156,8 +208,134 @@ textarea {
   color: #4b5563 !important; /* Medium Dark Gray */
   opacity: 1 !important;
 }
-.pertamina-light .text-slate-400 {
-  color: #374151 !important; /* Darker gray for notification descriptions */
+.pertamina-light .text-slate-400,
+.pertamina-light .text-cyan-100\/70,
+.pertamina-light .text-cyan-100\/80,
+.pertamina-light .text-cyan-200\/60,
+.pertamina-light .text-cyan-300\/80,
+.pertamina-light .text-cyan-400\/80,
+.pertamina-light .text-yellow-200\/80,
+.pertamina-light .text-rose-200\/80,
+.pertamina-light .text-cyan-500\/80 {
+  color: #374151 !important; /* Darker gray for descriptions and subtexts */
+  opacity: 1 !important;
+}
+
+/* Emerald / Green Text -> High Contrast */
+.pertamina-light .text-emerald-200,
+.pertamina-light .text-emerald-300,
+.pertamina-light .text-emerald-300\/75 {
+  color: #16a34a !important; /* Green 600 (Hijau Muda/Segar) */
+  opacity: 1 !important;
+}
+
+.pertamina-light .text-emerald-50\/90,
+.pertamina-light .text-emerald-100,
+.pertamina-light .text-emerald-200\/80,
+.pertamina-light .text-emerald-400,
+.pertamina-light .text-emerald-500,
+.pertamina-light .text-emerald-600 {
+  color: #166534 !important; /* Green 800 (Hijau Tua) */
+  opacity: 1 !important;
+}
+
+/* Rose / Red Text -> Dark Red High Contrast */
+.pertamina-light .text-rose-100,
+.pertamina-light .text-rose-100\/70,
+.pertamina-light .text-rose-200,
+.pertamina-light .text-rose-200\/80,
+.pertamina-light .text-rose-300,
+.pertamina-light .text-rose-400,
+.pertamina-light .text-rose-500,
+.pertamina-light .text-rose-600 {
+  color: #991b1b !important; /* Red 800 (Merah Tua) */
+  opacity: 1 !important;
+}
+
+/* Fuchsia / Purple Text -> Dark Purple High Contrast */
+.pertamina-light .text-fuchsia-100,
+.pertamina-light .text-fuchsia-100\/75,
+.pertamina-light .text-fuchsia-200,
+.pertamina-light .text-fuchsia-300,
+.pertamina-light .text-fuchsia-400,
+.pertamina-light .text-fuchsia-500,
+.pertamina-light .text-fuchsia-600 {
+  color: #7e22ce !important; /* Purple 700 (Ungu Tua) */
+  opacity: 1 !important;
+}
+
+/* Incident Description Style in Light Mode */
+.pertamina-light .incident-desc {
+  color: #000000 !important;
+  font-weight: 700 !important;
+  font-style: italic !important;
+}
+
+.pertamina-light .light-vignette-bl {
+  opacity: 1 !important;
+}
+
+.pertamina-light .incident-info-value {
+  color: #000000 !important;
+  font-weight: 700 !important;
+  font-style: italic !important;
+}
+
+.pertamina-light .audit-card-title {
+  color: #0e7490 !important; /* Dark Cyan 700 */
+}
+
+.pertamina-light .audit-record-box {
+  background-color: #e0f7fa !important; /* Light Cyan */
+  border-color: #0e7490 !important;
+}
+
+.pertamina-light .dashboard-header-card {
+  background: #e0f7fa !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05) !important;
+}
+
+.pertamina-light .metric-subtitle,
+.pertamina-light .latest-guard-subtext,
+.pertamina-light .incident-card-subtext,
+.pertamina-light .sos-card-date,
+.pertamina-light .chart-axis-text,
+.pertamina-light .user-detail-subtext {
+  color: #0e7490 !important; /* Dark Cyan 700 */
+  fill: #0e7490 !important; /* For SVG text */
+  opacity: 1 !important;
+}
+
+.pertamina-light .dashboard-header-desc {
+  color: #0e7490 !important; /* Dark Cyan 700 */
+  opacity: 1 !important;
+}
+
+.pertamina-light .dashboard-secondary-box {
+  background-color: #cffafe !important; /* Cyan 100 */
+  border-color: #22d3ee !important; /* Cyan 400 */
+}
+
+.pertamina-light .dashboard-info-badge {
+  color: #0e7490 !important; /* Dark Cyan 700 */
+  opacity: 1 !important;
+}
+
+.pertamina-light .dashboard-filter-btn.bg-cyan-500\/15 {
+  background-color: #f3e8ff !important; /* Light Purple 100 */
+  border-color: #a855f7 !important; /* Purple 500 */
+  color: #7e22ce !important; /* Purple 700 */
+}
+
+.pertamina-light .off-duty-badge {
+  background-color: #475569 !important; /* Slate 600 */
+  color: #ffffff !important;
+  border-color: #334155 !important;
+}
+
+.pertamina-light .user-detail-footer {
+  background: #ffffff !important;
+  border-top-color: #e2e8f0 !important;
 }
 
 /* Borders */

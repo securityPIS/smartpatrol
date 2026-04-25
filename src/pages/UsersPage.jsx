@@ -36,7 +36,7 @@ function getUserStatusBadge(user) {
   }
   return {
     label: 'OFF-DUTY',
-    className: 'bg-slate-800 text-slate-400 border-slate-700',
+    className: 'bg-slate-800 text-slate-400 border-slate-700 off-duty-badge',
   };
 }
 

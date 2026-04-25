@@ -25,6 +25,7 @@ export default function UserDetailView({ isInline = false }) {
     || (currentUserRecord?.id && selectedUser?.id === currentUserRecord.id)
     || (selectedUser?.firebaseUid && currentUserRecord?.firebaseUid && selectedUser.firebaseUid === currentUserRecord.firebaseUid)
   );
+  const showOwnProfileStatusOnly = isEditingOwnProfile && !isInline;
   const resolvedActiveStatus = selectedUser?.role === ACCESS_ROLES.PETUGAS
     ? (selectedUser?.shipAssigned ? 'active' : 'off-duty')
     : 'active';
@@ -104,31 +105,37 @@ export default function UserDetailView({ isInline = false }) {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest">Status Operasional</p>
-                <p className="mt-1 text-xs text-cyan-200/80">Mode `Active` membuat user tersedia operasional. Untuk petugas tanpa assignment kapal, status ini akan muncul di daftar `Off-Duty`.</p>
+                {!showOwnProfileStatusOnly && (
+                  <p className="mt-1 text-xs text-cyan-200/80 user-detail-subtext">Mode `Active` membuat user tersedia operasional. Untuk petugas tanpa assignment kapal, status ini akan muncul di daftar `Off-Duty`.</p>
+                )}
               </div>
-              <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${isUserInactive ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
-                {isUserInactive ? 'INACTIVE' : 'ACTIVE'}
+              <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${!showOwnProfileStatusOnly && isUserInactive ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
+                {!showOwnProfileStatusOnly && isUserInactive ? 'INACTIVE' : 'ACTIVE'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedUser({ ...selectedUser, status: resolvedActiveStatus })}
-                className={`rounded-xl border px-3 py-3 text-xs font-black uppercase tracking-widest transition-colors ${!isUserInactive ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' : 'border-cyan-800/50 bg-[#070b19] text-cyan-300 hover:border-emerald-500/40 hover:text-emerald-200'}`}
-              >
-                Active
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedUser({ ...selectedUser, shipAssigned: null, status: 'disabled' })}
-                disabled={isEditingOwnProfile}
-                className={`rounded-xl border px-3 py-3 text-xs font-black uppercase tracking-widest transition-colors ${isUserInactive ? 'border-rose-500/40 bg-rose-500/15 text-rose-200' : 'border-cyan-800/50 bg-[#070b19] text-cyan-300 hover:border-rose-500/40 hover:text-rose-200'}`}
-              >
-                Inactive
-              </button>
-            </div>
-            {isEditingOwnProfile && (
-              <p className="text-[10px] text-amber-300/90">Akun yang sedang dipakai tidak bisa dinonaktifkan dari sesi ini.</p>
+            {!showOwnProfileStatusOnly && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUser({ ...selectedUser, status: resolvedActiveStatus })}
+                    className={`rounded-xl border px-3 py-3 text-xs font-black uppercase tracking-widest transition-colors ${!isUserInactive ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' : 'border-cyan-800/50 bg-[#070b19] text-cyan-300 hover:border-emerald-500/40 hover:text-emerald-200'}`}
+                  >
+                    Active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUser({ ...selectedUser, shipAssigned: null, status: 'disabled' })}
+                    disabled={isEditingOwnProfile}
+                    className={`rounded-xl border px-3 py-3 text-xs font-black uppercase tracking-widest transition-colors ${isUserInactive ? 'border-rose-500/40 bg-rose-500/15 text-rose-200' : 'border-cyan-800/50 bg-[#070b19] text-cyan-300 hover:border-rose-500/40 hover:text-rose-200'}`}
+                  >
+                    Inactive
+                  </button>
+                </div>
+                {isEditingOwnProfile && (
+                  <p className="text-[10px] text-amber-300/90">Akun yang sedang dipakai tidak bisa dinonaktifkan dari sesi ini.</p>
+                )}
+              </>
             )}
           </div>
 
@@ -215,7 +222,7 @@ export default function UserDetailView({ isInline = false }) {
             </div>
           </div>
 
-          <div className="sticky bottom-0 -mx-5 px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] bg-gradient-to-t from-[#0b1229] via-[#0b1229]/95 to-transparent border-t border-cyan-900/50">
+          <div className="sticky bottom-0 -mx-5 px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] bg-gradient-to-t from-[#0b1229] via-[#0b1229]/95 to-transparent border-t border-cyan-900/50 user-detail-footer">
             <button
               onClick={() => setConfirmDialog({
                 title: 'Simpan Perubahan',

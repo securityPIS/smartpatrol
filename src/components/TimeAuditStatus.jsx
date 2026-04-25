@@ -78,7 +78,7 @@ export function TimeAuditRecordCard({ record, title = 'Audit Waktu', className =
     <div className={`rounded-2xl border p-4 ${toneClass.border} ${toneClass.background} ${className}`.trim()}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className={`text-[10px] font-black uppercase tracking-widest ${toneClass.subtext}`}>{title}</p>
+          <p className={`text-[10px] font-black uppercase tracking-widest audit-card-title ${toneClass.subtext}`}>{title}</p>
           <TimeAuditPills
             record={record}
             fallbackTimestampKeys={fallbackTimestampKeys}
@@ -87,7 +87,7 @@ export function TimeAuditRecordCard({ record, title = 'Audit Waktu', className =
         </div>
         {audit.receivedAtServerMs ? (
           <div className="text-right">
-            <p className={`text-[10px] font-black uppercase tracking-widest ${toneClass.subtext}`}>Verifikasi</p>
+            <p className={`text-[10px] font-black uppercase tracking-widest audit-card-title ${toneClass.subtext}`}>Verifikasi</p>
             <p className={`mt-1 text-xs font-bold ${toneClass.text}`}>{formatAuditDateTime(audit.receivedAtServerMs)}</p>
           </div>
         ) : null}
@@ -106,10 +106,10 @@ export function TimeAuditSummaryCard({ records, title = 'Audit Waktu Shift', cla
     <div className={`rounded-2xl border p-4 ${toneClass.border} ${toneClass.background} ${className}`.trim()}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className={`text-[10px] font-black uppercase tracking-widest ${toneClass.subtext}`}>{title}</p>
+          <p className={`text-[10px] font-black uppercase tracking-widest audit-card-title ${toneClass.subtext}`}>{title}</p>
           <p className={`mt-1 text-sm font-black ${toneClass.text}`}>{summary.label}</p>
         </div>
-        <div className="rounded-xl border border-white/10 bg-[#070b19]/40 px-3 py-2 text-right">
+        <div className="rounded-xl border border-white/10 bg-[#070b19]/40 px-3 py-2 text-right audit-record-box">
           <p className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Record</p>
           <p className="mt-1 text-sm font-black text-cyan-50">{summary.total}</p>
         </div>
