@@ -8,7 +8,7 @@ Side Effects: Mengubah selected history, membuka detail laporan/temuan, dan meng
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useHistory, useIncidents, useReports, useRole } from '../context/AppContextRuntime';
-import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX, Activity } from 'lucide-react';
+import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX } from 'lucide-react';
 import HistoryDetailView from '../components/views/HistoryDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
@@ -351,13 +351,19 @@ export default function HistoryPage() {
             : (isSelectedEntry
               ? 'border-cyan-400 ring-1 ring-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.15)] bg-[#0f1734]'
               : 'border-cyan-800/50 hover:border-cyan-500/50 hover:shadow-[0_0_20px_rgba(6,182,212,0.1)]');
-          const iconClassName = isLiveEntry
+          const summary = data.summary || {};
+          const totalCount = summary.total || 0;
+          const amanCount = summary.aman || 0;
+          const temuanCount = summary.temuan ?? data.issue ?? 0;
+          const missedCount = summary.missed ?? data.missed ?? 0;
+          const completionCount = amanCount + temuanCount;
+          const completionBoxClassName = isLiveEntry
             ? (isSelectedEntry
               ? 'bg-emerald-400 text-[#052e1d] border-emerald-300'
-              : 'bg-emerald-500/10 text-emerald-300 border-emerald-700/60')
+              : 'bg-emerald-500/10 text-emerald-200 border-emerald-700/60')
             : (isSelectedEntry
               ? 'bg-cyan-500 text-[#070b19] border-cyan-400'
-              : 'bg-[#070b19] text-cyan-500 border-cyan-800');
+              : 'bg-[#070b19] text-cyan-300 border-cyan-800');
           const badgeClassName = isLiveEntry
             ? 'bg-emerald-500/10 text-emerald-200 border border-emerald-400/40'
             : 'bg-[#070b19] text-cyan-400 border border-cyan-800';
@@ -369,11 +375,11 @@ export default function HistoryPage() {
             className={`border rounded-xl p-4 cursor-pointer transition-all ${cardClassName}`}
           >
             <div className="flex justify-between items-start mb-3">
-              <div className="flex gap-3">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center border transition-colors ${iconClassName}`}>
-                  {isLiveEntry ? <Activity className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+              <div className="flex gap-3 min-w-0">
+                <div className={`w-16 aspect-square rounded-lg flex items-center justify-center border transition-colors shrink-0 ${completionBoxClassName}`}>
+                  <p className="text-sm font-black leading-none tabular-nums">{completionCount}/{totalCount}</p>
                 </div>
-                <div>
+                <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-bold text-cyan-50">{data.ship}</h3>
                       {isLiveEntry && (
@@ -408,16 +414,16 @@ export default function HistoryPage() {
             </div>
             <div className={`grid grid-cols-3 gap-2 pt-3 opacity-80 group-hover:opacity-100 ${isLiveEntry ? 'border-t border-emerald-900/40' : 'border-t border-cyan-900/50'}`}>
               <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
-                  <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Status Titik</p>
-                  <p className="text-xs text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> {data.summary?.completed || 0}/{data.summary?.total || 0} Selesai</p>
+                  <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Aman</p>
+                  <p className="text-xs text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> {amanCount} Aman</p>
               </div>
               <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
                   <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Temuan</p>
-                  {data.issue > 0 ? <p className="text-xs text-yellow-400 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> {data.issue} Temuan</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
+                  {temuanCount > 0 ? <p className="text-xs text-yellow-400 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> {temuanCount} Temuan</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
               </div>
               <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
                   <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Missed</p>
-                  {data.missed > 0 ? <p className="text-xs text-rose-400 font-medium flex items-center gap-1"><CircleOff className="w-3 h-3"/> {data.missed} Titik</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
+                  {missedCount > 0 ? <p className="text-xs text-rose-400 font-medium flex items-center gap-1"><CircleOff className="w-3 h-3"/> {missedCount} Titik</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
               </div>
             </div>
           </div>

@@ -207,19 +207,20 @@ const IncidentsPage = React.memo(function IncidentsPage() {
               {filteredIncidents.map(inc => {
                  const isClosed = getIncidentStatus(inc, incidentMeta) === 'closed';
                  const isSelected = selectedIncident?.id === inc.id;
-                 const accentClass = inc.isSOS ? 'bg-rose-500' : (inc.isPatrol ? 'bg-emerald-500' : 'bg-yellow-500');
+                 const isManualIncident = !inc.isSOS && !inc.isPatrol;
+                 const accentClass = inc.isSOS ? 'bg-rose-500' : (inc.isPatrol ? 'bg-emerald-500' : 'bg-fuchsia-500');
                  const badgeClass = inc.isSOS
                    ? (isClosed ? 'border-rose-700 text-rose-300 bg-rose-950/40' : 'border-rose-500 text-rose-300 bg-rose-500/10')
-                   : (isClosed ? 'border-slate-600 text-slate-400 bg-slate-800/50' : 'border-yellow-500 text-yellow-400 bg-yellow-500/10');
+                   : (isClosed ? 'border-slate-600 text-slate-400 bg-slate-800/50' : (isManualIncident ? 'border-fuchsia-500 text-fuchsia-300 bg-fuchsia-500/10' : 'border-emerald-500 text-emerald-300 bg-emerald-500/10'));
                  const cardClass = isSelected
-                   ? (inc.isSOS ? 'border-rose-500 bg-rose-500/10 shadow-[0_0_15px_rgba(244,63,94,0.12)]' : 'border-yellow-500 bg-yellow-500/10 shadow-[0_0_15px_rgba(250,204,21,0.1)]')
-                   : (isClosed ? (inc.isSOS ? 'bg-rose-950/20 border-rose-950/40' : 'bg-slate-900/40 border-slate-800') : (inc.isSOS ? 'bg-rose-950/10 border-rose-900/40 hover:border-rose-500/50' : 'bg-yellow-950/10 border-yellow-900/40 hover:border-yellow-500/50'));
+                   ? (inc.isSOS ? 'border-rose-500 bg-rose-500/10 shadow-[0_0_15px_rgba(244,63,94,0.12)]' : (isManualIncident ? 'border-fuchsia-500 bg-fuchsia-500/10 shadow-[0_0_15px_rgba(217,70,239,0.12)]' : 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.1)]'))
+                   : (isClosed ? (inc.isSOS ? 'bg-rose-950/20 border-rose-950/40' : 'bg-slate-900/40 border-slate-800') : (inc.isSOS ? 'bg-rose-950/10 border-rose-900/40 hover:border-rose-500/50' : (isManualIncident ? 'bg-fuchsia-950/10 border-fuchsia-900/40 hover:border-fuchsia-500/50' : 'bg-emerald-950/10 border-emerald-900/40 hover:border-emerald-500/50')));
                  const titleClass = isClosed
                    ? (inc.isSOS ? 'text-rose-300' : 'text-slate-400')
-                   : (inc.isSOS ? 'text-rose-300' : (isSelected ? 'text-white' : 'text-yellow-400'));
+                   : (inc.isSOS ? 'text-rose-300' : (isSelected ? 'text-white' : (isManualIncident ? 'text-fuchsia-300' : 'text-emerald-300')));
                  const descriptionClass = isClosed
                    ? (inc.isSOS ? 'text-rose-100/70' : 'text-slate-500')
-                   : (inc.isSOS ? 'text-rose-100/80' : 'text-yellow-100/70');
+                   : (inc.isSOS ? 'text-rose-100/80' : (isManualIncident ? 'text-fuchsia-100/75' : 'text-emerald-100/75'));
                  
                  return (
                 <div 
@@ -247,7 +248,7 @@ const IncidentsPage = React.memo(function IncidentsPage() {
                    </div>
                    <div className="flex flex-col items-end justify-between shrink-0 gap-2">
                       {inc.photoUrl ? (
-                         <div className={`w-20 h-20 rounded-lg overflow-hidden border shadow-sm ${isSelected ? (inc.isSOS ? 'border-rose-400' : 'border-yellow-400') : (isClosed ? (inc.isSOS ? 'border-rose-900/40' : 'border-slate-700') : (inc.isSOS ? 'border-rose-700/50' : 'border-yellow-700/50'))}`}>
+                         <div className={`w-20 h-20 rounded-lg overflow-hidden border shadow-sm ${isSelected ? (inc.isSOS ? 'border-rose-400' : (isManualIncident ? 'border-fuchsia-400' : 'border-emerald-400')) : (isClosed ? (inc.isSOS ? 'border-rose-900/40' : 'border-slate-700') : (inc.isSOS ? 'border-rose-700/50' : (isManualIncident ? 'border-fuchsia-700/50' : 'border-emerald-700/50')))}`}>
                             <AsyncImage src={inc.photoUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt="Thumb"/>
                          </div>
                       ) : (
