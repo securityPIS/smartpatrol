@@ -1,16 +1,27 @@
+/*
+Tujuan: Menyediakan modal detail untuk user, laporan, dan preview foto lintas halaman.
+Caller: AppShell saat state detail aktif dari menu settings, UsersPage mobile, laporan, atau preview media.
+Dependensi: Context users/UI/reports, UserDetailView, ReportDetailView, dan AsyncImage.
+Main Functions: Membuka detail user/profil sendiri, detail laporan, dan preview foto operasional.
+Side Effects: Menampilkan overlay modal dan mengubah state preview saat foto ditutup.
+*/
+
 import React from 'react';
-import { useReports, useUsers } from '../../context/AppContextRuntime';
+import { useReports, useUI, useUsers } from '../../context/AppContextRuntime';
 import UserDetailView from '../views/UserDetailView';
 import ReportDetailView from '../views/ReportDetailView';
 import AsyncImage from '../AsyncImage';
 
 export function UserDetailModal() {
   const { selectedUser } = useUsers();
+  const { currentPage } = useUI();
   const modalRef = React.useRef(null);
   if (!selectedUser) return null;
 
+  const desktopVisibilityClass = currentPage === 'users' ? 'lg:hidden' : '';
+
   return (
-    <div ref={modalRef} className="fixed inset-0 z-[100] bg-[#070b19] lg:hidden flex flex-col animate-in slide-in-from-right-4">
+    <div ref={modalRef} className={`fixed inset-0 z-[100] bg-[#070b19] ${desktopVisibilityClass} flex flex-col animate-in slide-in-from-right-4`}>
       <UserDetailView isInline={false} />
     </div>
   );

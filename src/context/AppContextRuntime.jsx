@@ -6373,11 +6373,20 @@ export function AppProvider({ children }) {
   }, [clearUserManagementFeedback, isAdmin, userFormData, usersData]);
   const handleUpdateUser = useCallback(async () => {
     if (!selectedUser?.id) return;
-    const isEditingOwnProfile = selectedUser.id === sessionUserId;
-    if (!isAdmin && !isEditingOwnProfile) return;
-
     clearUserManagementFeedback();
     const currentRecord = usersData.find(u => u.id === selectedUser.id) || null;
+    const selectedFirebaseUid = sanitizeText(selectedUser.firebaseUid || currentRecord?.firebaseUid || '', 160);
+    const currentFirebaseUid = sanitizeText(currentUserRecord?.firebaseUid || '', 160);
+    const isEditingOwnProfile = Boolean(
+      selectedUser.id === sessionUserId
+      || (currentUserRecord?.id && selectedUser.id === currentUserRecord.id)
+      || (selectedFirebaseUid && currentFirebaseUid && selectedFirebaseUid === currentFirebaseUid)
+    );
+    if (!isAdmin && !isEditingOwnProfile) {
+      setUserFormError('Anda hanya dapat mengubah profil akun sendiri.');
+      return;
+    }
+
     const isFirebaseUser = isFirebaseManagedUser(currentRecord || selectedUser);
     const nextEmail = isFirebaseUser ? sanitizeEmail(currentRecord?.email || selectedUser.email || '') : sanitizeEmail(selectedUser.email || '');
     const safeName = sanitizeText(selectedUser.name, 80);
@@ -6506,7 +6515,8 @@ export function AppProvider({ children }) {
       }));
     }
     setSelectedUser({ ...previewUser, password: '' });
-  }, [clearUserManagementFeedback, isAdmin, selectedUser, sessionUserId, usersData]);
+    setUserFormNotice((previousNotice) => previousNotice || 'Perubahan profil berhasil disimpan.');
+  }, [clearUserManagementFeedback, currentUserRecord, isAdmin, selectedUser, sessionUserId, usersData]);
   const handleDeleteUser = useCallback((id) => {
     if (!isAdmin) return; 
     const targetUser = usersData.find(u => u.id === id); 

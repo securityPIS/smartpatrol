@@ -14,13 +14,17 @@ import AsyncImage from '../AsyncImage';
 export default function UserDetailView({ isInline = false }) {
   const { selectedUser, setSelectedUser, userFormError, userFormNotice, clearUserManagementFeedback, handleUpdateUser, handleDeleteUser, handleEditUserPhotoUpload } = useUsers();
   const { sessionUserId } = useAuth();
-  const { isAdmin } = useRole();
+  const { currentUserRecord, isAdmin } = useRole();
   const { setConfirmDialog } = useUI();
   const isFirebaseAccount = selectedUser?.authProvider === 'firebase' || Boolean(selectedUser?.firebaseUid);
   const canEditRole = isAdmin;
   const canDeleteUser = isAdmin && selectedUser?.role !== ACCESS_ROLES.ADMIN;
   const isUserInactive = String(selectedUser?.status || '').toLowerCase() === 'disabled';
-  const isEditingOwnProfile = selectedUser?.id === sessionUserId;
+  const isEditingOwnProfile = Boolean(
+    selectedUser?.id === sessionUserId
+    || (currentUserRecord?.id && selectedUser?.id === currentUserRecord.id)
+    || (selectedUser?.firebaseUid && currentUserRecord?.firebaseUid && selectedUser.firebaseUid === currentUserRecord.firebaseUid)
+  );
   const resolvedActiveStatus = selectedUser?.role === ACCESS_ROLES.PETUGAS
     ? (selectedUser?.shipAssigned ? 'active' : 'off-duty')
     : 'active';
