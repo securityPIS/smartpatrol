@@ -2718,7 +2718,79 @@ function createCloudAssetPath(...segments) {
 }
 
 const CLOUD_SYNC_DEBOUNCE_MS = 300;
-const URGENT_CLOUD_SYNC_DEBOUNCE_MS = 40;
+const URGENT_CLOUD_SYNC_DEBOUNCE_MS = 0;
+
+// Fast-path synchronous: strip local-only asset URLs dan compact records
+// tanpa overhead ratusan Promise seperti prepareSharedStateForCloudSync.
+function stripLocalAssetUrlSync(url) {
+  if (typeof url !== 'string' || !url) return url || null;
+  if (isLocalOnlyAssetUrl(url)) return null;
+  return url;
+}
+
+function prepareStateForUrgentCloudSync(stateSnapshot) {
+  const bounded = fitSharedStateToCloudBudget(stateSnapshot);
+
+  const compactCheckpoint = (cp) => compactCheckpointRecordForCloudSync({
+    ...cp,
+    photoUrl: stripLocalAssetUrlSync(cp?.photoUrl),
+    galleryPhotos: ensureArray(cp?.galleryPhotos).map((gp) => compactMediaAuditRecordForCloudSync({
+      ...gp,
+      photoUrl: stripLocalAssetUrlSync(gp?.photoUrl),
+    })),
+  });
+
+  return fitSharedStateToCloudBudget({
+    activeShiftKey: bounded.activeShiftKey,
+    checkpointsByShip: Object.fromEntries(
+      Object.entries(bounded.checkpointsByShip || {}).map(([shipId, cps]) => [
+        shipId,
+        (cps || []).map(compactCheckpoint),
+      ]),
+    ),
+    deletedRecords: bounded.deletedRecords,
+    historyEntries: (bounded.historyEntries || []).map((entry) => compactHistoryEntryForCloudSync({
+      ...entry,
+      checkpoints: (entry.checkpoints || []).map(compactCheckpoint),
+      crewSnapshot: (entry.crewSnapshot || []).map((c) => ({
+        ...c,
+        photoUrl: stripLocalAssetUrlSync(c?.photoUrl),
+      })),
+    })),
+    incidentMeta: Object.fromEntries(
+      Object.entries(bounded.incidentMeta || {}).map(([id, meta]) => [
+        id,
+        {
+          ...meta,
+          documentation: (meta?.documentation || []).map((d) => compactMediaAuditRecordForCloudSync({
+            ...d,
+            photoUrl: stripLocalAssetUrlSync(d?.photoUrl),
+          })),
+          progress: (meta?.progress || []).map((p) => compactMediaAuditRecordForCloudSync({
+            ...p,
+            photoUrl: stripLocalAssetUrlSync(p?.photoUrl),
+          })),
+        },
+      ]),
+    ),
+    incidentsData: (bounded.incidentsData || []).map((i) => compactIncidentRecordForCloudSync({
+      ...i,
+      photoUrl: stripLocalAssetUrlSync(i?.photoUrl),
+    })),
+    notifications: bounded.notifications || [],
+    shipsData: (bounded.shipsData || []).map((s) => ({
+      ...s,
+      photoUrl: stripLocalAssetUrlSync(s?.photoUrl),
+    })),
+    usersData: (bounded.usersData || []).map((u) => ({
+      ...u,
+      photoUrl: stripLocalAssetUrlSync(u?.photoUrl),
+    })),
+    shiftStatusRecords: bounded.shiftStatusRecords || {},
+    activeSOSAlert: bounded.activeSOSAlert || null,
+    sosHistory: bounded.sosHistory || [],
+  });
+}
 
 function createSharedStateSnapshot({
   activeShiftKey,
@@ -4544,8 +4616,16 @@ export function AppProvider({ children }) {
       receivedAtServerMs: cloudReceivedAtMs,
     });
   }, [applyCloudSharedState]);
+  const pendingCloudRefreshRef = useRef(null);
   const refreshCloudSharedState = useCallback(async (options = {}) => {
-    if (!isCloudSyncEnabled || cloudFetchInFlightRef.current) return null;
+    if (!isCloudSyncEnabled) return null;
+
+    // Jika fetch sedang berjalan, jadwalkan refresh ulang setelah selesai
+    // agar request signal tidak hilang (sebelumnya langsung di-drop).
+    if (cloudFetchInFlightRef.current) {
+      pendingCloudRefreshRef.current = options;
+      return null;
+    }
 
     cloudFetchInFlightRef.current = true;
     try {
@@ -4563,6 +4643,14 @@ export function AppProvider({ children }) {
       return null;
     } finally {
       cloudFetchInFlightRef.current = false;
+
+      // Jalankan pending refresh jika ada request yang tertunda
+      const pendingOptions = pendingCloudRefreshRef.current;
+      if (pendingOptions) {
+        pendingCloudRefreshRef.current = null;
+        // Micro-task delay agar stack frame selesai dulu
+        queueMicrotask(() => refreshCloudSharedState(pendingOptions));
+      }
     }
   }, [handleIncomingCloudPayload]);
   const getUsersByRole = useCallback((roles) => (
@@ -5332,18 +5420,13 @@ export function AppProvider({ children }) {
           createdAt: submittedItem.completedAt,
         }]);
       }
-      void emitCloudSyncSignal({
-        reason: 'checkpoint-updated',
-        priority: 'urgent',
-        clientUpdatedAt: Date.now(),
-        activeSOSAlert: activeSOSAlertRef.current,
-        shipName: operationalShipName,
-      });
+      // Signal dikirim SETELAH data tersimpan ke cloud (di write effect baris ~6932),
+      // bukan di sini. Sebelumnya signal prematur menyebabkan Device B fetch data lama.
       requestCloudSync('urgent');
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, emitCloudSyncSignal, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, updateOperationalShipCheckpoints, weatherInfo]);
   const handleDeleteReport = useCallback((id) => { 
     setConfirmDialog({ 
       title: 'Hapus Laporan', 
@@ -6704,11 +6787,11 @@ export function AppProvider({ children }) {
       if (expectedClientUpdatedAt > 0 && lastCloudClientUpdatedAtRef.current >= expectedClientUpdatedAt) {
         return;
       }
-      if (attempt >= 7) return;
+      if (attempt >= 5) return;
 
       const retryDelayMs = attempt === 0
-        ? 250
-        : Math.min(2000, 500 + (attempt * 250));
+        ? 100
+        : Math.min(1500, 300 + (attempt * 200));
 
       if (typeof window !== 'undefined') {
         cloudSignalRefreshTimerRef.current = window.setTimeout(() => {
@@ -6812,7 +6895,7 @@ export function AppProvider({ children }) {
             preferServer: true,
             clearWhenEmpty: false,
           });
-        }, 15000)
+        }, 8000)
       : null;
 
     if (typeof window !== 'undefined') {
@@ -6866,10 +6949,12 @@ export function AppProvider({ children }) {
         .then(async () => {
           try {
             const shouldSkipAssetUpload = cloudSyncPriorityRef.current === 'urgent';
+            // Gunakan ref terbaru, bukan closure `sharedState` yang bisa stale.
+            const freshSharedState = localSharedStateRef.current || sharedState;
             const latestStateForWrite = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
               latestCloudSharedStateRef.current || {},
               createSharedStateSnapshot({
-                ...sharedState,
+                ...freshSharedState,
                 activeShiftKey: currentShiftMeta.key,
               }),
             ));
@@ -6882,24 +6967,21 @@ export function AppProvider({ children }) {
               if (!hasSyncableLocalAssets) return;
             }
 
-            const preparedState = await prepareSharedStateForCloudSync(latestStateForWrite, {
-              skipAssetUpload: shouldSkipAssetUpload,
-            });
-            const preparedStateBytes = measureSharedStateSnapshotBytes(preparedState);
+            // Fast path: urgent sync pakai fungsi synchronous, skip ratusan Promise.
+            // Normal sync tetap pakai prepareSharedStateForCloudSync (upload aset).
+            const preparedState = shouldSkipAssetUpload
+              ? prepareStateForUrgentCloudSync(latestStateForWrite)
+              : await prepareSharedStateForCloudSync(latestStateForWrite, {
+                  skipAssetUpload: false,
+                });
 
             logCloudSyncDebug('save-shared-state', {
               activeShiftKey: preparedState.activeShiftKey,
-              deletedHistory: Object.keys(preparedState.deletedRecords?.historyEntries || {}).length,
-              deletedIncidents: Object.keys(preparedState.deletedRecords?.incidents || {}).length,
-              deletedShips: Object.keys(preparedState.deletedRecords?.ships || {}).length,
-              deletedUsers: Object.keys(preparedState.deletedRecords?.users || {}).length,
               historyEntries: preparedState.historyEntries.length,
               incidents: preparedState.incidentsData.length,
-              notifications: preparedState.notifications.length,
-              payloadBytes: preparedStateBytes,
+              payloadBytes: measureSharedStateSnapshotBytes(preparedState),
               ships: preparedState.shipsData.length,
               skipAssetUpload: shouldSkipAssetUpload,
-              sosHistory: preparedState.sosHistory.length,
               users: preparedState.usersData.length,
             });
             const receivedAtServerMs = getTrustedNowMs();
@@ -6908,12 +6990,27 @@ export function AppProvider({ children }) {
               mergeSharedStateSnapshots({}, preparedState),
               receivedAtServerMs,
             );
-            const savedState = await saveCloudAppState(verifiedPreparedState, {
+
+            // Kirim state save dan signal secara PARALLEL agar Device B
+            // menerima notifikasi lebih cepat (hemat 1 round-trip network).
+            const signalPayload = {
+              reason: shouldSkipAssetUpload ? 'state-sync-urgent' : 'state-sync',
+              priority: shouldSkipAssetUpload ? 'urgent' : 'normal',
               clientUpdatedAt: commitClientUpdatedAt,
-              mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
-                mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
-              ),
-            });
+              activeSOSAlert: verifiedPreparedState.activeSOSAlert,
+              shipName: operationalShipName,
+            };
+
+            const [savedState] = await Promise.all([
+              saveCloudAppState(verifiedPreparedState, {
+                clientUpdatedAt: commitClientUpdatedAt,
+                mergeState: (cloudState, pendingState) => createCloudSyncStateSnapshot(
+                  mergeSharedStateSnapshots(cloudState || {}, pendingState || {}),
+                ),
+              }),
+              emitCloudSyncSignal(signalPayload),
+            ]);
+
             const committedState = markSharedStateTimeAuditReceived(
               mergeSharedStateSnapshots({}, savedState || verifiedPreparedState),
               receivedAtServerMs,
@@ -6929,13 +7026,6 @@ export function AppProvider({ children }) {
             applyCloudSharedState(committedState, {
               receivedAtServerMs,
             });
-            void emitCloudSyncSignal({
-              reason: shouldSkipAssetUpload ? 'state-sync-urgent' : 'state-sync',
-              priority: shouldSkipAssetUpload ? 'urgent' : 'normal',
-              clientUpdatedAt: commitClientUpdatedAt,
-              activeSOSAlert: committedState.activeSOSAlert,
-              shipName: operationalShipName,
-            });
 
             if (shouldSkipAssetUpload && latestHasPendingLocalAssets) {
               requestCloudSync('normal');
@@ -6947,7 +7037,9 @@ export function AppProvider({ children }) {
           }
         })
         .catch((error) => {
-          console.error('Gagal mengirim laporan patroli ke cloud', error);
+          console.error('Gagal mengirim laporan patroli ke cloud, jadwalkan retry', error);
+          // Retry sync setelah error agar data tidak hilang
+          requestCloudSync('normal');
         });
     }, syncDelayMs);
 

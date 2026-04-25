@@ -3,7 +3,9 @@ Tujuan: Menginisialisasi singleton Firebase Web SDK SmartPatrol dengan fallback 
 Caller: Seluruh service Firebase client seperti auth, access, dan cloud state.
 Dependensi: Firebase App, Auth, Firestore, Functions, Storage, dan env Vite.
 Main Functions: Menyusun config Firebase, menentukan sumber config, dan mengekspor singleton SDK client.
-Side Effects: Membuat instance Firebase App tunggal saat konfigurasi valid agar auth/sync siap dipakai.
+Side Effects: Membuat instance Firebase App tunggal saat konfigurasi valid. Firestore dikonfigurasi dengan
+  experimentalAutoDetectLongPolling agar realtime onSnapshot berjalan via WebSocket (cepat) dan hanya
+  fallback ke long-polling jika WebSocket diblokir.
 */
 
 import { getApp, getApps, initializeApp } from 'firebase/app';
@@ -61,13 +63,11 @@ const firebaseApp = isFirebaseConfigured
 
 function createFirestoreInstance(app) {
   try {
-    return initializeFirestore(app, {
-      // PWA mobile Safari/iOS lebih stabil bila dipaksa long-polling penuh.
-      // Target utama aplikasi ini adalah reliabilitas lintas perangkat, jadi
-      // kita prioritaskan koneksi realtime yang konsisten dibanding throughput puncak.
-      experimentalForceLongPolling: true,
-      useFetchStreams: false,
-    });
+    // Firebase SDK v12 default: WebChannel fetch stream — transport tercepat
+    // untuk realtime onSnapshot tanpa overhead probing.
+    // Tidak pakai experimentalForceLongPolling atau experimentalAutoDetectLongPolling
+    // karena keduanya lebih lambat dari default.
+    return initializeFirestore(app, {});
   } catch (error) {
     const message = String(error?.message || '').toLowerCase();
     if (
