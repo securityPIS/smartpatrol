@@ -263,13 +263,6 @@ class SectionErrorBoundary extends React.Component {
 
 const CHART_SERIES = [
   {
-    key: 'completionRate',
-    label: 'Completion Rate',
-    shortLabel: 'CR',
-    stroke: '#22d3ee',
-    fill: 'rgba(34,211,238,0.14)',
-  },
-  {
     key: 'aman',
     label: 'Aman',
     shortLabel: 'Aman',
@@ -309,9 +302,8 @@ function DailyReportTrendChart({ chartData }) {
 
   const chartMaxValue = React.useMemo(() => {
     return Math.max(
-      100,
+      10,
       ...chartData.map((item) => Math.max(
-        item.completionRate || 0,
         item.aman || 0,
         item.temuan || 0,
         item.missed || 0,
@@ -437,7 +429,7 @@ function DailyReportTrendChart({ chartData }) {
                       stroke="#0b1229"
                       strokeWidth="1.5"
                     >
-                      <title>{`${point.label} - ${series.label}: ${formatMetricNumber(point.rawValue, series.key === 'completionRate' ? 1 : 0)}${series.key === 'completionRate' ? '%' : ''}`}</title>
+                      <title>{`${point.label} - ${series.label}: ${formatMetricNumber(point.rawValue, 0)}`}</title>
                     </circle>
                   </g>
                 ))}
@@ -449,7 +441,7 @@ function DailyReportTrendChart({ chartData }) {
             let previousRenderedDateKey = null;
 
             return chartData.map((day, index) => {
-            const points = chartSvg.pointsBySeries.completionRate || [];
+            const points = chartSvg.pointsBySeries.aman || [];
             const anchorPoint = points[index];
             if (!anchorPoint) return null;
             const shouldRenderLabel = index === 0
@@ -1055,30 +1047,36 @@ const DailyReportPage = React.memo(function DailyReportPage() {
       </section>
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-[1.9rem] border border-cyan-800/50 bg-[#0b1229] p-5 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
+        <div className="min-w-0 rounded-[1.9rem] border border-cyan-800/50 bg-[#0b1229] p-5 shadow-[0_0_24px_rgba(8,145,178,0.08)]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500">Dashboard Temuan</p>
               <h3 className="mt-2 text-xl font-black text-white">Status OPEN dan Update Terakhir</h3>
             </div>
-            <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-yellow-300">
+            <div className="flex items-center gap-2 rounded-2xl border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-yellow-300">
               <ShieldAlert className="h-5 w-5" />
+              <span className="text-lg font-black leading-none">
+                {formatMetricNumber(openIncidents.length)}
+              </span>
             </div>
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="mt-4 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 scrollbar-none [&::-webkit-scrollbar]:hidden">
             {openIncidents.length === 0 ? (
-              <EmptyState
-                title="Tidak Ada Temuan Open"
-                description="Semua temuan pada rentang tanggal ini sudah closed atau belum ada temuan yang masuk."
-                icon={<CheckCircle2 className="h-5 w-5" />}
-              />
+              <div className="w-full shrink-0 snap-center">
+                <EmptyState
+                  title="Tidak Ada Temuan Open"
+                  description="Semua temuan pada rentang tanggal ini sudah closed atau belum ada temuan yang masuk."
+                  icon={<CheckCircle2 className="h-5 w-5" />}
+                />
+              </div>
             ) : openIncidents.map((incident) => (
               <button
                 key={incident.id}
+                id={`incident-card-${incident.id}`}
                 type="button"
                 onClick={() => openIncidentDetail(incident)}
-                className="w-full rounded-[1.35rem] border border-yellow-500/20 bg-[#070b19] p-4 text-left transition-all hover:border-yellow-400/40 hover:bg-[#0b1229] hover:shadow-[0_0_24px_rgba(250,204,21,0.08)]"
+                className="w-full shrink-0 snap-center rounded-[1.35rem] border border-yellow-500/20 bg-[#070b19] p-4 text-left transition-all hover:border-yellow-400/40 hover:bg-[#0b1229] hover:shadow-[0_0_24px_rgba(250,204,21,0.08)]"
               >
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_9rem]">
                   <div className="min-w-0">
@@ -1093,11 +1091,6 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                         {incident.isPatrol ? 'Patroli' : 'Manual'}
                       </span>
                     </div>
-                    <TimeAuditPills
-                      record={incident}
-                      fallbackTimestampKeys={['completedAt', 'createdAt']}
-                      className="mt-2"
-                    />
 
                     <h4 className="mt-3 text-lg font-black text-white">{incident.location || 'Lokasi temuan'}</h4>
                     <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-cyan-100/75">
@@ -1135,6 +1128,29 @@ const DailyReportPage = React.memo(function DailyReportPage() {
               </button>
             ))}
           </div>
+
+          {openIncidents.length > 1 && (
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              {openIncidents.map((incident, index) => (
+                <button
+                  key={`nav-${incident.id}`}
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const el = document.getElementById(`incident-card-${incident.id}`);
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+                    }
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-cyan-800/50 bg-[#0b1229] text-xs font-black text-cyan-500 transition-all hover:border-cyan-400 hover:bg-cyan-500/10 hover:shadow-[0_0_12px_rgba(6,182,212,0.15)] focus:outline-none"
+                  aria-label={`Scroll ke temuan ${index + 1}`}
+                >
+                  {index + 1}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -1146,7 +1162,7 @@ const DailyReportPage = React.memo(function DailyReportPage() {
               </div>
               <div className="flex items-center gap-2 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-rose-300">
                 <ShieldAlert className="h-5 w-5" />
-                <span className="inline-flex min-h-6 min-w-6 items-center justify-center rounded-full border border-rose-400/40 bg-rose-500 px-1.5 text-[10px] font-black leading-none text-white">
+                <span className="text-lg font-black leading-none">
                   {formatMetricNumber(sosInfoEntries.length)}
                 </span>
               </div>
@@ -1174,11 +1190,6 @@ const DailyReportPage = React.memo(function DailyReportPage() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-black text-white">{item.shipName}</p>
                         <p className="mt-1 truncate text-xs text-cyan-300/80">{item.senderName}</p>
-                        <TimeAuditPills
-                          record={item}
-                          fallbackTimestampKeys={['triggeredAt', 'createdAt']}
-                          className="mt-2"
-                        />
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-black text-rose-200">{timeLabel}</p>
