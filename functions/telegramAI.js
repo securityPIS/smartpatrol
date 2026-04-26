@@ -164,15 +164,8 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${afterSOS.id}`;
     const afterIncidents = afterState.incidentsData || [];
     
     if (afterIncidents.length > beforeIncidents.length) {
-      // Cari insiden yang baru ditambahkan
       const newIncidents = afterIncidents.filter(a => !beforeIncidents.some(b => b.id === a.id));
-      
       for (const incident of newIncidents) {
-        // Abaikan jika ini berasal dari checkpoint (sudah ditangani onCheckpointReportCreated)
-        // Biasanya insiden dari checkpoint tidak masuk ke incidentsData secara langsung jika masih diproses,
-        // Tapi pastikan dengan cek id tidak berawalan 'p-' jika Anda mau, atau biarkan.
-        // Sebenarnya patrol incidents tidak ada di incidentsData, melainkan di checkpointsByShip.
-        
         const shipName = incident.shipName || 'Tidak Diketahui';
         const location = incident.location || 'Area Kapal';
         const desc = incident.deskripsi || incident.kejadian || 'Tidak ada deskripsi.';
@@ -190,5 +183,37 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
         await sendTelegramMessage(chatId, message);
       }
     }
+
+    // Deteksi Notifikasi Sistem Lainnya (Shift, Registration, Missed, dll)
+    const beforeNotifs = beforeState.notifications || [];
+    const afterNotifs = afterState.notifications || [];
+    
+    if (afterNotifs.length > beforeNotifs.length) {
+      const newNotifs = afterNotifs.filter(a => !beforeNotifs.some(b => b.id === a.id));
+      
+      for (const notif of newNotifs) {
+        // Abaikan tipe yang sudah ditangani secara khusus di atas untuk menghindari duplikasi
+        const skipTypes = ['sos', 'patrol_finding', 'incident_created'];
+        if (skipTypes.includes(notif.type)) continue;
+
+        let icon = '🔔';
+        if (notif.type === 'shift_started') icon = '🚀';
+        if (notif.type === 'shift_history_created') icon = '📊';
+        if (notif.type === 'checkpoint_missed') icon = '❌';
+        if (notif.type === 'registration_pending') icon = '👤';
+        if (notif.type === 'checkpoint_pending') icon = '⏳';
+        if (notif.type === 'shift_ending_soon') icon = '⚠️';
+
+        const message = `${icon} *${notif.title.toUpperCase()}* ${icon}
+${notif.message}
+
+🔗 Buka Aplikasi:
+https://smartpatrol-7ff9e.web.app/${notif.routeParams?.incidentId ? '?incidentId=' + notif.routeParams.incidentId : ''}`;
+
+        await sendTelegramMessage(chatId, message);
+      }
+    }
+  }
+);
   }
 );
