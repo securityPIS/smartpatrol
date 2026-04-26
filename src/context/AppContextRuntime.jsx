@@ -5351,6 +5351,33 @@ export function AppProvider({ children }) {
     closeHistoryEntry();
   }, [activeSOSAlert, allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry, sosHistory]);
 
+  // Deep Linking from URL Parameters (e.g. from Telegram Notifications)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const incidentId = urlParams.get('incidentId');
+    if (!incidentId) return;
+
+    const incident = allIncidents.find(item => item.id === incidentId)
+        || (activeSOSAlert?.id === incidentId ? createSOSIncidentRecord(activeSOSAlert) : null)
+        || createSOSIncidentRecord(sosHistory.find((entry) => entry.id === incidentId));
+        
+    if (incident) {
+      setSelectedHistoryId(null);
+      setCurrentPage('incidents');
+      setPatrolTab('checkpoint');
+      setSearchQuery('');
+      setActiveForms({});
+      setSelectedReportDetail(null);
+      setSelectedIncident(incident);
+      
+      // Bersihkan param dari URL tanpa reload
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('incidentId');
+      window.history.replaceState({}, '', newUrl.toString());
+    }
+  }, [allIncidents, activeSOSAlert, sosHistory, setSelectedHistoryId, setCurrentPage, setPatrolTab, setSearchQuery, setActiveForms, setSelectedReportDetail, setSelectedIncident]);
+
   useEffect(() => {
     const timerId = window.setInterval(() => setShiftClock(getTrustedNowMs()), 60 * 1000);
     return () => window.clearInterval(timerId);

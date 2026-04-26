@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import fs from 'fs';
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -56,15 +57,23 @@ export const telegramWebhook = onRequest(async (req, res) => {
   }
 
   try {
-    // Call Gemini 3 Flash
-    const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash" });
-    
-    // Provide some context so the AI knows its role
-    const prompt = `Anda adalah asisten AI cerdas untuk aplikasi operasional maritim "SmartPatrol". 
-    Tugas Anda adalah membantu petugas lapangan, admin, dan PIC menjawab pertanyaan mereka dengan profesional, ringkas, dan jelas dalam bahasa Indonesia.
-    Pertanyaan user: "${text}"`;
+    // Load Knowledge Base
+    const knowledgeBase = fs.readFileSync(new URL('./user_guideline.md', import.meta.url), 'utf-8');
 
-    const result = await model.generateContent(prompt);
+    // Call Gemini Flash
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-3-flash-preview",
+      systemInstruction: `Anda adalah Asisten Bot AI cerdas untuk aplikasi operasional maritim "SmartPatrol". 
+Gunakan dokumen "Panduan Pengguna & Basis Pengetahuan" berikut sebagai SATU-SATUNYA referensi kebenaran untuk menjawab pertanyaan user. 
+Jangan mengarang fitur yang tidak disebutkan dalam dokumen. Jawab dengan profesional, ramah, ringkas, dan jelas dalam bahasa Indonesia.
+
+=== KNOWLEDGE BASE ===
+${knowledgeBase}
+=== END OF KNOWLEDGE BASE ===`
+    });
+    
+    // Pertanyaan user langsung diberikan sebagai prompt utama
+    const result = await model.generateContent(text);
     const responseText = result.response.text();
 
     await sendTelegramMessage(chatId, responseText);
@@ -99,6 +108,12 @@ export const onCheckpointReportCreated = onDocumentCreated(
     const time = data.time || new Date().toLocaleTimeString('id-ID');
     const desc = data.kejadian || data.desc || 'Tidak ada deskripsi.';
 
+    let incidentId = data.incidentId || `p-${event.params.checkpointId}`;
+    if (!data.incidentId && data.completedAt) {
+      const completedToken = data.completedAt.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      incidentId = `p-${event.params.checkpointId.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}-${completedToken}`;
+    }
+
     const message = `🚨 *TEMUAN PATROLI BARU* 🚨
 Kapal: ${shipName}
 Titik: ${checkpointName}
@@ -107,8 +122,73 @@ Waktu: ${time} WIB
 Keterangan: ${desc}
 
 🔗 Cek Detail Laporan & Foto Visual:
-https://smartpatrol-app.web.app/history`;
+https://smartpatrol-app.web.app/?incidentId=${incidentId}`;
 
     await sendTelegramMessage(chatId, message);
+  }
+);
+
+// Trigger: SOS dan Insiden Baru (dari shared-state)
+export const onSharedStateUpdated = onDocumentUpdated(
+  {
+    document: 'smartpatrol/shared-state',
+    region: 'asia-southeast2'
+  },
+  async (event) => {
+    const beforeState = event.data?.before?.data()?.state || {};
+    const afterState = event.data?.after?.data()?.state || {};
+    
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    if (!chatId) return;
+
+    // Deteksi SOS Baru
+    const beforeSOS = beforeState.activeSOSAlert;
+    const afterSOS = afterState.activeSOSAlert;
+    if (afterSOS && (!beforeSOS || beforeSOS.id !== afterSOS.id)) {
+      const shipName = afterSOS.shipName || 'Tidak Diketahui';
+      const trigger = afterSOS.triggeredBy || 'Awak Kapal';
+      
+      const message = `🆘 *DARURAT SOS DITEKAN* 🆘
+Kapal: ${shipName}
+Pelapor: ${trigger}
+Lokasi: ${afterSOS.lat}, ${afterSOS.lng}
+
+🔗 Cek Koordinat & Detail SOS:
+https://smartpatrol-app.web.app/?incidentId=${afterSOS.id}`;
+
+      await sendTelegramMessage(chatId, message);
+    }
+
+    // Deteksi Insiden / Lapor Baru (Manual)
+    const beforeIncidents = beforeState.incidentsData || [];
+    const afterIncidents = afterState.incidentsData || [];
+    
+    if (afterIncidents.length > beforeIncidents.length) {
+      // Cari insiden yang baru ditambahkan
+      const newIncidents = afterIncidents.filter(a => !beforeIncidents.some(b => b.id === a.id));
+      
+      for (const incident of newIncidents) {
+        // Abaikan jika ini berasal dari checkpoint (sudah ditangani onCheckpointReportCreated)
+        // Biasanya insiden dari checkpoint tidak masuk ke incidentsData secara langsung jika masih diproses,
+        // Tapi pastikan dengan cek id tidak berawalan 'p-' jika Anda mau, atau biarkan.
+        // Sebenarnya patrol incidents tidak ada di incidentsData, melainkan di checkpointsByShip.
+        
+        const shipName = incident.shipName || 'Tidak Diketahui';
+        const location = incident.location || 'Area Kapal';
+        const desc = incident.deskripsi || incident.kejadian || 'Tidak ada deskripsi.';
+        const author = incident.reportedBy || 'Petugas';
+        
+        const message = `⚠️ *LAPORAN INSIDEN BARU* ⚠️
+Kapal: ${shipName}
+Lokasi: ${location}
+Pelapor: ${author}
+Keterangan: ${desc}
+
+🔗 Cek Detail Insiden & Foto Visual:
+https://smartpatrol-app.web.app/?incidentId=${incident.id}`;
+
+        await sendTelegramMessage(chatId, message);
+      }
+    }
   }
 );

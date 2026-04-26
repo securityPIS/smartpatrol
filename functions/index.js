@@ -753,4 +753,4 @@ export const revokeOperationalUserAccess = onCall(
   },
 );
 
-export { telegramWebhook, onCheckpointReportCreated } from './telegramAI.js';
+export { telegramWebhook, onCheckpointReportCreated, onSharedStateUpdated } from './telegramAI.js';
