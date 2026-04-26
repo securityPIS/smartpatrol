@@ -215,5 +215,3 @@ https://smartpatrol-7ff9e.web.app/${notif.routeParams?.incidentId ? '?incidentId
     }
   }
 );
-  }
-);
