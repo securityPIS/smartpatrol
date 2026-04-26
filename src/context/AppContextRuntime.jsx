@@ -5610,7 +5610,7 @@ export function AppProvider({ children }) {
         {
           type: 'shift_history_created',
           title: 'Riwayat shift tersimpan',
-          message: `${entry.ship} ${entry.shift} berhasil disimpan ke riwayat patroli.`,
+          message: `${entry.ship} ${entry.shift} selesai. Summary: ${entry.summary.aman} Aman, ${entry.summary.temuan} Temuan, ${entry.summary.missed} Missed.`,
           senderName: 'Sistem',
           senderRole: 'SYSTEM',
           targetUserIds: getShipRecipients(entry.ship, { includeAdmins: true, includePic: true }),
