@@ -122,7 +122,7 @@ Waktu: ${time} WIB
 Keterangan: ${desc}
 
 🔗 Cek Detail Laporan & Foto Visual:
-https://smartpatrol-app.web.app/?incidentId=${incidentId}`;
+https://smartpatrol-7ff9e.web.app/?incidentId=${incidentId}`;
 
     await sendTelegramMessage(chatId, message);
   }
@@ -154,7 +154,7 @@ Pelapor: ${trigger}
 Lokasi: ${afterSOS.lat}, ${afterSOS.lng}
 
 🔗 Cek Koordinat & Detail SOS:
-https://smartpatrol-app.web.app/?incidentId=${afterSOS.id}`;
+https://smartpatrol-7ff9e.web.app/?incidentId=${afterSOS.id}`;
 
       await sendTelegramMessage(chatId, message);
     }
@@ -185,7 +185,7 @@ Pelapor: ${author}
 Keterangan: ${desc}
 
 🔗 Cek Detail Insiden & Foto Visual:
-https://smartpatrol-app.web.app/?incidentId=${incident.id}`;
+https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
 
         await sendTelegramMessage(chatId, message);
       }
