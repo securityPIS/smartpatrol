@@ -5605,7 +5605,41 @@ export function AppProvider({ children }) {
     }
 
     setHistoryEntries(previousEntries => mergeHistoryEntries(previousEntries, nextHistoryBatch));
-    appendNotifications(nextHistoryBatch.flatMap((entry) => {
+
+    const entriesByShift = nextHistoryBatch.reduce((acc, entry) => {
+      if (!acc[entry.key]) acc[entry.key] = [];
+      acc[entry.key].push(entry);
+      return acc;
+    }, {});
+
+    const summaryNotifications = [];
+    Object.values(entriesByShift).forEach((entries) => {
+      if (entries.length === 0) return;
+      const firstEntry = entries[0];
+      const shiftLabel = firstEntry.shift;
+      const timeRange = firstEntry.shiftMeta?.timeRange || '';
+      let message = `📊 SUMMARY LAPORAN ${shiftLabel.toUpperCase()} (${timeRange}) 📊\n\n`;
+      
+      entries.forEach(entry => {
+        message += `🚢 Kapal: ${entry.ship}\n✅ Aman: ${entry.summary.aman}\n⚠️ Temuan: ${entry.summary.temuan}\n❌ Missed: ${entry.summary.missed}\n\n`;
+      });
+      
+      summaryNotifications.push({
+        type: 'shift_history_created',
+        title: 'Summary Shift Wrap Up',
+        message: message.trim(),
+        senderName: 'Sistem',
+        senderRole: 'SYSTEM',
+        targetUserIds: getShipRecipients(null, { includeAdmins: true }),
+        route: 'history',
+        routeParams: {},
+        shiftKey: firstEntry.key,
+        dedupeKey: `shift-summary:${firstEntry.key}`,
+        createdAt: firstEntry.createdAt,
+      });
+    });
+
+    const individualNotifications = nextHistoryBatch.flatMap((entry) => {
       const notificationsBatch = [
         {
           type: 'shift_history_created',
@@ -5613,7 +5647,7 @@ export function AppProvider({ children }) {
           message: `${entry.ship} ${entry.shift} selesai. Summary: ${entry.summary.aman} Aman, ${entry.summary.temuan} Temuan, ${entry.summary.missed} Missed.`,
           senderName: 'Sistem',
           senderRole: 'SYSTEM',
-          targetUserIds: getShipRecipients(entry.ship, { includeAdmins: true, includePic: true }),
+          targetUserIds: getShipRecipients(entry.ship, { includePic: true }),
           route: 'history/detail',
           routeParams: { historyId: entry.id },
           historyId: entry.id,
@@ -5643,7 +5677,9 @@ export function AppProvider({ children }) {
       }
 
       return notificationsBatch;
-    }));
+    });
+
+    appendNotifications([...summaryNotifications, ...individualNotifications]);
     setCheckpointsByShip(workingCheckpointsByShip);
     setShiftStatusRecords((previousRecords) => retainShiftStatusRecordsForShift(previousRecords, currentShiftMeta.key));
     setActiveForms({});
