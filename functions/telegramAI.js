@@ -57,6 +57,21 @@ export const telegramWebhook = onRequest(async (req, res) => {
   }
 
   try {
+    const lowerText = text.toLowerCase().trim();
+    const greetings = ['halo', 'hallo', 'hi', 'hey', 'p', 'siang', 'pagi', 'malam', 'sore'];
+    
+    if (greetings.includes(lowerText)) {
+      const greetingResponse = `Halo! Saya adalah Ai buatan Bayu Samudra Baadilla dari SecurityPIS yang siap membantu Anda. 
+
+Saya dapat menjawab berbagai pertanyaan umum maupun memberikan panduan terkait aplikasi SmartPatrol, seperti operasional patroli, manajemen insiden, hingga teknis penggunaan aplikasi di lapangan.
+
+Ada yang bisa saya bantu hari ini?`;
+      
+      await sendTelegramMessage(chatId, greetingResponse);
+      res.status(200).send('OK');
+      return;
+    }
+
     // Load Knowledge Base
     const knowledgeBase = fs.readFileSync(new URL('./user_guideline.md', import.meta.url), 'utf-8');
 
