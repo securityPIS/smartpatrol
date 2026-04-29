@@ -78,6 +78,8 @@ let lastPerfNowMs = readPerfNow();
 let cachedSnapshot = null;
 let stableClockSampleCount = 0;
 let tamperRecoverySyncInFlight = false;
+let nativeBaselineDeviceEpochMs = null;
+let nativeBaselineMonotonicMs = null;
 let nativeClockCache = {
   available: false,
   elapsedRealtimeMs: null,
@@ -127,6 +129,11 @@ async function refreshNativeClockSnapshot() {
       deviceEpochMs: Number.isFinite(snapshot.deviceEpochMs) ? snapshot.deviceEpochMs : readDeviceNow(),
       sampledAtPerfMs: readPerfNow(),
     };
+
+    if (nativeBaselineDeviceEpochMs === null || nativeBaselineMonotonicMs === null) {
+      nativeBaselineDeviceEpochMs = nativeClockCache.deviceEpochMs;
+      nativeBaselineMonotonicMs = nativeClockCache.elapsedRealtimeMs;
+    }
 
     return nativeClockCache;
   } catch (error) {
@@ -321,6 +328,10 @@ function resolveServerTimeUrls() {
 function applyServerAnchor(serverNowMs, source) {
   const deviceNowMs = readDeviceNow();
   const monotonicNowMs = readMonotonicNow();
+  if (isNativeRuntime()) {
+    nativeBaselineDeviceEpochMs = deviceNowMs;
+    nativeBaselineMonotonicMs = monotonicNowMs;
+  }
   resetClockTamperRecoveryState();
   commitState({
     anchorServerEpochMs: serverNowMs,
@@ -380,6 +391,10 @@ function getTrustMeta(trustLevel = resolveTrustLevel()) {
 
 export function getTrustedNowMs() {
   if (!state.anchorServerEpochMs) {
+    // Android-only: jangan pernah percaya device clock tanpa anchor server
+    if (isNativeRuntime()) {
+      return null;
+    }
     return readDeviceNow();
   }
 
@@ -389,6 +404,11 @@ export function getTrustedNowMs() {
   }
 
   if (state.offlineSessionInterrupted) {
+    // Android-only: pakai monotonic clock yang tidak terpengaruh perubahan waktu HP
+    if (isNativeRuntime() && Number.isFinite(state.anchorMonotonicMs)) {
+      const elapsedFromMonotonicMs = Math.max(0, currentMonotonicMs - state.anchorMonotonicMs);
+      return state.anchorServerEpochMs + elapsedFromMonotonicMs;
+    }
     const elapsedFromDeviceMs = Math.max(0, readDeviceNow() - (state.anchorDeviceNowMs || readDeviceNow()));
     return state.anchorServerEpochMs + elapsedFromDeviceMs;
   }
@@ -398,7 +418,8 @@ export function getTrustedNowMs() {
 }
 
 export function getTrustedDate() {
-  return new Date(getTrustedNowMs());
+  const trustedNowMs = getTrustedNowMs();
+  return Number.isFinite(trustedNowMs) ? new Date(trustedNowMs) : new Date(readDeviceNow());
 }
 
 export function getTimeTrustStatus() {
@@ -492,11 +513,22 @@ export function detectClockTampering() {
   const localElapsedMs = currentLocalNowMs - lastLocalNowMs;
   const perfElapsedMs = currentPerfNowMs - lastPerfNowMs;
   const driftMs = Math.abs(localElapsedMs - perfElapsedMs);
+  const nativeDeviceElapsedMs = nativeClockCache.available && Number.isFinite(nativeBaselineDeviceEpochMs)
+    ? (currentLocalNowMs - nativeBaselineDeviceEpochMs)
+    : null;
+  const nativeMonotonicElapsedMs = nativeClockCache.available && Number.isFinite(nativeBaselineMonotonicMs)
+    ? (currentPerfNowMs - nativeBaselineMonotonicMs)
+    : null;
 
   lastLocalNowMs = currentLocalNowMs;
   lastPerfNowMs = currentPerfNowMs;
 
-  if (isClockDriftSuspicious(localElapsedMs, perfElapsedMs, CLOCK_TAMPER_DRIFT_THRESHOLD_MS)) {
+  const nativeDriftSuspicious = isNativeRuntime()
+    && Number.isFinite(nativeDeviceElapsedMs)
+    && Number.isFinite(nativeMonotonicElapsedMs)
+    && isClockDriftSuspicious(nativeDeviceElapsedMs, nativeMonotonicElapsedMs, CLOCK_TAMPER_DRIFT_THRESHOLD_MS);
+
+  if (isClockDriftSuspicious(localElapsedMs, perfElapsedMs, CLOCK_TAMPER_DRIFT_THRESHOLD_MS) || nativeDriftSuspicious) {
     resetClockTamperRecoveryState();
 
     if (state.clockTamperDetected) {
@@ -605,18 +637,36 @@ export async function syncServerTime(options = {}) {
 
 export function initializeTrustedTime() {
   if (initialized) {
-    return () => {};
+    return () => { };
   }
 
   initialized = true;
-  state = loadPersistedState();
-  invalidateSnapshotCache();
-  resetClockTamperRecoveryState();
-  tamperRecoverySyncInFlight = false;
-  lastLocalNowMs = readDeviceNow();
-  lastPerfNowMs = readMonotonicNow();
-  persistState();
-  notifyListeners();
+
+  const hydrateTrustedState = () => {
+    invalidateSnapshotCache();
+    resetClockTamperRecoveryState();
+    tamperRecoverySyncInFlight = false;
+    lastLocalNowMs = readDeviceNow();
+    lastPerfNowMs = readMonotonicNow();
+    persistState();
+    notifyListeners();
+  };
+
+  if (isNativeRuntime()) {
+    refreshNativeClockSnapshot()
+      .then(() => {
+        state = loadPersistedState();
+        rehydrateNativeAnchorAfterClockRefresh();
+        hydrateTrustedState();
+      })
+      .catch(() => {
+        state = loadPersistedState();
+        hydrateTrustedState();
+      });
+  } else {
+    state = loadPersistedState();
+    hydrateTrustedState();
+  }
 
   refreshNativeClockSnapshot()
     .then(() => {
@@ -624,7 +674,7 @@ export function initializeTrustedTime() {
       lastLocalNowMs = readDeviceNow();
       lastPerfNowMs = readMonotonicNow();
     })
-    .catch(() => {});
+    .catch(() => { });
 
   const handleOnline = () => {
     syncServerTime({ reason: 'online' }).catch((error) => {

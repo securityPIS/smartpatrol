@@ -22,6 +22,7 @@ import {
   sanitizeEmailValue,
   sanitizePhoneValue,
 } from './accessModels.js';
+import { sendTelegramMessage } from './telegramAI.js';
 
 initializeApp();
 
@@ -250,9 +251,9 @@ function resolveAllowedOrigins(request) {
   const projectId = process.env.GCLOUD_PROJECT || firebaseConfigProjectId || '';
   const projectOrigins = projectId
     ? [
-        `https://${projectId}.web.app`,
-        `https://${projectId}.firebaseapp.com`,
-      ]
+      `https://${projectId}.web.app`,
+      `https://${projectId}.firebaseapp.com`,
+    ]
     : [];
 
   const localOrigins = [
@@ -260,6 +261,11 @@ function resolveAllowedOrigins(request) {
     'http://127.0.0.1:5173',
     'http://localhost:4173',
     'http://127.0.0.1:4173',
+    // Capacitor native runtime origins (Android & iOS)
+    'https://localhost',
+    'http://localhost',
+    'capacitor://localhost',
+    'ionic://localhost',
   ];
 
   const allowedOrigins = new Set([
@@ -584,7 +590,7 @@ async function disableInvalidPushToken(docId) {
     enabled: false,
     disabledAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true }).catch(() => {});
+  }, { merge: true }).catch(() => { });
 }
 
 async function sendPushToAccessRecords(accessRecords = [], push = {}) {
@@ -728,10 +734,10 @@ function resolveIncidentFromState(state = {}, incidentId = '') {
 function getIncidentLabel(incident = {}, fallback = 'Temuan') {
   return sanitizeString(
     incident.location
-      || incident.name
-      || incident.title
-      || incident.checkpointName
-      || fallback,
+    || incident.name
+    || incident.title
+    || incident.checkpointName
+    || fallback,
     100,
   ) || fallback;
 }
@@ -1189,14 +1195,27 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           includePic: false,
           includePetugas: false,
         });
+        const wrapUpSummary = buildAdminWrapUpSummary(state, previousShift);
         await sendPushToAccessRecords(adminTargets, {
           type: 'shift_wrap_up',
           title: 'Shift wrap up',
-          body: `Shift sebelumnya selesai. ${buildAdminWrapUpSummary(state, previousShift)}`,
+          body: `Shift sebelumnya selesai. ${wrapUpSummary}`,
           route: 'history/list',
           shiftKey: previousShift.key,
           tag: `admin-wrap-${currentShift.key}`,
         });
+
+        const chatId = process.env.TELEGRAM_CHAT_ID;
+        if (chatId) {
+          const telegramMessage = `📊 *SHIFT WRAP UP* 📊
+Shift sebelumnya selesai.
+
+${wrapUpSummary}
+
+🔗 Buka Riwayat Laporan:
+https://smartpatrol-7ff9e.web.app/?route=history/list`;
+          await sendTelegramMessage(chatId, telegramMessage);
+        }
       }
     }
 

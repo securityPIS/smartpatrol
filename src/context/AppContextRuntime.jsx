@@ -19,6 +19,7 @@ import {
   addNativeNetworkStatusListener,
   getNativeGeolocationPosition,
   getNativeNetworkStatus,
+  isNativeRuntime,
 } from '../services/native/capacitorBridge';
 import { setupNativePushNotifications } from '../services/native/pushNotifications';
 import {
@@ -58,6 +59,7 @@ import {
   createTrustedTimestampRecord,
   getTrustedDate,
   getTrustedNowMs,
+  getTimeTrustStatus,
   initializeTrustedTime,
 } from '../services/time/trustedTime';
 import {
@@ -79,6 +81,23 @@ const APP_TIME_ZONE = 'Asia/Jakarta';
 const APP_TIME_ZONE_UTC_OFFSET_HOURS = 7;
 const SHIFT_NOTIFICATION_DEBUG_KEY = 'smartpatrol.debug.shiftNotifications';
 const CLOUD_SYNC_DEBUG_KEY = 'smartpatrol.debug.cloudSync';
+
+/**
+ * Gate Android-only: blok operasi kritis jika trusted time belum terverifikasi.
+ * Hanya berlaku di native Android; web/PWA tidak terpengaruh.
+ * @returns {null|string} null jika lolos, string pesan error jika diblok.
+ */
+function checkAndroidTrustedTimeGate() {
+  if (!isNativeRuntime()) return null;
+  const status = getTimeTrustStatus();
+  if (status.trustLevel === 'unverified') {
+    return 'Waktu perangkat belum terverifikasi. Aktifkan internet dan tunggu sinkronisasi sebelum melanjutkan.';
+  }
+  if (status.clockTamperDetected) {
+    return 'Perubahan jam perangkat terdeteksi. Sinkronisasi ulang waktu diperlukan.';
+  }
+  return null;
+}
 
 function getDefaultPageForRole(role) {
   return role === ACCESS_ROLES.ADMIN || role === ACCESS_ROLES.PIC ? 'daily-report' : 'home';
@@ -396,8 +415,8 @@ let _initialShipsData = null;
 function getInitialShipsData() {
   if (_initialShipsData) return _initialShipsData;
   _initialShipsData = [
-    { id: 's1', name: 'MT MENGGALA', type: 'Oil Tanker', imoNumber: '9387421', lat: '-6.1021', lng: '106.8833', status: 'UPP', route: 'Jakarta - Singapore', cargoType: 'Crude Oil', cargoAmount: '50,000 MT', photoUrl: createPosterDataUrl('MT MENGGALA', 'Operasi patroli aktif', 0, false), personnel: ['u1', 'u2', 'u3'], personnelNextMonth: ['u1', 'u4', 'u5'], customCheckpoints: [{name: 'Cuaca', desc: 'Cek visibilitas dan gelombang.'}, {name: 'Ruang Mesin', desc: 'Pastikan suhu generator normal.'}], documents: [{title: 'Sertifikat Keselamatan', docDate: '2026-01-12', desc: 'Berlaku hingga 2027'}, {title: 'Izin Berlayar', docDate: '2026-02-03', desc: 'Dikeluarkan Syahbandar'}], sosRecipientShipIds: [] },
-    { id: 's2', name: 'MT SRIWIJAYA', type: 'Chemical Tanker', imoNumber: '9471208', lat: '-5.9123', lng: '105.8122', status: 'NON UPP', route: 'Merak - Bakauheni', cargoType: 'Methanol', cargoAmount: '12,000 MT', photoUrl: createPosterDataUrl('MT SRIWIJAYA', 'Armada Cadangan', 1, false), personnel: [], personnelNextMonth: [], customCheckpoints: [{name: 'Pompa Kimia', desc: 'Pastikan tidak ada kebocoran'}], documents: [], sosRecipientShipIds: [] },
+    { id: 's1', name: 'MT MENGGALA', type: 'Oil Tanker', imoNumber: '9387421', lat: '-6.1021', lng: '106.8833', status: 'UPP', route: 'Jakarta - Singapore', cargoType: 'Crude Oil', cargoAmount: '50,000 MT', photoUrl: createPosterDataUrl('MT MENGGALA', 'Operasi patroli aktif', 0, false), personnel: ['u1', 'u2', 'u3'], personnelNextMonth: ['u1', 'u4', 'u5'], customCheckpoints: [{ name: 'Cuaca', desc: 'Cek visibilitas dan gelombang.' }, { name: 'Ruang Mesin', desc: 'Pastikan suhu generator normal.' }], documents: [{ title: 'Sertifikat Keselamatan', docDate: '2026-01-12', desc: 'Berlaku hingga 2027' }, { title: 'Izin Berlayar', docDate: '2026-02-03', desc: 'Dikeluarkan Syahbandar' }], sosRecipientShipIds: [] },
+    { id: 's2', name: 'MT SRIWIJAYA', type: 'Chemical Tanker', imoNumber: '9471208', lat: '-5.9123', lng: '105.8122', status: 'NON UPP', route: 'Merak - Bakauheni', cargoType: 'Methanol', cargoAmount: '12,000 MT', photoUrl: createPosterDataUrl('MT SRIWIJAYA', 'Armada Cadangan', 1, false), personnel: [], personnelNextMonth: [], customCheckpoints: [{ name: 'Pompa Kimia', desc: 'Pastikan tidak ada kebocoran' }], documents: [], sosRecipientShipIds: [] },
   ];
   return _initialShipsData;
 }
@@ -818,10 +837,10 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey =
 
     const normalizedCheckpoint = shouldResetCheckpointForActiveShift(matchedCheckpoint, activeShiftKey)
       ? resetCheckpointForShift(matchedCheckpoint, {
-          shiftKey: activeShiftKey,
-          updatedAt: getShiftResetTimestamp(activeShiftKey),
-          pendingOrigin: 'shift-reset',
-        })
+        shiftKey: activeShiftKey,
+        updatedAt: getShiftResetTimestamp(activeShiftKey),
+        pendingOrigin: 'shift-reset',
+      })
       : matchedCheckpoint;
 
     return {
@@ -1474,9 +1493,9 @@ function migrateCheckpointStateToCurrentShift({
 
       const normalizedCurrentCheckpoint = canonicalShiftStartAt > currentShiftStartAt
         ? {
-            ...normalizedCheckpoint,
-            shiftKey: safeCurrentShiftMeta.key,
-          }
+          ...normalizedCheckpoint,
+          shiftKey: safeCurrentShiftMeta.key,
+        }
         : normalizedCheckpoint;
 
       if (matchedCheckpoint.shiftKey !== normalizedCurrentCheckpoint.shiftKey) {
@@ -1574,18 +1593,18 @@ async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDat
 
   const gpsSnapshot = deviceLocation
     ? {
-        ...deviceLocation,
-        source: 'device',
-        capturedAt,
-      }
+      ...deviceLocation,
+      source: 'device',
+      capturedAt,
+    }
     : (shipSnapshot?.lat != null && shipSnapshot?.lng != null)
       ? {
-          lat: shipSnapshot.lat,
-          lng: shipSnapshot.lng,
-          accuracy: null,
-          source: 'ship',
-          capturedAt,
-        }
+        lat: shipSnapshot.lat,
+        lng: shipSnapshot.lng,
+        accuracy: null,
+        source: 'ship',
+        capturedAt,
+      }
       : null;
 
   const weatherSnapshot = await fetchWeatherSnapshotForCoordinates(gpsSnapshot, fallbackWeather);
@@ -1601,18 +1620,18 @@ function sortHistoryEntries(entries) {
   return ensureArray(entries)
     .filter(entry => ensureObject(entry))
     .sort((left, right) => {
-    const leftTimestamp = new Date(left.createdAt || '').getTime();
-    const rightTimestamp = new Date(right.createdAt || '').getTime();
+      const leftTimestamp = new Date(left.createdAt || '').getTime();
+      const rightTimestamp = new Date(right.createdAt || '').getTime();
 
-    if (!Number.isNaN(leftTimestamp) && !Number.isNaN(rightTimestamp) && leftTimestamp !== rightTimestamp) {
-      return rightTimestamp - leftTimestamp;
-    }
+      if (!Number.isNaN(leftTimestamp) && !Number.isNaN(rightTimestamp) && leftTimestamp !== rightTimestamp) {
+        return rightTimestamp - leftTimestamp;
+      }
 
-    const leftDateKey = String(left.dateKey || '');
-    const rightDateKey = String(right.dateKey || '');
-    if (leftDateKey !== rightDateKey) return rightDateKey.localeCompare(leftDateKey);
-    return String(right.shift || '').localeCompare(String(left.shift || ''));
-  });
+      const leftDateKey = String(left.dateKey || '');
+      const rightDateKey = String(right.dateKey || '');
+      if (leftDateKey !== rightDateKey) return rightDateKey.localeCompare(leftDateKey);
+      return String(right.shift || '').localeCompare(String(left.shift || ''));
+    });
 }
 
 function mergeCrewSnapshots(baseCrew = [], nextCrew = []) {
@@ -2828,10 +2847,10 @@ function upsertOperationalUserRecord(users = [], payload = {}) {
     user.id !== targetUser.id
       ? user
       : normalizeUserRecord({
-          ...user,
-          ...nextRecord,
-          id: targetUser.id,
-        }, index)
+        ...user,
+        ...nextRecord,
+        id: targetUser.id,
+      }, index)
   ));
 }
 
@@ -2865,13 +2884,13 @@ function createPersistedUserSnapshot(user, sessionUserId = null) {
     firebaseUid: sanitizeText(user?.firebaseUid || '', 160) || null,
     ...(isSessionUser
       ? {
-          dob: sanitizeText(user?.dob || '', 20),
-          address: sanitizeMultilineText(user?.address || '', 180),
-          officeAddress: sanitizeMultilineText(user?.officeAddress || '', 180),
-          emergencyName: sanitizeText(user?.emergencyName || '', 80),
-          emergencyContact: sanitizePhone(user?.emergencyContact || ''),
-          emergencyRelation: sanitizeText(user?.emergencyRelation || '', 40) || 'Orang Tua',
-        }
+        dob: sanitizeText(user?.dob || '', 20),
+        address: sanitizeMultilineText(user?.address || '', 180),
+        officeAddress: sanitizeMultilineText(user?.officeAddress || '', 180),
+        emergencyName: sanitizeText(user?.emergencyName || '', 80),
+        emergencyContact: sanitizePhone(user?.emergencyContact || ''),
+        emergencyRelation: sanitizeText(user?.emergencyRelation || '', 40) || 'Orang Tua',
+      }
       : {}),
   };
 }
@@ -3988,7 +4007,7 @@ export function AppProvider({ children }) {
       let newNextMonth = [...(ship.personnelNextMonth || [])];
       let newSchedules = { ...(ship.personnelSchedules || {}) };
       let shipModified = false;
-      
+
       newNextMonth.forEach(uId => {
         const schedule = newSchedules[uId];
         if (schedule && schedule.startDate && schedule.startDate <= todayStr) {
@@ -4014,10 +4033,10 @@ export function AppProvider({ children }) {
     });
     if (shipsChanged) {
       setShipsData(updatedShips);
-      setUsersData(prev => prev.map(u => { 
-        const update = usersToUpdate.find(x => x.userId === u.id); 
-        if (update) return { ...u, shipAssigned: update.shipAssigned, status: update.status }; 
-        return u; 
+      setUsersData(prev => prev.map(u => {
+        const update = usersToUpdate.find(x => x.userId === u.id);
+        if (update) return { ...u, shipAssigned: update.shipAssigned, status: update.status };
+        return u;
       }));
     }
   }, []);
@@ -4040,7 +4059,7 @@ export function AppProvider({ children }) {
   const [showShipForm, setShowShipForm] = useState(false);
   const [shipFormData, setShipFormData] = useState(() => createShipFormState());
   const [newCheckpoint, setNewCheckpoint] = useState('');
-  const [newShipCp, setNewShipCp] = useState({name: '', desc: ''});
+  const [newShipCp, setNewShipCp] = useState({ name: '', desc: '' });
   const [showShipDocForm, setShowShipDocForm] = useState(false);
   const [newShipDoc, setNewShipDoc] = useState(() => createShipDocumentState());
   const [weatherInfo, setWeatherInfo] = useState(() => loadWeatherCache());
@@ -4087,8 +4106,21 @@ export function AppProvider({ children }) {
 
     setCloudSyncKick((previousValue) => previousValue + 1);
   }, []);
+  const showTrustedTimeGateDialog = useCallback(() => {
+    const gateMessage = checkAndroidTrustedTimeGate();
+    if (!gateMessage) return false;
 
-// SOS Hooks moved to resolve TDZ
+    setConfirmDialog({
+      title: 'Waktu Belum Terverifikasi',
+      message: gateMessage,
+      confirmText: 'MENGERTI',
+      isAlert: true,
+      onConfirm: () => { },
+    });
+    return true;
+  }, []);
+
+  // SOS Hooks moved to resolve TDZ
 
   // Computed values
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -4213,6 +4245,7 @@ export function AppProvider({ children }) {
 
   const handleSOSTrigger = useCallback((lat, lng) => {
     if (!currentUserRecord) return;
+    if (showTrustedTimeGateDialog()) return;
     const trustedTimestamp = createTrustedTimestampRecord();
     const eventTimestampIso = trustedTimestamp.occurredAtTrustedIso;
     const senderShipName = sanitizeText(currentUserRecord.shipAssigned || '', 80) || 'Tidak diketahui';
@@ -4244,7 +4277,7 @@ export function AppProvider({ children }) {
       status: 'active',
       ...trustedTimestamp,
     };
-    
+
     // Default broad notification implementation
     const rawNotif = {
       id: `notif-sos-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 6)}`,
@@ -4287,7 +4320,7 @@ export function AppProvider({ children }) {
       shipName: senderShipName,
     });
     requestCloudSync('urgent');
-  }, [currentUserRecord, emitCloudSyncSignal, getSOSRecipientUserIds, requestCloudSync, shipsData]);
+  }, [currentUserRecord, emitCloudSyncSignal, getSOSRecipientUserIds, requestCloudSync, shipsData, showTrustedTimeGateDialog]);
 
   const resolveSOSActionTarget = useCallback((targetSOS = null) => {
     const targetId = typeof targetSOS === 'string'
@@ -4303,6 +4336,7 @@ export function AppProvider({ children }) {
     const actionableSOS = resolveSOSActionTarget(targetSOS);
     if (!actionableSOS || !currentUserId) return;
     if (Array.isArray(actionableSOS.targetUserIds) && !actionableSOS.targetUserIds.includes(currentUserId)) return;
+    if (showTrustedTimeGateDialog()) return;
 
     const trustedTimestamp = createTrustedTimestampRecord();
     const updatedSOS = {
@@ -4326,12 +4360,13 @@ export function AppProvider({ children }) {
       shipName: updatedSOS.shipName,
     });
     requestCloudSync('urgent');
-  }, [currentUserId, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget]);
+  }, [currentUserId, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget, showTrustedTimeGateDialog]);
 
   const handleSOSAcknowledgeSelf = useCallback((targetSOS = null) => {
     const actionableSOS = resolveSOSActionTarget(targetSOS);
     if (!actionableSOS || !currentUserId) return;
     if (actionableSOS.senderUserId !== currentUserId) return;
+    if (showTrustedTimeGateDialog()) return;
 
     const trustedTimestamp = createTrustedTimestampRecord();
     const updatedSOS = {
@@ -4359,13 +4394,14 @@ export function AppProvider({ children }) {
       shipName: updatedSOS.shipName,
     });
     requestCloudSync('urgent');
-  }, [currentUserId, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget]);
+  }, [currentUserId, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget, showTrustedTimeGateDialog]);
 
   const handleSOSDismiss = useCallback((targetSOS = null) => {
     const actionableSOS = resolveSOSActionTarget(targetSOS);
     if (!actionableSOS) return;
+    if (showTrustedTimeGateDialog()) return;
     const trustedTimestamp = createTrustedTimestampRecord();
-    
+
     const updatedSOS = {
       ...actionableSOS,
       status: 'resolved',
@@ -4392,7 +4428,7 @@ export function AppProvider({ children }) {
       shipName: updatedSOS.shipName,
     });
     requestCloudSync('urgent');
-  }, [currentUserRecord, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget]);
+  }, [currentUserRecord, emitCloudSyncSignal, requestCloudSync, resolveSOSActionTarget, showTrustedTimeGateDialog]);
 
   const assignedShipForCurrentUser = useMemo(() => {
     return resolveAssignedShipForUser(currentUserRecord, shipsData);
@@ -4833,17 +4869,17 @@ export function AppProvider({ children }) {
       const [uploadedPhotoUrl, uploadedGalleryPhotos] = await Promise.all([
         isLocalOnlyAssetUrl(checkpointReport.photoUrl)
           ? prepareCloudPhotoUrl(
-              checkpointReport.photoUrl,
-              ['patrol-reports', checkpointReport.shipId, checkpointReport.shiftKey, checkpointReport.checkpointId, checkpointReport.photoUrl],
-            )
+            checkpointReport.photoUrl,
+            ['patrol-reports', checkpointReport.shipId, checkpointReport.shiftKey, checkpointReport.checkpointId, checkpointReport.photoUrl],
+          )
           : Promise.resolve(checkpointReport.photoUrl),
         Promise.all(galleryPhotos.map(async (galleryPhoto, galleryIndex) => ({
           ...galleryPhoto,
           photoUrl: isLocalOnlyAssetUrl(galleryPhoto?.photoUrl)
             ? await prepareCloudPhotoUrl(
-                galleryPhoto.photoUrl,
-                ['patrol-reports-gallery', checkpointReport.shipId, checkpointReport.shiftKey, checkpointReport.checkpointId, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
-              )
+              galleryPhoto.photoUrl,
+              ['patrol-reports-gallery', checkpointReport.shipId, checkpointReport.shiftKey, checkpointReport.checkpointId, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
+            )
             : galleryPhoto?.photoUrl || null,
         }))),
       ]);
@@ -4977,13 +5013,13 @@ export function AppProvider({ children }) {
         String(checkpoint?.id) === String(previousReport.id)
         && isCheckpointContextCompatible(previousReport, checkpoint)
       )) || (
-        // Fallback to any id match ONLY if the report is NOT a read-only
-        // history entry — prevents pending checkpoints wiping documentation.
-        !previousReport.readOnly && !previousReport.historyId
-        && flattenedCheckpoints.find((checkpoint) => (
-          String(checkpoint?.id) === String(previousReport.id)
-        ))
-      );
+          // Fallback to any id match ONLY if the report is NOT a read-only
+          // history entry — prevents pending checkpoints wiping documentation.
+          !previousReport.readOnly && !previousReport.historyId
+          && flattenedCheckpoints.find((checkpoint) => (
+            String(checkpoint?.id) === String(previousReport.id)
+          ))
+        );
 
       if (!matchedCheckpoint) return previousReport;
 
@@ -5264,8 +5300,8 @@ export function AppProvider({ children }) {
     if (!notificationWriteIdentityId) return;
     setNotifications(previousNotifications => ensureArray(previousNotifications).map((notification) => (
       Array.isArray(notification?.targetUserIds)
-      && notification.targetUserIds.some((targetUserId) => notificationRecipientIds.includes(targetUserId))
-      && !(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []).some((readIdentity) => notificationReadIdentityIds.includes(readIdentity))
+        && notification.targetUserIds.some((targetUserId) => notificationRecipientIds.includes(targetUserId))
+        && !(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []).some((readIdentity) => notificationReadIdentityIds.includes(readIdentity))
         ? { ...notification, readByUserIds: [...(Array.isArray(notification?.readByUserIds) ? notification.readByUserIds : []), notificationWriteIdentityId] }
         : notification
     )));
@@ -5389,9 +5425,9 @@ export function AppProvider({ children }) {
   const visibleIncidents = useMemo(() => (
     isPetugas && assignedShipForCurrentUser
       ? allIncidents.filter((incident) => (
-          incident.shipName === assignedShipForCurrentUser.name
-          || (Array.isArray(incident.targetShipNames) && incident.targetShipNames.includes(assignedShipForCurrentUser.name))
-        ))
+        incident.shipName === assignedShipForCurrentUser.name
+        || (Array.isArray(incident.targetShipNames) && incident.targetShipNames.includes(assignedShipForCurrentUser.name))
+      ))
       : allIncidents
   ), [allIncidents, assignedShipForCurrentUser, isPetugas]);
   const activeShiftGuardSnapshot = useMemo(
@@ -5547,7 +5583,7 @@ export function AppProvider({ children }) {
   }, [appendNotifications, createNotificationFromPushPayload, handleNotificationClick, openSOSAlertFromPush]);
 
   useEffect(() => {
-    if (!hasOperationalCloudAccess || !nativePushProfile || !firebaseAuthUid) return () => {};
+    if (!hasOperationalCloudAccess || !nativePushProfile || !firebaseAuthUid) return () => { };
 
     let cleanupPush = null;
     let disposed = false;
@@ -5581,9 +5617,9 @@ export function AppProvider({ children }) {
     if (!incidentId) return;
 
     const incident = allIncidents.find(item => item.id === incidentId)
-        || (activeSOSAlert?.id === incidentId ? createSOSIncidentRecord(activeSOSAlert) : null)
-        || createSOSIncidentRecord(sosHistory.find((entry) => entry.id === incidentId));
-        
+      || (activeSOSAlert?.id === incidentId ? createSOSIncidentRecord(activeSOSAlert) : null)
+      || createSOSIncidentRecord(sosHistory.find((entry) => entry.id === incidentId));
+
     if (incident) {
       setSelectedHistoryId(null);
       setCurrentPage('incidents');
@@ -5592,7 +5628,7 @@ export function AppProvider({ children }) {
       setActiveForms({});
       setSelectedReportDetail(null);
       setSelectedIncident(incident);
-      
+
       // Bersihkan param dari URL tanpa reload
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.delete('incidentId');
@@ -5803,8 +5839,8 @@ export function AppProvider({ children }) {
     while (workingShiftMeta.key !== currentShiftMeta.key) {
       if (iterations++ > 31) {
         console.warn('MAX_ITERATIONS reached during shift reconciliation.', {
-           persistedKey: persistedShiftMeta.key,
-           currentKey: currentShiftMeta.key,
+          persistedKey: persistedShiftMeta.key,
+          currentKey: currentShiftMeta.key,
         });
         break;
       }
@@ -5843,11 +5879,11 @@ export function AppProvider({ children }) {
       const shiftLabel = firstEntry.shift;
       const timeRange = firstEntry.time || firstEntry.shiftMeta?.timeRange || '';
       let message = `📊 SUMMARY LAPORAN ${shiftLabel.toUpperCase()} (${timeRange}) 📊\n\n`;
-      
+
       entries.forEach(entry => {
         message += `🚢 Kapal: ${entry.ship}\n✅ Aman: ${entry.summary.aman}\n⚠️ Temuan: ${entry.summary.temuan}\n❌ Missed: ${entry.summary.missed}\n\n`;
       });
-      
+
       summaryNotifications.push({
         type: 'shift_history_created',
         title: 'Summary Shift Wrap Up',
@@ -5937,6 +5973,7 @@ export function AppProvider({ children }) {
   }, []);
   const handleSaveCurrentShiftStatus = useCallback((items = []) => {
     if (!operationalShip?.id || !currentUserRecord) return false;
+    if (showTrustedTimeGateDialog()) return false;
 
     const guardSnapshot = ensureArray(activeShiftGuardSnapshot).filter(user => user?.id || user?.name);
     if (guardSnapshot.length === 0) {
@@ -5986,18 +6023,19 @@ export function AppProvider({ children }) {
     }));
     setShowShiftStatusModal(false);
     return true;
-  }, [activeShiftGuardSnapshot, currentShiftMeta.key, currentUser, currentUserRecord, operationalShip?.id, operationalShipName]);
+  }, [activeShiftGuardSnapshot, currentShiftMeta.key, currentUser, currentUserRecord, operationalShip?.id, operationalShipName, showTrustedTimeGateDialog]);
 
   // Patrol handlers
   const handleActionClick = useCallback(async (id, type) => {
     if (!canPatrolCurrentShip) return;
+    if (showTrustedTimeGateDialog()) return;
     if (!isCurrentShiftStatusCompleted) {
       setShowShiftStatusModal(true);
       return;
     }
 
     setPendingPatrolCameraCapture({ id, type });
-  }, [canPatrolCurrentShip, isCurrentShiftStatusCompleted]);
+  }, [canPatrolCurrentShip, isCurrentShiftStatusCompleted, showTrustedTimeGateDialog]);
   const handleFormChange = useCallback((id, field, value) => { setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } })); }, []);
   const handlePhotoUpload = useCallback(async (id, isIncident = false, options = {}) => {
     const useCameraOnly = Boolean(options.cameraOnly);
@@ -6009,12 +6047,13 @@ export function AppProvider({ children }) {
     const dataUrl = await pickLocalImage({ cameraOnly: useCameraOnly });
     if (!dataUrl) return;
     const url = await saveImageToDB(dataUrl);
-    if(!url) return;
-    if(isIncident) setIncidentForm(prev => ({...prev, photoUrl: url}));
+    if (!url) return;
+    if (isIncident) setIncidentForm(prev => ({ ...prev, photoUrl: url }));
     else setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], photoUrl: url } }));
   }, [activeForms]);
   const handleSubmitPatrol = useCallback(async (id) => {
     if (!currentUserRecord || !operationalShip) return;
+    if (showTrustedTimeGateDialog()) return;
     if (!isCurrentShiftStatusCompleted) {
       setShowShiftStatusModal(true);
       return;
@@ -6094,27 +6133,27 @@ export function AppProvider({ children }) {
     } finally {
       setSubmittingPatrolId(previousId => (previousId === id ? null : previousId));
     }
-  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, submittingPatrolId, syncPatrolReportToDomain, updateOperationalShipCheckpoints, weatherInfo]);
-  const handleDeleteReport = useCallback((id) => { 
-    setConfirmDialog({ 
-      title: 'Hapus Laporan', 
-      message: 'Apakah Anda yakin ingin menghapus laporan patroli ini?', 
+  }, [activeForms, appendNotifications, checkpoints, currentShiftMeta.key, currentUser, currentUserRecord, currentUserRole, getShipRecipients, isCurrentShiftStatusCompleted, operationalShip, operationalShipName, requestCloudSync, showTrustedTimeGateDialog, submittingPatrolId, syncPatrolReportToDomain, updateOperationalShipCheckpoints, weatherInfo]);
+  const handleDeleteReport = useCallback((id) => {
+    setConfirmDialog({
+      title: 'Hapus Laporan',
+      message: 'Apakah Anda yakin ingin menghapus laporan patroli ini?',
       confirmText: 'YA, HAPUS',
       cancelText: 'BATAL',
-      onConfirm: () => { 
+      onConfirm: () => {
         const targetCheckpoint = checkpoints.find(checkpoint => String(checkpoint.id) === String(id));
         const resetReport = targetCheckpoint
           ? resetCheckpointForShift(targetCheckpoint, {
-              shiftKey: currentShiftMeta.key,
-              pendingOrigin: 'manual-reset',
-            })
+            shiftKey: currentShiftMeta.key,
+            pendingOrigin: 'manual-reset',
+          })
           : null;
         updateOperationalShipCheckpoints(prev => prev.map(c => (
           String(c.id) === String(id)
             ? resetCheckpointForShift(c, {
-                shiftKey: currentShiftMeta.key,
-                pendingOrigin: 'manual-reset',
-              })
+              shiftKey: currentShiftMeta.key,
+              pendingOrigin: 'manual-reset',
+            })
             : c
         )));
         if (resetReport) {
@@ -6122,9 +6161,9 @@ export function AppProvider({ children }) {
             skipMediaUpload: true,
           });
         }
-        setSelectedReportDetail(null); 
-      } 
-    }); 
+        setSelectedReportDetail(null);
+      }
+    });
   }, [checkpoints, currentShiftMeta.key, syncPatrolReportToDomain, updateOperationalShipCheckpoints]);
   const handleAddReportGalleryPhoto = useCallback(async (reportId) => {
     if (!reportId || selectedReportDetail?.readOnly) return;
@@ -6241,6 +6280,7 @@ export function AppProvider({ children }) {
   const closeIncidentModal = useCallback(() => { setShowIncidentModal(false); setIncidentForm(createIncidentFormState()); }, []);
   const handleSubmitIncident = useCallback(() => {
     if (!currentUserRecord) return;
+    if (showTrustedTimeGateDialog()) return;
     const loc = incidentForm.locType === 'custom' ? sanitizeText(incidentForm.customLocation, 80) : sanitizeText(incidentForm.location, 80);
     if (!loc || !sanitizeMultilineText(incidentForm.deskripsi, 320)) return;
     const trustedTimestamp = createTrustedTimestampRecord();
@@ -6280,7 +6320,7 @@ export function AppProvider({ children }) {
     }]);
     closeIncidentModal();
     requestCloudSync('urgent');
-  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShip, operationalShipName, requestCloudSync]);
+  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShip, operationalShipName, requestCloudSync, showTrustedTimeGateDialog]);
 
   // Ship handlers
   const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
@@ -6336,20 +6376,20 @@ export function AppProvider({ children }) {
       user.id !== userId
         ? user
         : normalizeUserRecord({
-            ...user,
-            ...updates,
-            ...mutationMeta,
-          }, index)
+          ...user,
+          ...updates,
+          ...mutationMeta,
+        }, index)
     )));
   }, []);
-  const handleTogglePersonnel = useCallback(async (userId) => { 
-    if (!isAdmin || !activeShip) return; 
-    const targetArray = scheduleMonth === 'current' ? activeShip.personnel : activeShip.personnelNextMonth; 
-    const isAssigned = targetArray.includes(userId); 
+  const handleTogglePersonnel = useCallback(async (userId) => {
+    if (!isAdmin || !activeShip) return;
+    const targetArray = scheduleMonth === 'current' ? activeShip.personnel : activeShip.personnelNextMonth;
+    const isAssigned = targetArray.includes(userId);
     const targetUser = usersData.find(u => u.id === userId) || null;
-    if (isAssigned) { 
-      updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) }); 
-      if(scheduleMonth === 'current') {
+    if (isAssigned) {
+      updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) });
+      if (scheduleMonth === 'current') {
         updateUserRecordLocally(userId, {
           shipAssigned: null,
           status: 'off-duty',
@@ -6362,39 +6402,39 @@ export function AppProvider({ children }) {
       } else {
         requestCloudSync('urgent');
       }
-    } else { 
+    } else {
       setAssignPopupData({ userId, name: targetUser?.name, role: targetUser?.role, scheduleType: scheduleMonth });
       setShowAssignPopup(true);
-    } 
+    }
   }, [activeShip, isAdmin, requestCloudSync, scheduleMonth, syncManagedUserOperationalAccess, updateActiveShip, updateUserRecordLocally, usersData]);
 
   const handleConfirmAssign = useCallback(async (userId, startDate, endDate, isTBC) => {
     if (!isAdmin || !activeShip || !assignPopupData) return;
-    
+
     const scheduleType = assignPopupData.scheduleType || 'current';
     const targetUser = usersData.find((user) => user.id === userId) || null;
-    
+
     // Automatically route to 'next assignment' or 'current' based on the date,
     // falling back to the tab they initiated it from if no start date is provided.
     const todayStr = new Date().toISOString().split('T')[0];
     let finalScheduleType = scheduleType;
-    
+
     if (startDate && startDate > todayStr) {
       finalScheduleType = 'next';
     } else if (startDate && startDate <= todayStr) {
       finalScheduleType = 'current';
     }
-    
+
     let newPersonnel = activeShip.personnel.filter(id => id !== userId);
     let newNextMonth = activeShip.personnelNextMonth.filter(id => id !== userId);
-    
+
     if (finalScheduleType === 'current') {
       newPersonnel.push(userId);
     } else {
       newNextMonth.push(userId);
     }
-    
-    updateActiveShip({ 
+
+    updateActiveShip({
       personnel: newPersonnel,
       personnelNextMonth: newNextMonth,
       personnelSchedules: {
@@ -6427,7 +6467,7 @@ export function AppProvider({ children }) {
       }
       requestCloudSync('urgent');
     }
-    
+
     setShowAssignPopup(false);
     setAssignPopupData(null);
   }, [activeShip, assignPopupData, isAdmin, requestCloudSync, syncManagedUserOperationalAccess, updateActiveShip, updateUserRecordLocally, usersData]);
@@ -6445,7 +6485,7 @@ export function AppProvider({ children }) {
         { name: safeName, desc: sanitizeMultilineText(newShipCp.desc, 140), isDefault: false },
       ],
     });
-    setNewShipCp({name: '', desc: ''});
+    setNewShipCp({ name: '', desc: '' });
   }, [isAdmin, activeShip, newShipCp, updateActiveShip]);
   const handleShipPhotoUpdate = useCallback(async () => { if (!isAdmin || !activeShipId) return; const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) updateActiveShip({ photoUrl: url }); }, [isAdmin, activeShipId, updateActiveShip]);
   const handleChangeSchedule = useCallback((userId, field, value) => { if (!isAdmin || !activeShip) return; const currentSchedules = activeShip.personnelSchedules || {}; const newSchedules = { ...currentSchedules, [userId]: { ...(currentSchedules[userId] || {}), [field]: value } }; updateActiveShip({ personnelSchedules: newSchedules }); }, [isAdmin, activeShip, updateActiveShip]);
@@ -6504,14 +6544,14 @@ export function AppProvider({ children }) {
     if (!isAdmin) return;
     const targetShip = shipsData.find(s => s.id === id);
     if (!targetShip) return;
-    
+
     if (targetShip.personnel.length > 0 || targetShip.personnelNextMonth.length > 0) {
       setConfirmDialog({
         title: 'Gagal Menghapus',
         message: `Armada ${targetShip.name} masih memiliki kru yang ditugaskan. Kosongkan kru terlebih dahulu.`,
         isAlert: true,
         confirmText: 'MENGERTI',
-        onConfirm: () => {} 
+        onConfirm: () => { }
       });
       return;
     }
@@ -6549,7 +6589,7 @@ export function AppProvider({ children }) {
       setAuthForm(prev => ({ ...prev, photoUrl: url }));
     }
   }, []);
-  const handleUserPhotoUpload = useCallback(async () => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setUserFormData(prev => ({...prev, photoUrl: url})); }, []);
+  const handleUserPhotoUpload = useCallback(async () => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setUserFormData(prev => ({ ...prev, photoUrl: url })); }, []);
   const handleSaveUser = useCallback(async () => {
     if (!isAdmin) return;
 
@@ -6799,8 +6839,8 @@ export function AppProvider({ children }) {
     setUserFormNotice((previousNotice) => previousNotice || 'Perubahan profil berhasil disimpan.');
   }, [clearUserManagementFeedback, currentUserRecord, isAdmin, selectedUser, sessionUserId, usersData]);
   const handleDeleteUser = useCallback((id) => {
-    if (!isAdmin) return; 
-    const targetUser = usersData.find(u => u.id === id); 
+    if (!isAdmin) return;
+    const targetUser = usersData.find(u => u.id === id);
     if (targetUser?.role === ACCESS_ROLES.ADMIN) return;
     setConfirmDialog({
       title: 'Hapus Pengguna',
@@ -6819,14 +6859,14 @@ export function AppProvider({ children }) {
           }
         }
         setDeletedRecords(previousDeletedRecords => markDeletedRecord(previousDeletedRecords, 'users', id, deletedAt));
-        setUsersData(prev => prev.filter(u => u.id !== id)); 
-        setShipsData(prev => prev.map(ship => ({ ...ship, personnel: ship.personnel.filter(userId => userId !== id), personnelNextMonth: ship.personnelNextMonth.filter(userId => userId !== id) }))); 
-        if (sessionUserId === id) { setSessionUserId(null); setAuthMode('login'); setAuthNotice('Akun sedang dipakai telah dihapus. Silakan login ulang.'); } 
+        setUsersData(prev => prev.filter(u => u.id !== id));
+        setShipsData(prev => prev.map(ship => ({ ...ship, personnel: ship.personnel.filter(userId => userId !== id), personnelNextMonth: ship.personnelNextMonth.filter(userId => userId !== id) })));
+        if (sessionUserId === id) { setSessionUserId(null); setAuthMode('login'); setAuthNotice('Akun sedang dipakai telah dihapus. Silakan login ulang.'); }
         setSelectedUser(null);
       }
     });
   }, [isAdmin, usersData, sessionUserId]);
-  const handleEditUserPhotoUpload = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setSelectedUser(prev => ({...prev, photoUrl: url})); }, []);
+  const handleEditUserPhotoUpload = useCallback(async () => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setSelectedUser(prev => ({ ...prev, photoUrl: url })); }, []);
   const handleApprovePendingUser = useCallback(async (pendingRegistration) => {
     if (!isAdmin || !pendingRegistration?.uid) return;
 
@@ -6885,6 +6925,7 @@ export function AppProvider({ children }) {
   const handleAddProgress = useCallback((incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
+    if (showTrustedTimeGateDialog()) return;
     const trustedTimestamp = createTrustedTimestampRecord();
     const trustedNow = new Date(trustedTimestamp.occurredAtTrustedMs);
     const createdAt = trustedTimestamp.occurredAtTrustedIso;
@@ -6906,10 +6947,11 @@ export function AppProvider({ children }) {
     }]);
     setNewProgress({ comment: '', photoUrl: null });
     requestCloudSync('urgent');
-  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, requestCloudSync, selectedIncident, usersData]);
+  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, usersData]);
   const handleAddIncidentDocumentation = useCallback(async (incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
+    if (showTrustedTimeGateDialog()) return;
     const dataUrl = await pickLocalImage();
     if (!dataUrl) return;
     const photoUrl = await saveImageToDB(dataUrl);
@@ -6941,7 +6983,7 @@ export function AppProvider({ children }) {
       },
     }));
     requestCloudSync('urgent');
-  }, [allIncidents, canManageIncident, currentUser, requestCloudSync, selectedIncident]);
+  }, [allIncidents, canManageIncident, currentUser, requestCloudSync, selectedIncident, showTrustedTimeGateDialog]);
   const handleUpdateIncidentInfo = useCallback((incidentId, updates) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!incident || !canManageIncident(incident)) return false;
@@ -6968,11 +7010,11 @@ export function AppProvider({ children }) {
           shipCheckpoints.map((checkpoint) => (
             (createPatrolIncidentId(checkpoint) === incidentId || String(checkpoint.id) === String(checkpointId)) && !checkpoint.readOnly
               ? {
-                  ...checkpoint,
-                  kejadian: nextIncidentInfo.deskripsi,
-                  penyebab: nextIncidentInfo.penyebab,
-                  tindakLanjut: nextIncidentInfo.tindakLanjut,
-                }
+                ...checkpoint,
+                kejadian: nextIncidentInfo.deskripsi,
+                penyebab: nextIncidentInfo.penyebab,
+                tindakLanjut: nextIncidentInfo.tindakLanjut,
+              }
               : checkpoint
           )),
         ])),
@@ -6981,11 +7023,11 @@ export function AppProvider({ children }) {
       setIncidentsData((previousIncidents) => previousIncidents.map((entry) => (
         entry.id === incidentId
           ? {
-              ...entry,
-              deskripsi: nextIncidentInfo.deskripsi,
-              penyebab: nextIncidentInfo.penyebab,
-              tindakLanjut: nextIncidentInfo.tindakLanjut,
-            }
+            ...entry,
+            deskripsi: nextIncidentInfo.deskripsi,
+            penyebab: nextIncidentInfo.penyebab,
+            tindakLanjut: nextIncidentInfo.tindakLanjut,
+          }
           : entry
       )));
     }
@@ -6998,15 +7040,16 @@ export function AppProvider({ children }) {
 
     return true;
   }, [allIncidents, canManageIncident, selectedIncident]);
-  const handleCloseIncident = useCallback((incidentId) => { 
-    const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident; 
-    if (!canCloseIncident(incident)) return; 
-    setConfirmDialog({ 
-      title: incident?.isSOS ? 'Tutup Laporan SOS' : 'Tutup Laporan', 
-      message: incident?.isSOS ? 'Apakah Anda yakin kondisi SOS ini sudah selesai ditangani?' : 'Apakah Anda yakin masalah ini sudah selesai diselesaikan?', 
+  const handleCloseIncident = useCallback((incidentId) => {
+    const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
+    if (!canCloseIncident(incident)) return;
+    setConfirmDialog({
+      title: incident?.isSOS ? 'Tutup Laporan SOS' : 'Tutup Laporan',
+      message: incident?.isSOS ? 'Apakah Anda yakin kondisi SOS ini sudah selesai ditangani?' : 'Apakah Anda yakin masalah ini sudah selesai diselesaikan?',
       confirmText: 'YA, TUTUP',
       cancelText: 'BELUM',
       onConfirm: () => {
+        if (showTrustedTimeGateDialog()) return;
         const trustedTimestamp = createTrustedTimestampRecord();
         const createdAt = trustedTimestamp.occurredAtTrustedIso;
         setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...(prev[incidentId] || {}), status: 'closed' } }));
@@ -7043,9 +7086,9 @@ export function AppProvider({ children }) {
           createdAt,
         }]);
         requestCloudSync('urgent');
-      } 
-    }); 
-  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, operationalShipName, requestCloudSync, selectedIncident, usersData]);
+      }
+    });
+  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, usersData]);
   const handleDeleteIncident = useCallback((incidentId) => {
     if (!isAdmin) return;
 
@@ -7122,7 +7165,7 @@ export function AppProvider({ children }) {
       },
     });
   }, [allIncidents, currentShiftMeta.key, isAdmin, requestCloudSync, selectedIncident]);
-  const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if(!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
+  const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
   const handleUpdateIncidentPhoto = useCallback(async (incidentId) => {
     const dataUrl = await pickLocalImage();
     if (!dataUrl) return;
@@ -7406,7 +7449,7 @@ export function AppProvider({ children }) {
         message: 'Akun Anda sudah terdaftar di antrean onboarding SmartPatrol. Silakan tunggu approval admin sebelum login operasional dijalankan.',
         confirmText: 'MENGERTI',
         isAlert: true,
-        onConfirm: () => {},
+        onConfirm: () => { },
       });
     } catch (error) {
       try {
@@ -7436,7 +7479,7 @@ export function AppProvider({ children }) {
     return () => clearTimeout(timerId);
   }, [sessionUserId, sharedState, theme]);
   useEffect(() => {
-    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => {};
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => { };
 
     return subscribeToCloudAppState((cloudPayload) => {
       handleIncomingCloudPayload(cloudPayload, {
@@ -7449,8 +7492,8 @@ export function AppProvider({ children }) {
     });
   }, [handleIncomingCloudPayload, hasOperationalCloudAccess]);
   useEffect(() => {
-    if (!isCloudSyncEnabled || !hasOperationalCloudAccess || !currentShiftMeta?.key) return () => {};
-    if (patrolReportSubscriptionTargets.length === 0) return () => {};
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess || !currentShiftMeta?.key) return () => { };
+    if (patrolReportSubscriptionTargets.length === 0) return () => { };
 
     const unsubscribers = patrolReportSubscriptionTargets.map((target) => (
       subscribeToPatrolReports({
@@ -7467,8 +7510,8 @@ export function AppProvider({ children }) {
     };
   }, [applyPatrolReportDocuments, currentShiftMeta.key, hasOperationalCloudAccess, patrolReportSubscriptionTargets]);
   useEffect(() => {
-    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return () => {};
-    if (patrolReportSubscriptionTargets.length === 0) return () => {};
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return () => { };
+    if (patrolReportSubscriptionTargets.length === 0) return () => { };
 
     const timerId = setTimeout(() => {
       patrolReportSubscriptionTargets.forEach((target) => {
@@ -7486,7 +7529,7 @@ export function AppProvider({ children }) {
     return () => clearTimeout(timerId);
   }, [checkpointsByShip, hasOperationalCloudAccess, isOffline, patrolReportSubscriptionTargets, syncPatrolReportToDomain]);
   useEffect(() => {
-    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => {};
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => { };
 
     let isDisposed = false;
 
@@ -7574,7 +7617,7 @@ export function AppProvider({ children }) {
     };
   }, [hasOperationalCloudAccess, refreshCloudSharedState]);
   useEffect(() => {
-    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => {};
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => { };
 
     let isDisposed = false;
 
@@ -7615,14 +7658,14 @@ export function AppProvider({ children }) {
 
     const refreshIntervalId = typeof window !== 'undefined'
       ? window.setInterval(() => {
-          if (!isNavigatorOnline()) return;
-          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        if (!isNavigatorOnline()) return;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
 
-          runRefresh('interval', {
-            preferServer: true,
-            clearWhenEmpty: false,
-          });
-        }, 8000)
+        runRefresh('interval', {
+          preferServer: true,
+          clearWhenEmpty: false,
+        });
+      }, 8000)
       : null;
 
     if (typeof window !== 'undefined') {
@@ -7672,7 +7715,7 @@ export function AppProvider({ children }) {
       if (!serializedState || (serializedState === lastCloudSharedStateRef.current && !hasPendingLocalAssets)) return;
 
       cloudSaveQueueRef.current = cloudSaveQueueRef.current
-        .catch(() => {})
+        .catch(() => { })
         .then(async () => {
           try {
             const shouldSkipAssetUpload = cloudSyncPriorityRef.current === 'urgent';
@@ -7699,8 +7742,8 @@ export function AppProvider({ children }) {
             const preparedState = shouldSkipAssetUpload
               ? prepareStateForUrgentCloudSync(latestStateForWrite)
               : await prepareSharedStateForCloudSync(latestStateForWrite, {
-                  skipAssetUpload: false,
-                });
+                skipAssetUpload: false,
+              });
 
             logCloudSyncDebug('save-shared-state', {
               activeShiftKey: preparedState.activeShiftKey,
@@ -7784,7 +7827,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!isFirebaseAuthEnabled) {
       setFirebaseAuthReady(true);
-      return () => {};
+      return () => { };
     }
 
     return subscribeToFirebaseAuthChanges((nextUser) => {
@@ -7858,7 +7901,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!isAdmin || !hasOperationalCloudAccess) {
       setPendingRegistrations([]);
-      return () => {};
+      return () => { };
     }
 
     return subscribeToPendingRegistrations((entries) => {

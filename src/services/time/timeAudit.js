@@ -236,9 +236,13 @@ export function markTimeAuditRecordReceived(record, receivedAtServerMs, options 
 
   const resolvedReceivedAtMs = resolveTimestampMs(receivedAtServerMs);
   if (resolvedReceivedAtMs !== null) {
-    normalizedRecord.receivedAtServerMs = normalizedRecord.receivedAtServerMs
-      ? Math.max(normalizedRecord.receivedAtServerMs, resolvedReceivedAtMs)
-      : resolvedReceivedAtMs;
+    // Preserve original server-receipt timestamp: stamp ONCE saat record pertama
+    // kali sampai ke server, jangan diubah lagi pada sync berikutnya. Ini supaya
+    // kolom "Verifikasi" di UI menunjukkan waktu server menerima data,
+    // bukan waktu sync terakhir.
+    if (!Number.isFinite(normalizedRecord.receivedAtServerMs)) {
+      normalizedRecord.receivedAtServerMs = resolvedReceivedAtMs;
+    }
   }
 
   if (normalizedRecord.timeTrustLevel === 'unverified' && shouldPromoteServerReceivedRecord(normalizedRecord)) {
