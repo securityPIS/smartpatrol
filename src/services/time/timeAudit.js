@@ -1,3 +1,11 @@
+/*
+Tujuan: Menormalisasi metadata audit waktu dan status verifikasi timestamp operasional.
+Caller: AppContextRuntime, kartu audit waktu, dan ringkasan laporan patroli.
+Dependensi: Metadata trusted time pada record lokal/cloud.
+Main Functions: extractTimeAuditFields, normalizeTimeAuditRecord, markTimeAuditRecordReceived, buildTimeAuditInfo, summarizeTimeAudit.
+Side Effects: Tidak ada side effect; semua helper bersifat pure untuk validasi tampilan dan sinkronisasi.
+*/
+
 const TRUST_LEVEL_META = {
   'server-trusted': {
     label: 'Waktu tersinkron',
@@ -96,6 +104,15 @@ function pickFirstTimestampMs(record, keys = []) {
   return null;
 }
 
+function shouldPromoteServerReceivedRecord(record = {}) {
+  return Boolean(
+    resolveTimestampMs(record.receivedAtServerMs) !== null
+    && resolveTimestampMs(record.anchorSyncedAtMs) !== null
+    && resolveTimestampMs(record.occurredAtTrustedMs ?? record.occurredAtTrustedIso) !== null
+    && record.offlineSessionInterrupted !== true
+  );
+}
+
 export function hasTimeAuditMetadata(record) {
   if (!record || typeof record !== 'object') return false;
 
@@ -174,9 +191,17 @@ export function normalizeTimeAuditRecord(record, options = {}) {
   const occurredAtTrustedIso = typeof record.occurredAtTrustedIso === 'string' && record.occurredAtTrustedIso
     ? record.occurredAtTrustedIso
     : (occurredAtTrustedMs !== null ? new Date(occurredAtTrustedMs).toISOString() : null);
-  const timeTrustLevel = VALID_TRUST_LEVELS.has(record.timeTrustLevel)
+  let timeTrustLevel = VALID_TRUST_LEVELS.has(record.timeTrustLevel)
     ? record.timeTrustLevel
     : (metadataPresent || occurredAtTrustedIso ? 'unverified' : null);
+
+  if (timeTrustLevel === 'unverified' && shouldPromoteServerReceivedRecord({
+    ...record,
+    occurredAtTrustedMs,
+    occurredAtTrustedIso,
+  })) {
+    timeTrustLevel = 'server-trusted';
+  }
 
   if (!metadataPresent && !occurredAtTrustedIso) {
     return {
@@ -214,6 +239,10 @@ export function markTimeAuditRecordReceived(record, receivedAtServerMs, options 
     normalizedRecord.receivedAtServerMs = normalizedRecord.receivedAtServerMs
       ? Math.max(normalizedRecord.receivedAtServerMs, resolvedReceivedAtMs)
       : resolvedReceivedAtMs;
+  }
+
+  if (normalizedRecord.timeTrustLevel === 'unverified' && shouldPromoteServerReceivedRecord(normalizedRecord)) {
+    normalizedRecord.timeTrustLevel = 'server-trusted';
   }
 
   normalizedRecord.verificationStatus = resolveTimeVerificationStatus(normalizedRecord, {

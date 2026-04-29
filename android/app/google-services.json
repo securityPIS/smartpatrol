@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "1054382503865",
+    "project_id": "smartpatrol-7ff9e",
+    "storage_bucket": "smartpatrol-7ff9e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1054382503865:android:ec624bfe35abc6ba06e868",
+        "android_client_info": {
+          "package_name": "com.smartpatrol.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1054382503865-kjor0g2k619itium6ihulrqb8i7tqkfd.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAQec865qUkiMT5ExTF1jezGqH4p4WAK3A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1054382503865-kjor0g2k619itium6ihulrqb8i7tqkfd.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

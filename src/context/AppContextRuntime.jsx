@@ -1,7 +1,7 @@
 /*
 Tujuan: Menjadi pusat state, flow bisnis, dan sinkronisasi SmartPatrol.
 Caller: Root app melalui AppProvider dan seluruh hook domain aplikasi.
-Dependensi: Seed data, Firebase service (auth/cloud/access), trusted time, utilitas sanitasi, dan IndexedDB image store.
+Dependensi: Seed data, Firebase service (auth/cloud/access), trusted time, utilitas sanitasi, IndexedDB image store, dan adapter native Capacitor.
 Main Functions: Mengelola auth Firebase, onboarding approval, kapal, checkpoint patroli, incidents, history, SOS, dan cloud sync.
 Side Effects: Menulis state lokal/cloud, memanggil callable security, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
 */
@@ -15,6 +15,12 @@ import { readFileAsDataUrl, readImageFileAsDataUrl } from '../utils/images';
 import { sanitizeEmail, sanitizeMultilineText, sanitizePhone, sanitizeText, sanitizeUrl } from '../utils/sanitize';
 import { loadImageFromDB, saveImageToDB } from '../utils/imageStore';
 import { checkStorageQuota } from '../utils/storageQuota';
+import {
+  addNativeNetworkStatusListener,
+  getNativeGeolocationPosition,
+  getNativeNetworkStatus,
+} from '../services/native/capacitorBridge';
+import { setupNativePushNotifications } from '../services/native/pushNotifications';
 import {
   getFirebaseAuthErrorMessage,
   isFirebaseAuthEnabled,
@@ -1306,9 +1312,24 @@ function createShipLocationSnapshot(ship) {
   };
 }
 
-function requestCurrentGeolocation() {
+async function requestCurrentGeolocation() {
+  try {
+    const nativePosition = await getNativeGeolocationPosition();
+    if (nativePosition?.coords) {
+      return {
+        lat: normalizeSnapshotCoordinate(nativePosition.coords.latitude),
+        lng: normalizeSnapshotCoordinate(nativePosition.coords.longitude),
+        accuracy: Number.isFinite(nativePosition.coords.accuracy)
+          ? Math.round(nativePosition.coords.accuracy)
+          : null,
+      };
+    }
+  } catch (error) {
+    console.warn('GPS native patroli tidak tersedia, memakai fallback Web Geolocation', error);
+  }
+
   if (typeof navigator === 'undefined' || !navigator.geolocation) {
-    return Promise.resolve(null);
+    return null;
   }
 
   return new Promise((resolve) => {
@@ -2508,6 +2529,42 @@ function createNotificationRecord(notification) {
   };
 }
 
+function normalizeNotificationRoute(notification = {}) {
+  const route = sanitizeText(notification.route || '', 100);
+  const type = sanitizeText(notification.type || '', 80);
+
+  if (route === 'patrol/live' || route === 'patrol') return 'patrol/checkpoint';
+  if (route === 'history' || route === 'history/list') return 'history/list';
+  if (route === 'daily-report' && type === 'shift_wrap_up') return 'history/list';
+  if (!route && type === 'checkpoint_pending') return 'patrol/checkpoint';
+  if (!route && type === 'shift_wrap_up') return 'history/list';
+  if (!route && (type === 'incident_created' || type === 'incident_progress_updated')) return 'incidents/detail';
+  return route || 'history/list';
+}
+
+function getShiftHistoryGroupKey(entry = {}) {
+  return [
+    sanitizeText(entry.dateKey || entry.date || '', 80),
+    sanitizeText(entry.shiftId || entry.shift || '', 80),
+  ].filter(Boolean).join('|') || sanitizeText(entry.key || '', 160);
+}
+
+function buildShiftSummaryNotificationMessage(entries = [], firstEntry = {}) {
+  const shiftLabel = sanitizeText(firstEntry.shift || 'Shift', 80).toUpperCase();
+  const timeRange = sanitizeText(firstEntry.time || firstEntry.shiftMeta?.timeRange || '', 80);
+  const lines = [`SUMMARY LAPORAN ${shiftLabel}${timeRange ? ` (${timeRange})` : ''}`];
+
+  ensureArray(entries).forEach((entry) => {
+    lines.push(
+      `Kapal: ${entry.ship || 'Kapal'}`,
+      `Aman: ${entry.summary?.aman || 0} | Temuan: ${entry.summary?.temuan || 0} | Missed: ${entry.summary?.missed || 0}`,
+      '',
+    );
+  });
+
+  return lines.join('\n').trim();
+}
+
 function sortNotifications(notifications) {
   return ensureArray(notifications)
     .filter(notification => ensureObject(notification))
@@ -3596,11 +3653,6 @@ function createCloudSyncSignalPayload(options = {}) {
   };
 }
 
-function isMobilePatrolViewport() {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia('(max-width: 1023px)').matches;
-}
-
 async function pickLocalImage(options = {}) {
   const { cameraOnly = false } = options;
   const input = document.createElement('input');
@@ -3842,7 +3894,7 @@ export function AppProvider({ children }) {
   // Theme & connectivity
   const [currentPage, setCurrentPage] = useState('home');
   const [theme, setTheme] = useState(() => persistedState?.theme || 'dark');
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [isOffline, setIsOffline] = useState(() => !isNavigatorOnline());
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
   const [notificationReturnPage, setNotificationReturnPage] = useState('home');
@@ -3853,7 +3905,37 @@ export function AppProvider({ children }) {
     const handleOffline = () => setIsOffline(true);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
+    let cancelled = false;
+    let removeNativeListener = null;
+
+    getNativeNetworkStatus()
+      .then((status) => {
+        if (!cancelled && status) setIsOffline(!status.connected);
+      })
+      .catch((error) => {
+        console.warn('Status network native tidak bisa dibaca', error);
+      });
+
+    addNativeNetworkStatusListener((status) => {
+      setIsOffline(!status.connected);
+    })
+      .then((removeListener) => {
+        if (cancelled) {
+          removeListener?.();
+          return;
+        }
+        removeNativeListener = removeListener;
+      })
+      .catch((error) => {
+        console.warn('Listener network native gagal dipasang', error);
+      });
+
+    return () => {
+      cancelled = true;
+      removeNativeListener?.();
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   useEffect(() => initializeTrustedTime(), []);
@@ -4046,6 +4128,22 @@ export function AppProvider({ children }) {
     : (currentUserRecord || sessionUserRecord || null);
   const currentUser = effectiveSessionUser?.name || '';
   const currentUserRole = effectiveSessionUser?.role || ACCESS_ROLES.PETUGAS;
+  const nativePushProfile = useMemo(() => {
+    if (!currentUserRecord || !firebaseAuthUid) return null;
+    return {
+      legacyUserId: currentUserRecord.id || '',
+      role: currentUserRecord.role || '',
+      shipAssigned: currentUserRecord.shipAssigned || '',
+      displayName: currentUserRecord.name || currentUser || '',
+    };
+  }, [
+    currentUser,
+    currentUserRecord?.id,
+    currentUserRecord?.name,
+    currentUserRecord?.role,
+    currentUserRecord?.shipAssigned,
+    firebaseAuthUid,
+  ]);
   const isAdmin = currentUserRole === ACCESS_ROLES.ADMIN;
   const isPic = currentUserRole === ACCESS_ROLES.PIC;
   const isPetugas = currentUserRole === ACCESS_ROLES.PETUGAS;
@@ -4439,7 +4537,7 @@ export function AppProvider({ children }) {
     activeOperationalGuards,
   );
   const canAddTemporaryPatrolNode = Boolean(isPetugas && canPatrolCurrentShip && operationalShip && !selectedHistoryEntry);
-  const shouldForcePatrolCameraCapture = isMobilePatrolViewport();
+  const shouldForcePatrolCameraCapture = true;
 
   const canManageIncident = useCallback((incident) => {
     if (!currentUserRecord || !incident) return false;
@@ -5309,8 +5407,9 @@ export function AppProvider({ children }) {
     if (!notification) return;
     markNotificationAsRead(notification.id);
     setShowNotificationsDropdown(false);
+    const route = normalizeNotificationRoute(notification);
 
-    if (notification.route === 'incidents/detail') {
+    if (route === 'incidents/detail') {
       const incidentId = notification.routeParams?.incidentId || notification.incidentId;
       const incident = allIncidents.find(item => item.id === incidentId)
         || (activeSOSAlert?.id === incidentId ? createSOSIncidentRecord(activeSOSAlert) : null)
@@ -5325,22 +5424,32 @@ export function AppProvider({ children }) {
       return;
     }
 
-    if (notification.route === 'history/detail') {
+    if (route === 'history/detail') {
       openHistoryEntry(notification.routeParams?.historyId || notification.historyId);
       return;
     }
 
-    if (notification.route === 'patrol/info') {
+    if (route === 'history/list') {
+      closeHistoryEntry();
+      setSelectedIncident(null);
+      setSelectedReportDetail(null);
+      setSearchQuery('');
+      setActiveForms({});
+      setCurrentPage('history');
+      return;
+    }
+
+    if (route === 'patrol/info') {
       navigateToLivePatrol('info');
       return;
     }
 
-    if (notification.route === 'patrol/checkpoint') {
+    if (route === 'patrol/checkpoint') {
       navigateToLivePatrol('checkpoint');
       return;
     }
 
-    if (notification.route === 'users/list') {
+    if (route === 'users/list') {
       closeHistoryEntry();
       setSelectedIncident(null);
       setSelectedReportDetail(null);
@@ -5350,6 +5459,119 @@ export function AppProvider({ children }) {
 
     closeHistoryEntry();
   }, [activeSOSAlert, allIncidents, closeHistoryEntry, markNotificationAsRead, navigateToLivePatrol, openHistoryEntry, sosHistory]);
+
+  const openSOSAlertFromPush = useCallback((payload = {}) => {
+    const sosId = sanitizeText(payload.sosId || payload.incidentId || '', 180);
+    if (!sosId) return false;
+
+    const existingSOS = (activeSOSAlert?.id === sosId ? activeSOSAlert : null)
+      || sosHistory.find((entry) => entry?.id === sosId)
+      || null;
+    const createdAt = sanitizeText(payload.createdAt || payload.triggeredAt || new Date().toISOString(), 80);
+    const fallbackSOS = existingSOS || {
+      id: sosId,
+      senderUserId: sanitizeText(payload.senderUserId || '', 160) || 'unknown',
+      senderName: sanitizeText(payload.senderName || '', 100) || 'Petugas',
+      senderRole: sanitizeText(payload.senderRole || 'PETUGAS', 40),
+      shipName: sanitizeText(payload.shipName || '', 100) || 'Tidak diketahui',
+      lat: Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : null,
+      lng: Number.isFinite(Number(payload.lng)) ? Number(payload.lng) : null,
+      triggeredAt: createdAt,
+      createdAt,
+      updatedAt: createdAt,
+      targetUserIds: notificationRecipientIds,
+      targetShipIds: [],
+      targetShipNames: [],
+      confirmedBy: [],
+      status: 'active',
+      timeTrustLevel: sanitizeText(payload.timeTrustLevel || 'server-trusted', 40),
+      clockTamperDetected: payload.clockTamperDetected === 'true',
+    };
+
+    setActiveSOSAlert(fallbackSOS);
+    setSosHistory((previousHistory) => upsertSOSHistoryEntry(previousHistory, fallbackSOS));
+    setSelectedHistoryId(null);
+    setSelectedReportDetail(null);
+    setShowIncidentModal(false);
+    setCurrentPage('incidents');
+    setPatrolTab('checkpoint');
+    setSearchQuery('');
+    setActiveForms({});
+    setSelectedIncident(createSOSIncidentRecord(fallbackSOS));
+    void refreshCloudSharedState({
+      reason: 'push-sos',
+      preferServer: true,
+      clearWhenEmpty: false,
+    });
+    return true;
+  }, [activeSOSAlert, notificationRecipientIds, refreshCloudSharedState, sosHistory]);
+
+  const createNotificationFromPushPayload = useCallback((payload = {}) => createNotificationRecord({
+    type: sanitizeText(payload.type || 'push', 80),
+    title: sanitizeText(payload.title || 'SmartPatrol', 120),
+    message: sanitizeText(payload.body || payload.message || '', 240),
+    senderName: sanitizeText(payload.senderName || 'SmartPatrol', 100),
+    senderRole: sanitizeText(payload.senderRole || 'SYSTEM', 40),
+    targetUserIds: notificationRecipientIds,
+    route: normalizeNotificationRoute({
+      route: payload.route,
+      type: payload.type,
+      incidentId: payload.incidentId || payload.sosId || '',
+    }),
+    routeParams: payload.incidentId ? { incidentId: sanitizeText(payload.incidentId, 180) } : {},
+    incidentId: sanitizeText(payload.incidentId || payload.sosId || '', 180),
+    shipName: sanitizeText(payload.shipName || '', 100),
+    shiftKey: sanitizeText(payload.shiftKey || '', 160),
+    historyId: sanitizeText(payload.historyId || '', 180),
+    dedupeKey: sanitizeText(payload.dedupeKey || '', 240),
+    createdAt: sanitizeText(payload.createdAt || new Date().toISOString(), 80),
+  }), [notificationRecipientIds]);
+
+  const handleNativePushForeground = useCallback((payload = {}) => {
+    const notification = createNotificationFromPushPayload(payload);
+    appendNotifications([notification]);
+
+    if (payload.type === 'sos' || payload.route === 'sos/active') {
+      openSOSAlertFromPush(payload);
+    }
+  }, [appendNotifications, createNotificationFromPushPayload, openSOSAlertFromPush]);
+
+  const handleNativePushAction = useCallback((payload = {}) => {
+    if (payload.type === 'sos' || payload.route === 'sos/active') {
+      if (openSOSAlertFromPush(payload)) return;
+    }
+
+    const notification = createNotificationFromPushPayload(payload);
+    appendNotifications([notification]);
+    handleNotificationClick(notification);
+  }, [appendNotifications, createNotificationFromPushPayload, handleNotificationClick, openSOSAlertFromPush]);
+
+  useEffect(() => {
+    if (!hasOperationalCloudAccess || !nativePushProfile || !firebaseAuthUid) return () => {};
+
+    let cleanupPush = null;
+    let disposed = false;
+
+    setupNativePushNotifications(nativePushProfile, {
+      onNotification: handleNativePushForeground,
+      onAction: handleNativePushAction,
+    })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup?.();
+          return;
+        }
+        cleanupPush = cleanup;
+      })
+      .catch((error) => {
+        console.error('Inisialisasi push notification native gagal', error);
+      });
+
+    return () => {
+      disposed = true;
+      cleanupPush?.();
+    };
+  }, [firebaseAuthUid, handleNativePushAction, handleNativePushForeground, hasOperationalCloudAccess, nativePushProfile]);
 
   // Deep Linking from URL Parameters (e.g. from Telegram Notifications)
   useEffect(() => {
@@ -5607,8 +5829,9 @@ export function AppProvider({ children }) {
     setHistoryEntries(previousEntries => mergeHistoryEntries(previousEntries, nextHistoryBatch));
 
     const entriesByShift = nextHistoryBatch.reduce((acc, entry) => {
-      if (!acc[entry.key]) acc[entry.key] = [];
-      acc[entry.key].push(entry);
+      const groupKey = getShiftHistoryGroupKey(entry);
+      if (!acc[groupKey]) acc[groupKey] = [];
+      acc[groupKey].push(entry);
       return acc;
     }, {});
 
@@ -5616,8 +5839,9 @@ export function AppProvider({ children }) {
     Object.values(entriesByShift).forEach((entries) => {
       if (entries.length === 0) return;
       const firstEntry = entries[0];
+      const groupKey = getShiftHistoryGroupKey(firstEntry);
       const shiftLabel = firstEntry.shift;
-      const timeRange = firstEntry.shiftMeta?.timeRange || '';
+      const timeRange = firstEntry.time || firstEntry.shiftMeta?.timeRange || '';
       let message = `📊 SUMMARY LAPORAN ${shiftLabel.toUpperCase()} (${timeRange}) 📊\n\n`;
       
       entries.forEach(entry => {
@@ -5631,10 +5855,10 @@ export function AppProvider({ children }) {
         senderName: 'Sistem',
         senderRole: 'SYSTEM',
         targetUserIds: getShipRecipients(null, { includeAdmins: true }),
-        route: 'history',
+        route: 'history/list',
         routeParams: {},
-        shiftKey: firstEntry.key,
-        dedupeKey: `shift-summary:${firstEntry.key}`,
+        shiftKey: groupKey,
+        dedupeKey: `shift-summary:${groupKey}`,
         createdAt: firstEntry.createdAt,
       });
     });
@@ -5772,18 +5996,12 @@ export function AppProvider({ children }) {
       return;
     }
 
-    const nextForm = { type, penyebab: '', kejadian: '', tindakLanjut: '', photoUrl: null };
-    if (shouldForcePatrolCameraCapture && type === 'aman') {
-      setPendingPatrolCameraCapture({ id, type });
-      return;
-    }
-
-    setActiveForms({ [id]: nextForm });
-  }, [canPatrolCurrentShip, isCurrentShiftStatusCompleted, shouldForcePatrolCameraCapture]);
+    setPendingPatrolCameraCapture({ id, type });
+  }, [canPatrolCurrentShip, isCurrentShiftStatusCompleted]);
   const handleFormChange = useCallback((id, field, value) => { setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } })); }, []);
   const handlePhotoUpload = useCallback(async (id, isIncident = false, options = {}) => {
     const useCameraOnly = Boolean(options.cameraOnly);
-    if (!isIncident && useCameraOnly && shouldForcePatrolCameraCapture) {
+    if (!isIncident) {
       const patrolType = activeForms[id]?.type || 'aman';
       setPendingPatrolCameraCapture({ id, type: patrolType });
       return;
@@ -5794,7 +6012,7 @@ export function AppProvider({ children }) {
     if(!url) return;
     if(isIncident) setIncidentForm(prev => ({...prev, photoUrl: url}));
     else setActiveForms(prev => ({ ...prev, [id]: { ...prev[id], photoUrl: url } }));
-  }, [activeForms, shouldForcePatrolCameraCapture]);
+  }, [activeForms]);
   const handleSubmitPatrol = useCallback(async (id) => {
     if (!currentUserRecord || !operationalShip) return;
     if (!isCurrentShiftStatusCompleted) {

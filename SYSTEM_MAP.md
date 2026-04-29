@@ -1,6 +1,6 @@
 # SYSTEM_MAP — SmartPatrol
 
-> Peta sistem otomatis. Terakhir diperbarui: 2026-04-25.
+> Peta sistem otomatis. Terakhir diperbarui: 2026-04-29.
 > Bahasa pemrograman: **JavaScript (React 19 + Vite 8)**.
 
 ---
@@ -10,14 +10,15 @@
 | Aspek | Detail |
 |---|---|
 | **Tujuan** | Aplikasi web patroli keamanan kapal/armada laut. Petugas lapangan mencatat hasil checkpoint per shift, melaporkan insiden, dan mengirim SOS darurat. Admin memantau laporan harian, mengelola user/crew, dan armada kapal. |
-| **Runtime** | Node.js 22 (cloud functions), browser (SPA) |
+| **Runtime** | Node.js 22 (cloud functions), browser (SPA), Android WebView via Capacitor |
 | **Framework** | React 19 + Vite 8 + TailwindCSS v4 |
 | **UI** | Single Page App, responsive (mobile-first + desktop sidebar), dark theme Chakra Petch font, glassmorphism style |
 | **Backend** | Firebase (Auth, Firestore, Storage, Cloud Functions, Hosting) |
-| **Database** | Firestore (koleksi domain `patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}` untuk realtime laporan kecil + dokumen `smartpatrol/shared-state` sebagai fallback/cache global + `smartpatrol/shared-signal`) + localStorage + IndexedDB (gambar) |
+| **Database** | Firestore (koleksi domain `patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}` untuk realtime laporan kecil + dokumen `smartpatrol/shared-state` sebagai fallback/cache global + `smartpatrol/shared-signal` + `pushTokens`/`pushDedupe` untuk FCM) + localStorage + IndexedDB (gambar) |
 | **Auth** | Firebase Auth (email/password) sebagai sumber utama. Approval akses operasional memakai `userAccess/{uid}` dan onboarding publik memakai `pendingRegistrations/{uid}`. |
 | **Hosting** | Firebase Hosting (region: `asia-southeast2`) |
-| **Pola arsitektur** | **Offline-first SPA** — state disimpan di localStorage, disinkronkan ke Firestore via merge. Tidak ada REST API tradisional; semua logika bisnis ada di client-side React Context. Cloud Function hanya menyediakan trusted server time. |
+| **Android** | Capacitor 8 (`com.smartpatrol.app`) membundel `dist` ke APK dan memakai plugin native Camera, Geolocation, Network, Push Notifications, service lokal `SmartPatrolMessagingService`, serta plugin lokal `SmartPatrolTime`. |
+| **Pola arsitektur** | **Offline-first SPA** — state disimpan di localStorage, disinkronkan ke Firestore via merge. Tidak ada REST API tradisional; logika bisnis utama ada di client-side React Context. Cloud Functions menyediakan trusted server time, RBAC callable, upload aset, dan push notification FCM. |
 
 ---
 
@@ -58,8 +59,8 @@ PatrolPage[handleActionClick(checkpointId, type)]
     → tidak → buka ShiftStatusModal + blok checklist
     → ya → lanjut
   → usePatrol hook → pendingPatrolCameraCapture
-  → PatrolCameraModal[capture photo via <input type="file">]
-  → images[readImageFileAsDataUrl] → imageStore[saveImageToDB(IndexedDB)]
+  → PatrolCameraModal[capture foto kamera-only: Capacitor Camera native Android atau Web getUserMedia fallback]
+  → imageStore[saveImageToDB(IndexedDB)]
   → PatrolFormView[submit]
   → AppContextRuntime[handleSubmitCheckpoint]
     → createTrustedTimestampRecord() (NTP anchor)
@@ -78,6 +79,11 @@ SOSButton[handleSOSTrigger(lat, lng)]
     → navigator.geolocation.getCurrentPosition
     → setActiveSOSAlert / setSosHistory
     → scheduleCloudSync → Firestore
+  → Cloud Function[notifyOnSharedStateWrite]
+    → Firebase Cloud Messaging[data-only priority high + channel smartpatrol-sos]
+    → SmartPatrolMessagingService[full-screen notification + sound]
+  → AppContextRuntime[openSOSAlertFromPush jika app aktif/notification action]
+    → buka halaman Incidents/SOS dan pasang activeSOSAlert lokal
   → SOSAlertModal (semua device: onSnapshot listener)
     → sosAudio[startSOSAlarm] (Web Audio API buzzer)
     → handleSOSConfirm → sosAudio[stopSOSAlarm]
@@ -126,12 +132,35 @@ scheduleCloudSync (debounced write):
 
 ```
 AppProvider → initializeTrustedTime()
+  → native Android: SmartPatrolTimePlugin membaca SystemClock.elapsedRealtime()
   → syncServerTime({ reason: 'init' })
-    → fetch('/api/server-time') → Cloud Function[getServerTime]
+    → native Android: prioritas https://asia-southeast2-{project}.cloudfunctions.net/getServerTime
+    → web hosting: fetch('/api/server-time') → Cloud Function[getServerTime]
     → fallback: https://asia-southeast2-{project}.cloudfunctions.net/getServerTime
     → applyServerAnchor(adjustedServerNowMs)
   → setInterval: tick (1s), tamper check (15s), re-sync (5min)
-  → detectClockTampering() → compare performance.now() vs Date.now() drift
+  → detectClockTampering() → compare native monotonic/performance.now() vs Date.now() drift
+  → offline/restart Android: persisted anchor direhidrasi dengan elapsedRealtime, bukan bergantung penuh pada performance.now()
+```
+
+### 7. Native Push Notification (FCM)
+
+```
+AppContextRuntime[setupNativePushNotifications]
+  → Capacitor PushNotifications.requestPermissions/register
+  → Cloud Function[registerPushToken] → Firestore[pushTokens/{sha256(token)}]
+
+Firestore trigger:
+  patrolReports/* temuan baru → notifyOnPatrolReportWrite → FCM incident_created
+  smartpatrol/shared-state activeSOSAlert baru → notifyOnSharedStateWrite → FCM sos
+  smartpatrol/shared-state incidentsData baru → notifyOnSharedStateWrite → FCM incident_created
+  smartpatrol/shared-state incidentMeta.progress bertambah → notifyOnSharedStateWrite → FCM incident_progress_updated
+
+Scheduler:
+  sendScheduledOperationalPushNotifications(every 5 minutes)
+    → shift_started per kapal untuk PIC/Petugas
+    → shift_wrap_up satu notifikasi admin berisi summary semua kapal
+    → checkpoint_pending menjelang akhir shift
 ```
 
 ---
@@ -143,7 +172,9 @@ SmartPatrol/
 ├── index.html                    # HTML entrypoint (PWA meta)
 ├── App.jsx                       # Root: AppProvider → AppShell (routing + modals)
 ├── vite.config.js                # Vite 8 + React + TailwindCSS v4
-├── package.json                  # Dependencies (react 19, firebase 12, lucide-react, tailwind 4)
+├── capacitor.config.ts           # Capacitor Android config (appId com.smartpatrol.app, webDir dist)
+├── package.json                  # Dependencies (react 19, firebase 12, Capacitor 8, lucide-react, tailwind 4)
+├── android/                      # Native Android project generated by Capacitor (MainActivity + SmartPatrolTimePlugin + SmartPatrolMessagingService + FCM config)
 ├── AGENTS.md                     # Pedoman kerja agent/developer: tracing, edit scope, security, dokumentasi
 ├── firebase.json                 # Hosting, functions, Firestore rules, Storage rules
 ├── firestore.rules               # Firestore security: shared-state hanya untuk userAccess enabled, onboarding publik ke pendingRegistrations/*
@@ -164,6 +195,9 @@ SmartPatrol/
 │   │   └── AppContext.jsx        # Versi lama/legacy (4462 baris), masih ada tapi unused by main
 │   │
 │   ├── services/
+│   │   ├── native/
+│   │   │   ├── capacitorBridge.js # Adapter native Android: Camera, Geolocation, Network, dan monotonic clock
+│   │   │   └── pushNotifications.js # Adapter Capacitor Push Notifications + registrasi token FCM via callable
 │   │   ├── firebase/
 │   │   │   ├── app.js            # Firebase SDK init (getApp, getAuth, getFirestore, getStorage)
 │   │   │   ├── auth.js           # Login/register/provision/logout Firebase Auth + normalisasi error auth/callable
@@ -197,7 +231,7 @@ SmartPatrol/
 │   │   ├── ui.jsx                # UI primitives reusable
 │   │   │
 │   │   ├── modals/
-│   │   │   ├── PatrolCameraModal.jsx    # Modal kamera: ambil foto checkpoint + preview
+│   │   │   ├── PatrolCameraModal.jsx    # Modal kamera patroli camera-only: native depan/belakang + web fallback
 │   │   │   ├── PatrolFormModal.jsx      # Wrapper modal untuk PatrolFormView
 │   │   │   ├── IncidentFormModal.jsx    # Wrapper modal untuk IncidentFormView
 │   │   │   ├── IncidentDetailModal.jsx  # Wrapper modal untuk IncidentDetailView
@@ -236,7 +270,7 @@ SmartPatrol/
 │
 ├── functions/
 │   ├── accessModels.js           # Normalisasi payload onboarding dan akses operasional
-│   ├── index.js                  # Cloud Functions: trusted time, resolve access, approval onboarding, revoke access
+│   ├── index.js                  # Cloud Functions: trusted time, resolve access, approval onboarding, revoke access, FCM push triggers/scheduler
 │   └── package.json              # Dependencies cloud functions
 │
 ├── public/
@@ -273,7 +307,9 @@ SmartPatrol/
 | `services/firebase/access.js` | `createPendingRegistration`, `uploadRegistrationPhotoAsset`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `subscribeToPendingRegistrations` | Lapisan onboarding terisolasi dan sidecar authz. Public register hanya menulis `pendingRegistrations/{uid}`, sedangkan approval/binding akses operasional dijalankan lewat Cloud Functions. |
 | `services/firebase/cloudState.js` | `subscribeToCloudAppState`, `fetchCloudAppState`, `saveCloudAppState`, `uploadCloudDataUrlAsset` | CRUD Firestore single-document (`smartpatrol/shared-state`). Menggunakan `runTransaction` untuk merge. Akses client sekarang digate oleh `userAccess/{uid}` di rules. |
 | `services/firebase/patrolReports.js` | `subscribeToPatrolReports`, `savePatrolReport` | CRUD Firestore domain kecil untuk `patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}`. Dipakai agar laporan patroli dan status media muncul realtime tanpa menunggu merge blob besar. |
-| `services/time/trustedTime.js` | `initializeTrustedTime`, `getTrustedNowMs`, `getTrustedDate`, `getTrustedTimeSnapshot`, `createTrustedTimestampRecord`, `syncServerTime`, `detectClockTampering`, `subscribeTrustedTime`, `startOfflineSession`, `finishOfflineSession` | NTP-like clock: sinkronisasi ke server, deteksi tamper via `performance.now()` drift, offline session tracking. |
+| `services/native/capacitorBridge.js` | `isNativeRuntime`, `captureNativeCameraPhoto`, `getNativeGeolocationPosition`, `getNativeNetworkStatus`, `addNativeNetworkStatusListener`, `getNativeTimeSnapshot`, `getNativeLaunchNotificationPayload` | Adapter Capacitor Android untuk kamera-only, GPS native, status jaringan native, monotonic clock Android, dan payload launch notifikasi tanpa menambah coupling langsung ke komponen domain. |
+| `services/native/pushNotifications.js` | `setupNativePushNotifications` | Adapter Capacitor Push Notifications: membuat channel Android, meminta izin, registrasi/unregistrasi token FCM ke Cloud Function, membaca payload launch/action notifikasi, dan meneruskan payload push ke AppContext untuk navigasi halaman tujuan. |
+| `services/time/trustedTime.js` | `initializeTrustedTime`, `getTrustedNowMs`, `getTrustedDate`, `getTrustedTimeSnapshot`, `createTrustedTimestampRecord`, `syncServerTime`, `detectClockTampering`, `subscribeTrustedTime`, `startOfflineSession`, `finishOfflineSession` | NTP-like clock: sinkronisasi ke server, deteksi tamper via native monotonic Android atau `performance.now()` drift, offline session tracking. |
 | `services/time/trustedTimePolicy.js` | `calculateClockDriftMs`, `isClockDriftSuspicious` | Helper murni untuk menghitung drift audit trusted time dan smoke test. |
 | `services/time/timeAudit.js` | `buildTimeAuditInfo`, `summarizeTimeAudit`, `normalizeTimeAuditRecord`, `markTimeAuditRecordReceived`, `resolveTimeVerificationStatus`, `hasTimeAuditMetadata` | Audit trail setiap record: menentukan trust level (`server-trusted`, `offline-trusted`, `offline-interrupted`, `unverified`) dan verification status (`verified`, `pending-sync`, `needs-review`, `suspicious`, `legacy`). |
 
@@ -303,7 +339,7 @@ SmartPatrol/
 | `components/cards.jsx` | Various card components | Komponen card reusable untuk item list. |
 | `components/ui.jsx` | UI primitives | Komponen UI dasar reusable. |
 | `components/modals/SOSAlertModal.jsx` | `SOSAlertModal` | Modal fullscreen SOS: alarm buzzer audio, info GPS, nama kapal, tombol "Terima & Mengerti". |
-| `components/modals/PatrolCameraModal.jsx` | `PatrolCameraModal` | Modal untuk capture foto dari kamera/file, preview + crop. |
+| `components/modals/PatrolCameraModal.jsx` | `PatrolCameraModal` | Modal camera-only untuk laporan patroli: native Android Camera source=Camera dengan pilihan depan/belakang, plus fallback Web Camera. |
 | `components/modals/ShiftStatusModal.jsx` | `ShiftStatusModal` | Modal status petugas shift yang mengunci checklist sampai snapshot patroli/istirahat tersimpan. |
 | `components/modals/ConfirmModal.jsx` | `ConfirmModal` | Dialog konfirmasi generik (ya/tidak). |
 | `components/modals/AssignDueDatePopup.jsx` | `AssignDueDatePopup` | Popup untuk assign crew ke kapal dengan tanggal mulai / TBC. |
@@ -334,7 +370,7 @@ SmartPatrol/
 
 | File | Fungsi | Peran |
 |---|---|---|
-| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + notifikasi admin saat registrasi onboarding baru. Region `asia-southeast2`. |
+| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `registerPushToken`, `unregisterPushToken`, `notifyOnPatrolReportWrite`, `notifyOnSharedStateWrite`, `sendScheduledOperationalPushNotifications`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + FCM push untuk pending checkpoint, temuan, update temuan, shift started, admin wrap-up, dan SOS. Region `asia-southeast2`. |
 
 ### Data
 
@@ -364,6 +400,8 @@ Sidecar authz/security:
 ```
 pendingRegistrations/{uid} -> profil onboarding publik terbatas (pending/approved/rejected)
 userAccess/{uid} -> role, status, shipAssigned, enabled flag, dan sumber approval untuk rules
+pushTokens/{sha256(token)} -> token FCM Android user operasional yang sudah login dan approved
+pushDedupe/{sha256(key)} -> guard idempotensi notifikasi push agar trigger/scheduler tidak spam
 ```
 
 Domain report realtime:
@@ -492,7 +530,9 @@ registration-assets/{uid}/** -> aset onboarding publik milik pemilik registrasi
 | **Firestore** | Penyimpanan state operasional domain + fallback shared-state + sidecar authz (`pendingRegistrations`, `userAccess`) | `services/firebase/patrolReports.js`, `services/firebase/cloudState.js`, `services/firebase/access.js` → `AppContextRuntime` |
 | **Firebase Storage** | Upload foto/dokumen ke cloud | `services/firebase/cloudState.js` (`uploadCloudDataUrlAsset`) |
 | **Firebase Hosting** | Deploy SPA | `firebase.json` |
-| **Firebase Cloud Functions** | Server time endpoint (`/api/server-time`) + approval/binding akses operasional | `functions/index.js` → `services/time/trustedTime.js`, `services/firebase/access.js` |
+| **Firebase Cloud Functions** | Server time endpoint (`/api/server-time`) + approval/binding akses operasional + upload aset + FCM trigger/scheduler | `functions/index.js` → `services/time/trustedTime.js`, `services/firebase/access.js`, `services/native/pushNotifications.js` |
+| **Firebase Cloud Messaging** | Push notification Android untuk pending checkpoint, temuan, update temuan, shift started, admin wrap-up, dan SOS data-only high priority | `functions/index.js`, `services/native/pushNotifications.js`, `android/app/google-services.json`, `SmartPatrolMessagingService` |
+| **Capacitor Android** | Native shell Android, kamera patroli, GPS perangkat, network status, push notification, full-screen SOS, monotonic clock, launcher icon SmartPatrol, dan splash dark navy | `capacitor.config.ts`, `android/`, `services/native/capacitorBridge.js`, `services/native/pushNotifications.js` |
 | **Open-Meteo API** | Data cuaca real-time (suhu, angin, kondisi) | `AppContextRuntime` (inline fetch di weatherEffect, ~baris 4900-an) |
 | **Google Maps** | Link ke koordinat kapal | `utils/formatters.js` (`buildMapsUrl`) |
 | **Navigator Geolocation API** | Koordinat GPS untuk SOS | `components/SOSButton.jsx` |
@@ -514,5 +554,6 @@ registration-assets/{uid}/** -> aset onboarding publik milik pemilik registrasi
 | **Coverage test masih minimum** | Sudah ada smoke test `tests/security/*`, tetapi belum ada integration test emulator untuk rules/callable dan belum ada e2e UI. |
 | **Dynamic import minimal** | Beberapa modal menggunakan lazy import via `FormModals.jsx` dan `DetailModals.jsx`, tapi mayoritas page di-import eager di `App.jsx`. |
 | **repair.cjs** | Script perbaikan manual yang memodifikasi `AppContextRuntime.jsx` secara langsung — fragile dan hanya dijalankan sekali. |
-| **Trusted time drift** | Deteksi tamper bergantung pada `performance.now()` vs `Date.now()` — bisa false positive saat device sleep/resume. |
+| **Trusted time drift** | Android memakai `SystemClock.elapsedRealtime()` untuk menghindari reset `performance.now()` saat WebView restart. Browser/PWA masih memakai `performance.now()` sehingga refresh/tab close tetap perlu re-sync server saat online. |
+| **Push notification operasional** | FCM butuh user Android pernah login/approve agar token masuk `pushTokens`. SOS memakai data-only high-priority push + full-screen notification native; perilaku auto-open tetap tunduk izin notifikasi/full-screen intent dan kebijakan battery/background Android. |
 | **Config tidak ditemukan** | Tidak ada file `.env.local` di repo (gitignored). Tidak ada deployment pipeline config (CI/CD). |

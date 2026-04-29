@@ -1,17 +1,20 @@
 /*
 Tujuan: Menyediakan trusted server time, kontrol akses operasional, dan notifikasi onboarding admin lewat Cloud Functions.
-Caller: Client web untuk sinkronisasi waktu, binding akun Firebase Auth, approval onboarding, sinkronisasi akses admin, dan trigger Firestore registrasi baru.
+Caller: Client web/native untuk sinkronisasi waktu, binding akun Firebase Auth, approval onboarding, registrasi push token, dan trigger Firestore.
 Dependensi: Firebase Functions v2, Firebase Admin SDK, dan model sanitasi security lokal.
-Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, approvePendingRegistration, rejectPendingRegistration, revokeOperationalUserAccess, notifyAdminsOnPendingRegistrationCreate.
-Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, shared-state.notifications, memperbarui custom claims Firebase Auth, dan mengembalikan trusted server time.
+Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, push notification, approval onboarding, dan trusted time.
+Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, pushTokens, shared-state.notifications, memperbarui custom claims Firebase Auth, mengirim FCM, dan mengembalikan trusted server time.
 */
 
+import { createHash } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import {
   ACCESS_ROLES,
   buildOperationalAccessPayload,
@@ -27,10 +30,21 @@ const SHARED_STATE_COLLECTION = 'smartpatrol';
 const SHARED_STATE_DOCUMENT = 'shared-state';
 const PENDING_REGISTRATIONS_COLLECTION = 'pendingRegistrations';
 const USER_ACCESS_COLLECTION = 'userAccess';
+const PUSH_TOKENS_COLLECTION = 'pushTokens';
+const PUSH_DEDUPE_COLLECTION = 'pushDedupe';
 const MAX_NOTIFICATION_ITEMS = 250;
+const APP_TIME_ZONE = 'Asia/Jakarta';
+const PUSH_ALERT_CHANNEL_ID = 'smartpatrol-alerts';
+const PUSH_SOS_CHANNEL_ID = 'smartpatrol-sos';
+const SHIFT_SEQUENCE = Object.freeze([
+  { id: 'shift-1-active', label: 'Shift 1', startHour: 6, startMinute: 0, endHour: 12, endMinute: 0 },
+  { id: 'shift-2-active', label: 'Shift 2', startHour: 12, startMinute: 0, endHour: 18, endMinute: 0 },
+  { id: 'shift-3-active', label: 'Shift 3', startHour: 18, startMinute: 0, endHour: 6, endMinute: 0, crossesMidnight: true },
+]);
 
 const firestore = getFirestore();
 const adminAuth = getAuth();
+const adminMessaging = getMessaging();
 const adminStorage = getStorage();
 
 function sanitizeString(value, maxLength = 160) {
@@ -429,6 +443,790 @@ async function appendNotificationForAdminUsers(notification = {}) {
     }, { merge: true });
   });
 }
+
+function hashPushToken(value) {
+  return createHash('sha256')
+    .update(String(value || ''))
+    .digest('hex');
+}
+
+function toFcmStringMap(payload = {}) {
+  return Object.fromEntries(
+    Object.entries(payload)
+      .filter(([key]) => sanitizeString(key, 80))
+      .map(([key, value]) => [
+        sanitizeString(key, 80),
+        sanitizeString(value == null ? '' : String(value), 900),
+      ]),
+  );
+}
+
+function normalizeRoleValue(value) {
+  const role = sanitizeString(value || '', 20).toUpperCase();
+  if ([ACCESS_ROLES.ADMIN, ACCESS_ROLES.PIC, ACCESS_ROLES.PETUGAS].includes(role)) return role;
+  return '';
+}
+
+function normalizeShipName(value) {
+  return sanitizeString(value || '', 100);
+}
+
+function normalizeAccessRecord(docSnapshot) {
+  const data = docSnapshot.data() || {};
+  const role = normalizeRoleValue(data.role);
+  const reviewState = sanitizeString(data.reviewState || '', 20).toLowerCase() || 'approved';
+  return {
+    uid: sanitizeString(data.uid || docSnapshot.id || '', 160),
+    legacyUserId: sanitizeString(data.legacyUserId || '', 160),
+    name: sanitizeString(data.name || '', 100),
+    email: sanitizeEmailValue(data.email || ''),
+    role,
+    shipAssigned: normalizeShipName(data.shipAssigned || ''),
+    enabled: Boolean(data.enabled),
+    reviewState,
+  };
+}
+
+function isApprovedAccessRecord(record) {
+  return Boolean(record?.enabled && record?.reviewState === 'approved' && record?.uid);
+}
+
+async function getOperationalAccessRecords() {
+  const snapshot = await firestore.collection(USER_ACCESS_COLLECTION)
+    .where('enabled', '==', true)
+    .get();
+
+  const records = [];
+  snapshot.forEach((docSnapshot) => {
+    const record = normalizeAccessRecord(docSnapshot);
+    if (isApprovedAccessRecord(record)) records.push(record);
+  });
+  return records;
+}
+
+function getAccessIdentitySet(record = {}) {
+  return new Set([
+    sanitizeString(record.uid || '', 160),
+    sanitizeString(record.legacyUserId || '', 160),
+  ].filter(Boolean));
+}
+
+function accessMatchesTargetIds(record, targetIds = []) {
+  if (!targetIds.length) return true;
+  const identitySet = getAccessIdentitySet(record);
+  return targetIds.some((targetId) => identitySet.has(targetId));
+}
+
+function accessMatchesShip(record, shipName = '') {
+  const safeShipName = normalizeShipName(shipName);
+  if (!safeShipName) return true;
+  if ([ACCESS_ROLES.ADMIN, ACCESS_ROLES.PIC].includes(record.role)) return true;
+  return record.role === ACCESS_ROLES.PETUGAS && record.shipAssigned === safeShipName;
+}
+
+async function resolveAccessTargets(options = {}) {
+  const {
+    shipName = '',
+    targetUserIds = [],
+    includeAdmins = true,
+    includePic = true,
+    includePetugas = true,
+  } = options;
+  const safeTargetIds = Array.from(new Set(
+    (Array.isArray(targetUserIds) ? targetUserIds : [])
+      .map((item) => sanitizeString(item || '', 160))
+      .filter(Boolean),
+  ));
+  const allRecords = await getOperationalAccessRecords();
+
+  return allRecords.filter((record) => {
+    if (!accessMatchesTargetIds(record, safeTargetIds)) return false;
+    if (record.role === ACCESS_ROLES.ADMIN) return includeAdmins;
+    if (record.role === ACCESS_ROLES.PIC) return includePic;
+    if (record.role === ACCESS_ROLES.PETUGAS) return includePetugas && accessMatchesShip(record, shipName);
+    return false;
+  });
+}
+
+async function getPushTokenDocsForAccessRecords(accessRecords = []) {
+  if (!accessRecords.length) return [];
+
+  const allowedIdentities = new Set();
+  accessRecords.forEach((record) => {
+    getAccessIdentitySet(record).forEach((value) => allowedIdentities.add(value));
+  });
+
+  const snapshot = await firestore.collection(PUSH_TOKENS_COLLECTION)
+    .where('enabled', '==', true)
+    .get();
+  const tokenDocs = [];
+  const seenTokens = new Set();
+  snapshot.forEach((docSnapshot) => {
+    const data = docSnapshot.data() || {};
+    const token = sanitizeString(data.token || '', 4096);
+    const uid = sanitizeString(data.uid || '', 160);
+    const legacyUserId = sanitizeString(data.legacyUserId || '', 160);
+    if (!token || seenTokens.has(token)) return;
+    if (!allowedIdentities.has(uid) && !allowedIdentities.has(legacyUserId)) return;
+    seenTokens.add(token);
+    tokenDocs.push({
+      docId: docSnapshot.id,
+      token,
+    });
+  });
+
+  return tokenDocs;
+}
+
+async function disableInvalidPushToken(docId) {
+  if (!docId) return;
+  await firestore.collection(PUSH_TOKENS_COLLECTION).doc(docId).set({
+    enabled: false,
+    disabledAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true }).catch(() => {});
+}
+
+async function sendPushToAccessRecords(accessRecords = [], push = {}) {
+  const tokenDocs = await getPushTokenDocsForAccessRecords(accessRecords);
+  if (!tokenDocs.length) return { sent: 0, tokens: 0 };
+
+  const title = sanitizeString(push.title || 'SmartPatrol', 120) || 'SmartPatrol';
+  const body = sanitizeString(push.body || push.message || '', 240);
+  const channelId = sanitizeString(push.channelId || PUSH_ALERT_CHANNEL_ID, 80) || PUSH_ALERT_CHANNEL_ID;
+  const tag = sanitizeString(push.tag || push.type || 'smartpatrol', 80) || 'smartpatrol';
+  const isSosPush = channelId === PUSH_SOS_CHANNEL_ID || sanitizeString(push.type || '', 40) === 'sos';
+  const data = toFcmStringMap({
+    type: push.type || 'smartpatrol',
+    title,
+    body,
+    message: body,
+    channelId,
+    route: push.route || 'notifications',
+    incidentId: push.incidentId || '',
+    sosId: push.sosId || '',
+    shipName: push.shipName || '',
+    shiftKey: push.shiftKey || '',
+    checkpointId: push.checkpointId || '',
+    historyId: push.historyId || '',
+    senderName: push.senderName || 'SmartPatrol',
+    senderRole: push.senderRole || 'SYSTEM',
+    createdAt: push.createdAt || new Date().toISOString(),
+    fullScreen: isSosPush ? 'true' : 'false',
+    click_action: 'OPEN_SMARTPATROL',
+    ...push.data,
+  });
+
+  let sent = 0;
+  for (let index = 0; index < tokenDocs.length; index += 500) {
+    const chunk = tokenDocs.slice(index, index + 500);
+    const multicastMessage = {
+      tokens: chunk.map((entry) => entry.token),
+      data,
+      android: {
+        priority: 'high',
+        collapseKey: tag,
+        notification: {
+          channelId,
+          clickAction: 'OPEN_SMARTPATROL',
+          priority: 'high',
+          sound: 'default',
+          tag,
+        },
+      },
+    };
+
+    if (!isSosPush) {
+      multicastMessage.notification = {
+        title,
+        body,
+      };
+    }
+
+    const response = await adminMessaging.sendEachForMulticast(multicastMessage);
+
+    sent += response.successCount || 0;
+    await Promise.all((response.responses || []).map((item, itemIndex) => {
+      const errorCode = sanitizeString(item?.error?.code || '', 80);
+      if (!errorCode) return null;
+      if (
+        errorCode.includes('registration-token-not-registered')
+        || errorCode.includes('invalid-registration-token')
+        || errorCode.includes('invalid-argument')
+      ) {
+        return disableInvalidPushToken(chunk[itemIndex]?.docId);
+      }
+      return null;
+    }).filter(Boolean));
+  }
+
+  return {
+    sent,
+    tokens: tokenDocs.length,
+  };
+}
+
+async function claimPushDedupe(key) {
+  const safeKey = sanitizeString(key || '', 400);
+  if (!safeKey) return false;
+  const dedupeId = hashPushToken(safeKey);
+  const dedupeRef = firestore.collection(PUSH_DEDUPE_COLLECTION).doc(dedupeId);
+
+  return firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(dedupeRef);
+    if (snapshot.exists) return false;
+    transaction.set(dedupeRef, {
+      key: safeKey,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return true;
+  });
+}
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function ensureObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function getSharedStatePayload(documentData = {}) {
+  return ensureObject(documentData?.state);
+}
+
+function resolveShipNameFromState(state = {}, shipIdOrName = '') {
+  const safeValue = sanitizeString(shipIdOrName || '', 120);
+  if (!safeValue) return '';
+  const ship = ensureArray(state.shipsData).find((item) => (
+    sanitizeString(item?.id || '', 120) === safeValue
+    || sanitizeString(item?.name || '', 120) === safeValue
+  ));
+  return normalizeShipName(ship?.name || safeValue);
+}
+
+function resolveIncidentFromState(state = {}, incidentId = '') {
+  const safeIncidentId = sanitizeString(incidentId || '', 180);
+  if (!safeIncidentId) return null;
+  const directIncident = ensureArray(state.incidentsData).find((incident) => (
+    sanitizeString(incident?.id || incident?.incidentId || '', 180) === safeIncidentId
+  ));
+  if (directIncident) return directIncident;
+  const sos = state.activeSOSAlert?.id === safeIncidentId
+    ? state.activeSOSAlert
+    : ensureArray(state.sosHistory).find((entry) => entry?.id === safeIncidentId);
+  if (!sos) return null;
+  return {
+    id: sos.id,
+    isSOS: true,
+    location: 'SOS',
+    shipName: sos.shipName,
+    senderName: sos.senderName,
+  };
+}
+
+function getIncidentLabel(incident = {}, fallback = 'Temuan') {
+  return sanitizeString(
+    incident.location
+      || incident.name
+      || incident.title
+      || incident.checkpointName
+      || fallback,
+    100,
+  ) || fallback;
+}
+
+function getIncidentShipName(incident = {}, state = {}) {
+  return normalizeShipName(incident.shipName || resolveShipNameFromState(state, incident.shipId || ''));
+}
+
+function getIncidentTargetUserIds(incident = {}) {
+  return ensureArray(incident.targetUserIds)
+    .map((item) => sanitizeString(item || '', 160))
+    .filter(Boolean);
+}
+
+function getProgressItems(meta = {}) {
+  return ensureArray(meta?.progress);
+}
+
+function isActiveSOS(alert = {}) {
+  return Boolean(alert?.id && sanitizeString(alert.status || 'active', 30) !== 'resolved');
+}
+
+function getCheckpointCollectionForShip(state = {}, ship = {}) {
+  const checkpointsByShip = ensureObject(state.checkpointsByShip);
+  const candidates = [
+    ship.id,
+    ship.name,
+    sanitizeStorageSegment(ship.name || '', ''),
+  ].map((item) => sanitizeString(item || '', 120)).filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (Array.isArray(checkpointsByShip[candidate])) return checkpointsByShip[candidate];
+  }
+
+  return [];
+}
+
+function summarizeCheckpointCollection(checkpoints = []) {
+  return ensureArray(checkpoints).reduce((summary, checkpoint) => {
+    const status = sanitizeString(checkpoint?.status || '', 30).toLowerCase();
+    const resultType = sanitizeString(checkpoint?.resultType || '', 30).toLowerCase();
+    const isCompleted = status === 'completed' || Boolean(resultType && resultType !== 'pending');
+    const isMissed = status === 'missed' || resultType === 'missed';
+    const isTemporary = Boolean(checkpoint?.isTemporaryShiftNode);
+
+    if (isTemporary) return summary;
+    summary.total += 1;
+    if (isCompleted) summary.completed += 1;
+    if (resultType === 'aman') summary.aman += 1;
+    if (resultType === 'temuan') summary.temuan += 1;
+    if (isMissed) summary.missed += 1;
+    return summary;
+  }, {
+    total: 0,
+    completed: 0,
+    aman: 0,
+    temuan: 0,
+    missed: 0,
+  });
+}
+
+function countPendingCheckpoints(checkpoints = []) {
+  const summary = summarizeCheckpointCollection(checkpoints);
+  return Math.max(0, summary.total - summary.completed);
+}
+
+function getJakartaParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const hour = Number(map.hour || '0');
+  return {
+    year: Number(map.year || '1970'),
+    month: Number(map.month || '1'),
+    day: Number(map.day || '1'),
+    hour: hour === 24 ? 0 : hour,
+    minute: Number(map.minute || '0'),
+    second: Number(map.second || '0'),
+  };
+}
+
+function dateKeyFromParts(parts) {
+  return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const [year, month, day] = String(dateKey || '').split('-').map((part) => Number(part));
+  const date = new Date(Date.UTC(year || 1970, (month || 1) - 1, day || 1, 12, 0, 0));
+  date.setUTCDate(date.getUTCDate() + days);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function createJakartaDate(dateKey, hour, minute) {
+  const [year, month, day] = String(dateKey || '').split('-').map((part) => Number(part));
+  return new Date(Date.UTC(year || 1970, (month || 1) - 1, day || 1, Number(hour || 0) - 7, Number(minute || 0), 0));
+}
+
+function getShiftScheduleTimesForDateKey(dateKey, shift) {
+  const startDateKey = dateKey;
+  const endDateKey = shift.crossesMidnight ? addDaysToDateKey(dateKey, 1) : dateKey;
+  return {
+    startAt: createJakartaDate(startDateKey, shift.startHour, shift.startMinute),
+    endAt: createJakartaDate(endDateKey, shift.endHour, shift.endMinute),
+  };
+}
+
+function createShiftMeta(dateKey, shift) {
+  const schedule = getShiftScheduleTimesForDateKey(dateKey, shift);
+  return {
+    ...shift,
+    dateKey,
+    key: `${dateKey}-${shift.id}`,
+    startAt: schedule.startAt,
+    endAt: schedule.endAt,
+  };
+}
+
+function getCurrentShiftMetaForDate(date = new Date()) {
+  const parts = getJakartaParts(date);
+  const dateKey = dateKeyFromParts(parts);
+  const minutes = parts.hour * 60 + parts.minute;
+
+  if (minutes < 6 * 60) {
+    return createShiftMeta(addDaysToDateKey(dateKey, -1), SHIFT_SEQUENCE[2]);
+  }
+  if (minutes < 12 * 60) {
+    return createShiftMeta(dateKey, SHIFT_SEQUENCE[0]);
+  }
+  if (minutes < 18 * 60) {
+    return createShiftMeta(dateKey, SHIFT_SEQUENCE[1]);
+  }
+  return createShiftMeta(dateKey, SHIFT_SEQUENCE[2]);
+}
+
+function getPreviousShiftMeta(currentShift) {
+  if (currentShift.id === SHIFT_SEQUENCE[0].id) {
+    return createShiftMeta(addDaysToDateKey(currentShift.dateKey, -1), SHIFT_SEQUENCE[2]);
+  }
+  if (currentShift.id === SHIFT_SEQUENCE[1].id) {
+    return createShiftMeta(currentShift.dateKey, SHIFT_SEQUENCE[0]);
+  }
+  return createShiftMeta(currentShift.dateKey, SHIFT_SEQUENCE[1]);
+}
+
+function minutesBetween(leftDate, rightDate) {
+  return Math.floor((leftDate.getTime() - rightDate.getTime()) / 60000);
+}
+
+function getHistoryEntryForShift(state = {}, ship = {}, shiftMeta = {}) {
+  const safeShipId = sanitizeString(ship.id || '', 120);
+  const safeShipName = normalizeShipName(ship.name || '');
+  return ensureArray(state.historyEntries).find((entry) => (
+    sanitizeString(entry?.shiftKey || '', 120) === shiftMeta.key
+    && (
+      sanitizeString(entry?.shipId || '', 120) === safeShipId
+      || normalizeShipName(entry?.ship || entry?.shipName || '') === safeShipName
+    )
+  ));
+}
+
+function buildShipShiftSummary(state = {}, ship = {}, shiftMeta = {}) {
+  const historyEntry = getHistoryEntryForShift(state, ship, shiftMeta);
+  const sourceCheckpoints = historyEntry
+    ? ensureArray(historyEntry.checkpoints)
+    : getCheckpointCollectionForShip(state, ship);
+  return summarizeCheckpointCollection(sourceCheckpoints);
+}
+
+function buildAdminWrapUpSummary(state = {}, shiftMeta = {}) {
+  const ships = ensureArray(state.shipsData).filter((ship) => ship?.name || ship?.id);
+  if (!ships.length) return `${shiftMeta.label} sebelumnya sudah tersimpan.`;
+
+  const segments = ships.slice(0, 5).map((ship) => {
+    const summary = buildShipShiftSummary(state, ship, shiftMeta);
+    const shipName = normalizeShipName(ship.name || ship.id || 'Kapal');
+    return `${shipName}: ${summary.completed}/${summary.total}, temuan ${summary.temuan}, missed ${summary.missed}`;
+  });
+  const moreCount = Math.max(0, ships.length - segments.length);
+  return `${segments.join('; ')}${moreCount ? `; +${moreCount} kapal lain` : ''}`;
+}
+
+export const registerPushToken = onCall(
+  {
+    region: TRUSTED_TIME_REGION,
+    maxInstances: 20,
+  },
+  async (request) => {
+    const userContext = await requireOperationalUser(request);
+    const token = sanitizeString(request.data?.token || '', 4096);
+    if (!token) {
+      throw new HttpsError('invalid-argument', 'Token push Android wajib tersedia.');
+    }
+
+    const access = serializeOperationalAccess({
+      ...userContext.access,
+      uid: userContext.uid,
+    });
+    const tokenId = hashPushToken(token);
+    const legacyUserId = sanitizeString(request.data?.legacyUserId || access.legacyUserId || '', 160);
+    await firestore.collection(PUSH_TOKENS_COLLECTION).doc(tokenId).set({
+      uid: userContext.uid,
+      token,
+      platform: sanitizeString(request.data?.platform || 'android', 30) || 'android',
+      appId: sanitizeString(request.data?.appId || 'com.smartpatrol.app', 120) || 'com.smartpatrol.app',
+      legacyUserId,
+      role: normalizeRoleValue(request.data?.role || access.role || ''),
+      shipAssigned: normalizeShipName(request.data?.shipAssigned || access.shipAssigned || ''),
+      displayName: sanitizeString(request.data?.displayName || access.name || userContext.email || '', 100),
+      enabled: true,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      status: 'registered',
+      tokenId,
+    };
+  },
+);
+
+export const unregisterPushToken = onCall(
+  {
+    region: TRUSTED_TIME_REGION,
+    maxInstances: 20,
+  },
+  async (request) => {
+    await requireOperationalUser(request);
+    const token = sanitizeString(request.data?.token || '', 4096);
+    if (!token) {
+      throw new HttpsError('invalid-argument', 'Token push Android wajib tersedia.');
+    }
+
+    const tokenId = hashPushToken(token);
+    await firestore.collection(PUSH_TOKENS_COLLECTION).doc(tokenId).set({
+      enabled: false,
+      disabledAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      status: 'unregistered',
+      tokenId,
+    };
+  },
+);
+
+export const notifyOnPatrolReportWrite = onDocumentWritten(
+  {
+    region: TRUSTED_TIME_REGION,
+    document: 'patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}',
+    maxInstances: 20,
+  },
+  async (event) => {
+    const afterSnapshot = event.data?.after;
+    if (!afterSnapshot?.exists) return;
+    const before = event.data?.before?.exists ? event.data.before.data() || {} : {};
+    const after = afterSnapshot.data() || {};
+    const wasFinding = sanitizeString(before.resultType || '', 30).toLowerCase() === 'temuan';
+    const isFinding = sanitizeString(after.resultType || '', 30).toLowerCase() === 'temuan';
+    if (!isFinding || wasFinding) return;
+
+    const sharedStateSnapshot = await getSharedStateRef().get();
+    const sharedState = sharedStateSnapshot.exists ? getSharedStatePayload(sharedStateSnapshot.data()) : {};
+    const shipName = normalizeShipName(after.shipName || resolveShipNameFromState(sharedState, event.params.shipId));
+    const checkpointName = sanitizeString(after.name || after.checkpointName || event.params.checkpointId, 100);
+    const incidentId = sanitizeString(after.incidentId || `patrol-${event.params.shiftKey}-${event.params.shipId}-${event.params.checkpointId}`, 180);
+    const dedupeKey = `patrol-finding:${event.params.shiftKey}:${event.params.shipId}:${event.params.checkpointId}:${incidentId}:${after.completedAt || after.occurredAtTrustedIso || ''}`;
+    if (!await claimPushDedupe(dedupeKey)) return;
+
+    const targets = await resolveAccessTargets({
+      shipName,
+      includeAdmins: true,
+      includePic: true,
+      includePetugas: true,
+    });
+    await sendPushToAccessRecords(targets, {
+      type: 'incident_created',
+      title: 'Temuan patroli baru',
+      body: `${checkpointName} dilaporkan sebagai temuan di ${shipName || 'kapal patroli'}.`,
+      route: 'incidents/detail',
+      incidentId,
+      shipName,
+      shiftKey: sanitizeString(event.params.shiftKey || '', 120),
+      checkpointId: sanitizeString(event.params.checkpointId || '', 120),
+      tag: `finding-${incidentId}`,
+    });
+  },
+);
+
+export const notifyOnSharedStateWrite = onDocumentWritten(
+  {
+    region: TRUSTED_TIME_REGION,
+    document: `${SHARED_STATE_COLLECTION}/${SHARED_STATE_DOCUMENT}`,
+    maxInstances: 10,
+  },
+  async (event) => {
+    const beforeSnapshot = event.data?.before;
+    const afterSnapshot = event.data?.after;
+    if (!beforeSnapshot?.exists || !afterSnapshot?.exists) return;
+
+    const beforeState = getSharedStatePayload(beforeSnapshot.data() || {});
+    const afterState = getSharedStatePayload(afterSnapshot.data() || {});
+    const pushJobs = [];
+
+    const beforeSOS = beforeState.activeSOSAlert || null;
+    const afterSOS = afterState.activeSOSAlert || null;
+    if (isActiveSOS(afterSOS) && beforeSOS?.id !== afterSOS.id) {
+      pushJobs.push(async () => {
+        const sosId = sanitizeString(afterSOS.id || '', 180);
+        if (!await claimPushDedupe(`sos:${sosId}`)) return;
+        const shipName = normalizeShipName(afterSOS.shipName || '');
+        const targets = await resolveAccessTargets({
+          shipName,
+          targetUserIds: getIncidentTargetUserIds(afterSOS),
+          includeAdmins: true,
+          includePic: true,
+          includePetugas: true,
+        });
+        await sendPushToAccessRecords(targets, {
+          type: 'sos',
+          title: 'DARURAT SOS',
+          body: `SOS dari ${sanitizeString(afterSOS.senderName || 'petugas', 80)} di ${shipName || 'kapal patroli'}.`,
+          channelId: PUSH_SOS_CHANNEL_ID,
+          route: 'sos/active',
+          incidentId: sosId,
+          sosId,
+          shipName,
+          senderName: sanitizeString(afterSOS.senderName || 'SmartPatrol', 80),
+          senderRole: sanitizeString(afterSOS.senderRole || 'SYSTEM', 40),
+          tag: `sos-${sosId}`,
+          data: {
+            createdAt: sanitizeString(afterSOS.createdAt || afterSOS.triggeredAt || '', 80),
+            lat: afterSOS.lat ?? '',
+            lng: afterSOS.lng ?? '',
+          },
+        });
+      });
+    }
+
+    const beforeIncidentIds = new Set(ensureArray(beforeState.incidentsData).map((incident) => sanitizeString(incident?.id || incident?.incidentId || '', 180)));
+    ensureArray(afterState.incidentsData).forEach((incident) => {
+      const incidentId = sanitizeString(incident?.id || incident?.incidentId || '', 180);
+      if (!incidentId || beforeIncidentIds.has(incidentId) || afterSOS?.id === incidentId) return;
+      pushJobs.push(async () => {
+        if (!await claimPushDedupe(`manual-incident:${incidentId}`)) return;
+        const shipName = getIncidentShipName(incident, afterState);
+        const targets = await resolveAccessTargets({
+          shipName,
+          targetUserIds: getIncidentTargetUserIds(incident),
+          includeAdmins: true,
+          includePic: true,
+          includePetugas: true,
+        });
+        await sendPushToAccessRecords(targets, {
+          type: 'incident_created',
+          title: 'Temuan baru',
+          body: `${getIncidentLabel(incident)} dilaporkan di ${shipName || 'area patroli'}.`,
+          route: 'incidents/detail',
+          incidentId,
+          shipName,
+          tag: `incident-${incidentId}`,
+        });
+      });
+    });
+
+    Object.entries(ensureObject(afterState.incidentMeta)).forEach(([incidentId, afterMeta]) => {
+      const safeIncidentId = sanitizeString(incidentId || '', 180);
+      if (!safeIncidentId) return;
+      const beforeProgress = getProgressItems(beforeState.incidentMeta?.[safeIncidentId]);
+      const afterProgress = getProgressItems(afterMeta);
+      if (afterProgress.length <= beforeProgress.length) return;
+      const latestProgress = afterProgress[afterProgress.length - 1] || {};
+      const progressId = sanitizeString(latestProgress.id || latestProgress.createdAt || `${afterProgress.length}`, 180);
+      pushJobs.push(async () => {
+        if (!await claimPushDedupe(`incident-progress:${safeIncidentId}:${progressId}`)) return;
+        const incident = resolveIncidentFromState(afterState, safeIncidentId) || { id: safeIncidentId };
+        const shipName = getIncidentShipName(incident, afterState);
+        const targets = await resolveAccessTargets({
+          shipName,
+          targetUserIds: getIncidentTargetUserIds(incident),
+          includeAdmins: true,
+          includePic: true,
+          includePetugas: true,
+        });
+        await sendPushToAccessRecords(targets, {
+          type: 'incident_progress_updated',
+          title: 'Update temuan',
+          body: `${getIncidentLabel(incident)} mendapat update baru dari ${sanitizeString(latestProgress.author || 'petugas', 80)}.`,
+          route: 'incidents/detail',
+          incidentId: safeIncidentId,
+          shipName,
+          tag: `incident-progress-${safeIncidentId}`,
+        });
+      });
+    });
+
+    for (const job of pushJobs.slice(0, 20)) {
+      await job();
+    }
+  },
+);
+
+export const sendScheduledOperationalPushNotifications = onSchedule(
+  {
+    region: TRUSTED_TIME_REGION,
+    schedule: 'every 5 minutes',
+    timeZone: APP_TIME_ZONE,
+    maxInstances: 1,
+  },
+  async () => {
+    const now = new Date();
+    const currentShift = getCurrentShiftMetaForDate(now);
+    const previousShift = getPreviousShiftMeta(currentShift);
+    const sharedStateSnapshot = await getSharedStateRef().get();
+    if (!sharedStateSnapshot.exists) return;
+
+    const state = getSharedStatePayload(sharedStateSnapshot.data() || {});
+    const ships = ensureArray(state.shipsData).filter((ship) => ship?.id || ship?.name);
+    const minutesAfterStart = minutesBetween(now, currentShift.startAt);
+    const minutesBeforeEnd = minutesBetween(currentShift.endAt, now);
+
+    if (minutesAfterStart >= 0 && minutesAfterStart <= 7) {
+      for (const ship of ships) {
+        const shipName = normalizeShipName(ship.name || ship.id || '');
+        const dedupeKey = `shift-started:${currentShift.key}:${sanitizeString(ship.id || shipName, 120)}`;
+        if (!await claimPushDedupe(dedupeKey)) continue;
+        const targets = await resolveAccessTargets({
+          shipName,
+          includeAdmins: false,
+          includePic: true,
+          includePetugas: true,
+        });
+        await sendPushToAccessRecords(targets, {
+          type: 'shift_started',
+          title: `${currentShift.label} dimulai`,
+          body: `Shift sebelumnya telah berakhir dan sudah tersimpan di riwayat. ${currentShift.label} baru telah dimulai.`,
+          route: 'patrol/live',
+          shipName,
+          shiftKey: currentShift.key,
+          tag: `shift-started-${currentShift.key}-${shipName}`,
+        });
+      }
+
+      if (await claimPushDedupe(`admin-shift-wrap:${currentShift.key}`)) {
+        const adminTargets = await resolveAccessTargets({
+          includeAdmins: true,
+          includePic: false,
+          includePetugas: false,
+        });
+        await sendPushToAccessRecords(adminTargets, {
+          type: 'shift_wrap_up',
+          title: 'Shift wrap up',
+          body: `Shift sebelumnya selesai. ${buildAdminWrapUpSummary(state, previousShift)}`,
+          route: 'history/list',
+          shiftKey: previousShift.key,
+          tag: `admin-wrap-${currentShift.key}`,
+        });
+      }
+    }
+
+    if (minutesBeforeEnd >= 0 && minutesBeforeEnd <= 60) {
+      for (const ship of ships) {
+        const checkpoints = getCheckpointCollectionForShip(state, ship);
+        const pendingCount = countPendingCheckpoints(checkpoints);
+        if (pendingCount <= 0) continue;
+        const shipName = normalizeShipName(ship.name || ship.id || '');
+        const dedupeKey = `checkpoint-pending:${currentShift.key}:${sanitizeString(ship.id || shipName, 120)}`;
+        if (!await claimPushDedupe(dedupeKey)) continue;
+        const targets = await resolveAccessTargets({
+          shipName,
+          includeAdmins: true,
+          includePic: true,
+          includePetugas: true,
+        });
+        await sendPushToAccessRecords(targets, {
+          type: 'checkpoint_pending',
+          title: 'Pending checkpoint',
+          body: `${pendingCount} checkpoint ${shipName || 'kapal'} belum selesai sebelum shift berakhir.`,
+          route: 'patrol/live',
+          shipName,
+          shiftKey: currentShift.key,
+          tag: `checkpoint-pending-${currentShift.key}-${shipName}`,
+        });
+      }
+    }
+  },
+);
 
 export const getServerTime = onRequest(
   {
