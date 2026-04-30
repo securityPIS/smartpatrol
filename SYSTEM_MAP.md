@@ -52,6 +52,7 @@ PatrolPage[auto-open ShiftStatusModal jika status shift belum ada]
   → AppContextRuntime[handleSaveCurrentShiftStatus]
     → createTrustedTimestampRecord() (trusted shift status snapshot)
     → setShiftStatusRecords(active shift only)
+    → requestCloudSync('urgent') → saveCloudAppState + emit shared-signal lintas-device
     → checkpoint actions enabled
 
 PatrolPage[handleActionClick(checkpointId, type)]
@@ -64,9 +65,10 @@ PatrolPage[handleActionClick(checkpointId, type)]
   → PatrolFormView[submit]
   → AppContextRuntime[handleSubmitCheckpoint]
     → createTrustedTimestampRecord() (NTP anchor)
+    → capturePatrolEnvironmentSnapshot cepat (GPS cache/timeout pendek + cuaca cache)
     → normalizeTimeAuditRecord()
     → setCheckpointsByShip(updated)
-    → savePatrolReport(Firestore domain doc kecil, mediaStatus uploading/ready)
+    → savePatrolReport(Firestore domain doc kecil, mediaStatus uploading/ready; foto lokal dipertahankan di device pengirim)
     → uploadCloudDataUrlAsset(Storage) → update patrolReports photoUrl
     → scheduleCloudSync → saveCloudAppState(Firestore) via mergeSharedStateSnapshots
 ```

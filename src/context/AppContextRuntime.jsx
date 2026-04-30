@@ -1331,9 +1331,22 @@ function createShipLocationSnapshot(ship) {
   };
 }
 
-async function requestCurrentGeolocation() {
+const PATROL_SUBMIT_GEOLOCATION_TIMEOUT_MS = 1500;
+const PATROL_SUBMIT_GEOLOCATION_MAX_AGE_MS = 30000;
+
+function createGeolocationRequestOptions(options = {}) {
+  return {
+    enableHighAccuracy: options.enableHighAccuracy !== false,
+    timeout: Number.isFinite(options.timeout) ? options.timeout : 8000,
+    maximumAge: Number.isFinite(options.maximumAge) ? options.maximumAge : 0,
+  };
+}
+
+async function requestCurrentGeolocation(options = {}) {
+  const geolocationOptions = createGeolocationRequestOptions(options);
+
   try {
-    const nativePosition = await getNativeGeolocationPosition();
+    const nativePosition = await getNativeGeolocationPosition(geolocationOptions);
     if (nativePosition?.coords) {
       return {
         lat: normalizeSnapshotCoordinate(nativePosition.coords.latitude),
@@ -1366,11 +1379,7 @@ async function requestCurrentGeolocation() {
         console.warn('GPS patroli tidak tersedia saat sync laporan', error);
         resolve(null);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 0,
-      },
+      geolocationOptions,
     );
   });
 }
@@ -1587,9 +1596,9 @@ async function fetchWeatherSnapshotForCoordinates(gpsSnapshot, fallbackWeather =
 }
 
 async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDate().toISOString(), options = {}) {
-  const { fallbackWeather = null } = options;
+  const { fallbackWeather = null, geolocationOptions = {}, skipWeatherFetch = false } = options;
   const shipSnapshot = createShipLocationSnapshot(ship);
-  const deviceLocation = await requestCurrentGeolocation();
+  const deviceLocation = await requestCurrentGeolocation(geolocationOptions);
 
   const gpsSnapshot = deviceLocation
     ? {
@@ -1607,7 +1616,9 @@ async function capturePatrolEnvironmentSnapshot(ship, capturedAt = getTrustedDat
       }
       : null;
 
-  const weatherSnapshot = await fetchWeatherSnapshotForCoordinates(gpsSnapshot, fallbackWeather);
+  const weatherSnapshot = skipWeatherFetch
+    ? createFallbackWeatherSnapshot(fallbackWeather, gpsSnapshot)
+    : await fetchWeatherSnapshotForCoordinates(gpsSnapshot, fallbackWeather);
 
   return {
     shipSnapshot,
@@ -3543,6 +3554,15 @@ function createPatrolReportDomainRecord(checkpoint = {}, options = {}) {
   };
 }
 
+function createPatrolReportMediaKey(report = {}) {
+  const shiftKey = sanitizeText(report.shiftKey || '', 160);
+  const shipId = sanitizeText(report.shipId || '', 160);
+  const checkpointId = sanitizeText(report.checkpointId || report.id || report.firestoreId || '', 160);
+  return shiftKey && shipId && checkpointId
+    ? `${shiftKey}|${shipId}|${checkpointId}`
+    : '';
+}
+
 function createCheckpointFromPatrolReportDocument(report = {}) {
   const checkpointId = sanitizeText(report.checkpointId || report.id || report.firestoreId || '', 160);
   const shipId = sanitizeText(report.shipId || '', 160);
@@ -4094,6 +4114,7 @@ export function AppProvider({ children }) {
   const cloudSignalRefreshTimerRef = useRef(null);
   const patrolReportDomainWriteCacheRef = useRef(new Map());
   const patrolReportDomainUploadInFlightRef = useRef(new Set());
+  const patrolReportLocalMediaRef = useRef(new Map());
   const localSharedStateRef = useRef(null);
   const activeSOSAlertRef = useRef(activeSOSAlert);
   const sosHistoryRef = useRef(sosHistory);
@@ -4830,10 +4851,16 @@ export function AppProvider({ children }) {
     const checkpointReport = createPatrolReportDomainRecord(checkpoint);
     if (!checkpointReport) return null;
 
-    const reportKey = `${checkpointReport.shiftKey}|${checkpointReport.shipId}|${checkpointReport.checkpointId}`;
+    const reportKey = createPatrolReportMediaKey(checkpointReport);
     const galleryPhotos = ensureArray(checkpointReport.galleryPhotos);
     const hasLocalMedia = isLocalOnlyAssetUrl(checkpointReport.photoUrl)
       || galleryPhotos.some((galleryPhoto) => isLocalOnlyAssetUrl(galleryPhoto?.photoUrl));
+    if (hasLocalMedia && reportKey) {
+      patrolReportLocalMediaRef.current.set(reportKey, {
+        photoUrl: checkpointReport.photoUrl,
+        galleryPhotos,
+      });
+    }
     const pendingReport = createPatrolReportDomainRecord(checkpointReport, {
       photoUrl: hasLocalMedia ? stripLocalAssetUrlSync(checkpointReport.photoUrl) : checkpointReport.photoUrl,
       galleryPhotos: galleryPhotos.map((galleryPhoto) => ({
@@ -4893,6 +4920,9 @@ export function AppProvider({ children }) {
 
       if (readyReport) {
         await writeIfChanged(readyReport);
+        if (mediaReady) {
+          patrolReportLocalMediaRef.current.delete(reportKey);
+        }
       }
 
       return readyReport || pendingReport;
@@ -5069,13 +5099,15 @@ export function AppProvider({ children }) {
         ));
 
         if (!matchedCheckpoint) return previousIncident;
+        const matchedIncident = createPatrolIncidentRecord(matchedCheckpoint, {
+          fallbackShipName: matchedCheckpoint.shipName || previousIncident.shipName,
+          fallbackDate: matchedCheckpoint.date || previousIncident.date,
+          readOnly: previousIncident.readOnly,
+        });
         return {
           ...previousIncident,
-          ...createPatrolIncidentRecord(matchedCheckpoint, {
-            fallbackShipName: matchedCheckpoint.shipName || previousIncident.shipName,
-            fallbackDate: matchedCheckpoint.date || previousIncident.date,
-            readOnly: previousIncident.readOnly,
-          }),
+          ...matchedIncident,
+          photoUrl: resolveMergedAssetUrl(matchedIncident.photoUrl, previousIncident.photoUrl),
         };
       }
 
@@ -5169,9 +5201,29 @@ export function AppProvider({ children }) {
   }, [handleIncomingCloudPayload]);
   const applyPatrolReportDocuments = useCallback((reportDocuments = []) => {
     if (!Array.isArray(reportDocuments) || reportDocuments.length === 0) return;
+    const reportsWithLocalMedia = reportDocuments.map((reportDocument) => {
+      const reportKey = createPatrolReportMediaKey(reportDocument);
+      const localMedia = reportKey ? patrolReportLocalMediaRef.current.get(reportKey) : null;
+      if (!localMedia) return reportDocument;
+
+      const hasCloudMedia = Boolean(reportDocument?.photoUrl)
+        || ensureArray(reportDocument?.galleryPhotos).some((galleryPhoto) => Boolean(galleryPhoto?.photoUrl));
+      if (hasCloudMedia && reportDocument?.mediaStatus === 'ready') {
+        patrolReportLocalMediaRef.current.delete(reportKey);
+        return reportDocument;
+      }
+
+      return {
+        ...reportDocument,
+        photoUrl: reportDocument?.photoUrl || localMedia.photoUrl || null,
+        galleryPhotos: ensureArray(reportDocument?.galleryPhotos).length > 0
+          ? reportDocument.galleryPhotos
+          : ensureArray(localMedia.galleryPhotos),
+      };
+    });
     setCheckpointsByShip((previousState) => mergePatrolReportDocumentsIntoCheckpoints(
       previousState,
-      reportDocuments,
+      reportsWithLocalMedia,
     ));
   }, []);
   const getUsersByRole = useCallback((roles) => (
@@ -5413,9 +5465,19 @@ export function AppProvider({ children }) {
           shipName: incident.shipName || operationalShipName || '',
         };
         const existingIncident = incidentMap.get(normalizedIncident.id);
-        if (!existingIncident || getIncidentSortTimestamp(normalizedIncident) >= getIncidentSortTimestamp(existingIncident)) {
+        if (!existingIncident) {
           incidentMap.set(normalizedIncident.id, normalizedIncident);
+          return incidentMap;
         }
+
+        const shouldUseNext = getIncidentSortTimestamp(normalizedIncident) >= getIncidentSortTimestamp(existingIncident);
+        const preferredIncident = shouldUseNext ? normalizedIncident : existingIncident;
+        const fallbackIncident = shouldUseNext ? existingIncident : normalizedIncident;
+        incidentMap.set(normalizedIncident.id, {
+          ...fallbackIncident,
+          ...preferredIncident,
+          photoUrl: resolveMergedAssetUrl(preferredIncident.photoUrl, fallbackIncident.photoUrl),
+        });
         return incidentMap;
       }, new Map()).values(),
     )
@@ -6022,8 +6084,9 @@ export function AppProvider({ children }) {
       [nextRecord.key]: nextRecord,
     }));
     setShowShiftStatusModal(false);
+    requestCloudSync('urgent');
     return true;
-  }, [activeShiftGuardSnapshot, currentShiftMeta.key, currentUser, currentUserRecord, operationalShip?.id, operationalShipName, showTrustedTimeGateDialog]);
+  }, [activeShiftGuardSnapshot, currentShiftMeta.key, currentUser, currentUserRecord, operationalShip?.id, operationalShipName, requestCloudSync, showTrustedTimeGateDialog]);
 
   // Patrol handlers
   const handleActionClick = useCallback(async (id, type) => {
@@ -6073,7 +6136,15 @@ export function AppProvider({ children }) {
       const environmentSnapshot = await capturePatrolEnvironmentSnapshot(
         operationalShip,
         trustedTimestamp.occurredAtTrustedIso,
-        { fallbackWeather: weatherInfo },
+        {
+          fallbackWeather: weatherInfo,
+          geolocationOptions: {
+            enableHighAccuracy: false,
+            timeout: PATROL_SUBMIT_GEOLOCATION_TIMEOUT_MS,
+            maximumAge: PATROL_SUBMIT_GEOLOCATION_MAX_AGE_MS,
+          },
+          skipWeatherFetch: true,
+        },
       );
 
       const submittedItem = {
@@ -6101,10 +6172,10 @@ export function AppProvider({ children }) {
         tindakLanjut: sanitizeMultilineText(formState.tindakLanjut, 240),
         ...trustedTimestamp,
       };
+      updateOperationalShipCheckpoints(shipCheckpoints => shipCheckpoints.map((checkpoint) => (
+        String(checkpoint.id) === String(id) ? submittedItem : checkpoint
+      )));
       setActiveForms(prev => {
-        updateOperationalShipCheckpoints(shipCheckpoints => shipCheckpoints.map((checkpoint) => (
-          String(checkpoint.id) === String(id) ? submittedItem : checkpoint
-        )));
         const newForms = { ...prev };
         delete newForms[id];
         return newForms;
