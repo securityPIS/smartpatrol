@@ -235,25 +235,6 @@ const PatrolPage = React.memo(function PatrolPage() {
     setSummaryDetailType(null);
   }, [selectedHistoryEntry?.id]);
 
-  const autoOpenedShiftStatusKeyRef = React.useRef('');
-  React.useEffect(() => {
-    if (isHistoryMode || !isShiftStatusRequired || isCurrentShiftStatusCompleted) return;
-
-    const autoOpenKey = `${currentShiftMeta?.key || 'shift'}:${displayShip?.id || displayShipName || 'ship'}`;
-    if (autoOpenedShiftStatusKeyRef.current === autoOpenKey) return;
-
-    autoOpenedShiftStatusKeyRef.current = autoOpenKey;
-    openShiftStatusModal();
-  }, [
-    currentShiftMeta?.key,
-    displayShip?.id,
-    displayShipName,
-    isCurrentShiftStatusCompleted,
-    isHistoryMode,
-    isShiftStatusRequired,
-    openShiftStatusModal,
-  ]);
-
   const handleOpenSummaryDetail = React.useCallback((type) => {
     setSummaryDetailType(type);
   }, []);
