@@ -48,7 +48,7 @@ ShipsPage[handleConfirmAssign / handleTogglePersonnel]
 ### 2. Patrol Checkpoint (inti patroli)
 
 ```
-PatrolPage[auto-open ShiftStatusModal jika status shift belum ada]
+PatrolPage[user klik Isi Status atau mencoba aksi checkpoint saat status shift belum ada]
   → AppContextRuntime[handleSaveCurrentShiftStatus]
     → createTrustedTimestampRecord() (trusted shift status snapshot)
     → resolve shift key dari timestamp trusted segar + refresh shiftClock jika stale

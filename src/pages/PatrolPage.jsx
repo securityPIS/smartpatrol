@@ -3,7 +3,7 @@ Tujuan: Menampilkan halaman patroli live beserta gate status petugas shift sebel
 Caller: App shell saat user membuka halaman utama patroli.
 Dependensi: Patrol context, trusted time, detail riwayat, dan modal status petugas shift.
 Main Functions: Menyajikan info shift, daftar checkpoint, progress patroli, dan status petugas per shift.
-Side Effects: Membuka modal status shift, memicu form patroli, dan menahan aksi checkpoint sampai status shift lengkap.
+Side Effects: Membuka modal status shift hanya dari aksi user/guard, memicu form patroli, dan menahan aksi checkpoint sampai status shift lengkap.
 */
 
 import React from 'react';
@@ -234,25 +234,6 @@ const PatrolPage = React.memo(function PatrolPage() {
   React.useEffect(() => {
     setSummaryDetailType(null);
   }, [selectedHistoryEntry?.id]);
-
-  const autoOpenedShiftStatusKeyRef = React.useRef('');
-  React.useEffect(() => {
-    if (isHistoryMode || !isShiftStatusRequired || isCurrentShiftStatusCompleted) return;
-
-    const autoOpenKey = `${currentShiftMeta?.key || 'shift'}:${displayShip?.id || displayShipName || 'ship'}`;
-    if (autoOpenedShiftStatusKeyRef.current === autoOpenKey) return;
-
-    autoOpenedShiftStatusKeyRef.current = autoOpenKey;
-    openShiftStatusModal();
-  }, [
-    currentShiftMeta?.key,
-    displayShip?.id,
-    displayShipName,
-    isCurrentShiftStatusCompleted,
-    isHistoryMode,
-    isShiftStatusRequired,
-    openShiftStatusModal,
-  ]);
 
   const handleOpenSummaryDetail = React.useCallback((type) => {
     setSummaryDetailType(type);
