@@ -212,16 +212,24 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
     
     for (const notif of newOrUpdatedNotifs) {
       // Abaikan tipe yang sudah ditangani secara khusus di atas untuk menghindari duplikasi
-      const skipTypes = ['sos', 'patrol_finding', 'incident_created'];
+      const skipTypes = [
+        'sos',
+        'patrol_finding',
+        'incident_created',
+        'shift_started',
+        'shift_ending_soon',
+        'checkpoint_missed',
+      ];
       if (skipTypes.includes(notif.type)) continue;
 
+      // Hanya admin "Summary Shift Wrap Up" yang dikirim ke Telegram dari grup shift_history_created;
+      // notifikasi per-kapal "Riwayat shift tersimpan" cukup tampil in-app saja.
+      if (notif.type === 'shift_history_created' && notif.title !== 'Summary Shift Wrap Up') continue;
+
       let icon = '🔔';
-      if (notif.type === 'shift_started') icon = '🚀';
       if (notif.type === 'shift_history_created') icon = '📊';
-      if (notif.type === 'checkpoint_missed') icon = '❌';
       if (notif.type === 'registration_pending') icon = '👤';
       if (notif.type === 'checkpoint_pending') icon = '⏳';
-      if (notif.type === 'shift_ending_soon') icon = '⚠️';
 
       const message = `${icon} *${notif.title.toUpperCase()}* ${icon}
 ${notif.message}
