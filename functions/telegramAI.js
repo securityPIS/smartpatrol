@@ -13,7 +13,7 @@ import fs from 'fs';
 
 // Inisialisasi Gemini sekali per cold start agar request Telegram tetap ringan.
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const GEMINI_MODEL_NAME = 'gemini-3.1-pro-preview';
+const GEMINI_MODEL_NAME = 'gemini-3.1-flash-lite-preview';
 
 // Load the SmartPatrol knowledge base once per cold start so the file isn't
 // re-read on every Telegram request.

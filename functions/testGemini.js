@@ -18,7 +18,7 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 async function run() {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-pro-preview' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite-preview' });
     const result = await model.generateContent('hello');
     console.log('success:', result.response.text());
   } catch (e) {
