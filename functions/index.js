@@ -946,6 +946,19 @@ function buildAdminWrapUpDetailedSummary(state = {}, shiftMeta = {}) {
   return `${header}\n\n${blocks.join('\n\n')}`;
 }
 
+function buildAdminPendingCheckpointSummary(shipsWithPending = [], shiftMeta = {}) {
+  const shiftLabel = sanitizeString(shiftMeta.label || 'Shift', 80);
+  const timeRange = formatShiftTimeRange(shiftMeta);
+  const lines = [`Sebelum ${shiftLabel} (${timeRange}) berakhir, masih ada checkpoint pending:`, ''];
+  shipsWithPending.forEach(({ ship, pendingCount }) => {
+    const shipName = normalizeShipName(ship.name || ship.id || 'Kapal');
+    lines.push(`🚢 ${shipName}: ${pendingCount} belum dipatroli`);
+  });
+  const totalPending = shipsWithPending.reduce((sum, item) => sum + Number(item.pendingCount || 0), 0);
+  lines.push('', `Total: ${totalPending} checkpoint di ${shipsWithPending.length} kapal.`);
+  return lines.join('\n');
+}
+
 export const registerPushToken = onCall(
   {
     region: TRUSTED_TIME_REGION,
@@ -1237,16 +1250,19 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
     }
 
     if (minutesBeforeEnd >= 0 && minutesBeforeEnd <= 60) {
+      const shipsWithPending = [];
       for (const ship of ships) {
         const checkpoints = getCheckpointCollectionForShip(state, ship);
         const pendingCount = countPendingCheckpoints(checkpoints);
         if (pendingCount <= 0) continue;
+        shipsWithPending.push({ ship, pendingCount });
+
         const shipName = normalizeShipName(ship.name || ship.id || '');
         const dedupeKey = `checkpoint-pending:${currentShift.key}:${sanitizeString(ship.id || shipName, 120)}`;
         if (!await claimPushDedupe(dedupeKey)) continue;
         const targets = await resolveAccessTargets({
           shipName,
-          includeAdmins: true,
+          includeAdmins: false,
           includePic: true,
           includePetugas: true,
         });
@@ -1258,6 +1274,38 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           shipName,
           shiftKey: currentShift.key,
           tag: `checkpoint-pending-${currentShift.key}-${shipName}`,
+        });
+      }
+
+      if (shipsWithPending.length > 0
+        && await claimPushDedupe(`admin-checkpoint-pending:${currentShift.key}`)) {
+        const adminTargets = await resolveAccessTargets({
+          includeAdmins: true,
+          includePic: false,
+          includePetugas: false,
+        });
+        const totalPending = shipsWithPending.reduce(
+          (sum, item) => sum + Number(item.pendingCount || 0),
+          0,
+        );
+        const detailedSummary = buildAdminPendingCheckpointSummary(shipsWithPending, currentShift);
+        const shortSummary = `${totalPending} checkpoint pending di ${shipsWithPending.length} kapal sebelum shift berakhir.`;
+        await sendPushToAccessRecords(adminTargets, {
+          type: 'checkpoint_pending',
+          title: 'Pending Checkpoint Summary',
+          body: shortSummary,
+          route: 'patrol/live',
+          shiftKey: currentShift.key,
+          tag: `admin-pending-${currentShift.key}`,
+        });
+        await appendNotificationForAdminUsers({
+          type: 'checkpoint_pending',
+          title: 'Pending Checkpoint Summary',
+          message: detailedSummary,
+          senderName: 'Sistem',
+          senderRole: 'SYSTEM',
+          route: 'patrol/live',
+          dedupeKey: `admin-checkpoint-pending:${currentShift.key}`,
         });
       }
     }

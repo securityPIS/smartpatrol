@@ -5928,22 +5928,6 @@ export function AppProvider({ children }) {
       });
     }
 
-    if (pendingCheckpoints > 0 && now >= checkpointPendingAt) {
-      scheduledNotifications.push({
-        type: 'checkpoint_pending',
-        title: 'Masih ada checkpoint pending',
-        message: `${pendingCheckpoints} checkpoint belum dipatroli pada ${currentShiftMeta.label}.`,
-        senderName: 'Sistem',
-        senderRole: 'SYSTEM',
-        targetUserIds,
-        route: 'patrol/checkpoint',
-        shipName: operationalShipName,
-        shiftKey: currentShiftMeta.key,
-        dedupeKey: `checkpoint-pending:${operationalShipName}:${currentShiftMeta.key}`,
-        createdAt: checkpointPendingAt.toISOString(),
-      });
-    }
-
     appendNotifications(scheduledNotifications);
   }, [appendNotifications, checkpoints, currentShiftMeta, currentShiftSchedule, getShipRecipients, operationalShipName, shiftClock]);
 
