@@ -101,20 +101,25 @@ function normalizeMapCoordinate(value, digits = 6) {
   return Number(numeric.toFixed(digits));
 }
 
+function normalizeMapCoordinatePair(latValue, lngValue, digits = 6) {
+  const lat = normalizeMapCoordinate(latValue, digits);
+  const lng = normalizeMapCoordinate(lngValue, digits);
+  if (lat == null || lng == null) return null;
+  if (Math.abs(lat) < 0.000001 && Math.abs(lng) < 0.000001) return null;
+  return { lat, lng };
+}
+
 function createIncidentMapConfig(incident, shipsData = []) {
-  const directLat = normalizeMapCoordinate(incident?.lat);
-  const directLng = normalizeMapCoordinate(incident?.lng);
-  if (directLat != null && directLng != null) {
+  const directCoordinate = normalizeMapCoordinatePair(incident?.lat, incident?.lng);
+  if (directCoordinate) {
     return {
-      lat: directLat,
-      lng: directLng,
+      ...directCoordinate,
       sourceLabel: incident?.isSOS ? 'GPS darurat saat SOS dikirim' : 'Koordinat temuan tersimpan',
     };
   }
 
-  const gpsLat = normalizeMapCoordinate(incident?.gpsSnapshot?.lat);
-  const gpsLng = normalizeMapCoordinate(incident?.gpsSnapshot?.lng);
-  if (gpsLat != null && gpsLng != null) {
+  const gpsCoordinate = normalizeMapCoordinatePair(incident?.gpsSnapshot?.lat, incident?.gpsSnapshot?.lng);
+  if (gpsCoordinate) {
     const gpsSourceLabel = incident?.gpsSnapshot?.source === 'device'
       ? 'GPS perangkat saat laporan dibuat'
       : incident?.gpsSnapshot?.source === 'ship'
@@ -122,29 +127,24 @@ function createIncidentMapConfig(incident, shipsData = []) {
         : 'Snapshot GPS laporan';
 
     return {
-      lat: gpsLat,
-      lng: gpsLng,
+      ...gpsCoordinate,
       sourceLabel: gpsSourceLabel,
     };
   }
 
-  const shipSnapshotLat = normalizeMapCoordinate(incident?.shipSnapshot?.lat);
-  const shipSnapshotLng = normalizeMapCoordinate(incident?.shipSnapshot?.lng);
-  if (shipSnapshotLat != null && shipSnapshotLng != null) {
+  const shipSnapshotCoordinate = normalizeMapCoordinatePair(incident?.shipSnapshot?.lat, incident?.shipSnapshot?.lng);
+  if (shipSnapshotCoordinate) {
     return {
-      lat: shipSnapshotLat,
-      lng: shipSnapshotLng,
+      ...shipSnapshotCoordinate,
       sourceLabel: 'Koordinat kapal dari snapshot laporan',
     };
   }
 
   const matchedShip = (shipsData || []).find((ship) => ship?.name === incident?.shipName);
-  const shipLat = normalizeMapCoordinate(matchedShip?.lat);
-  const shipLng = normalizeMapCoordinate(matchedShip?.lng);
-  if (shipLat != null && shipLng != null) {
+  const shipCoordinate = normalizeMapCoordinatePair(matchedShip?.lat, matchedShip?.lng);
+  if (shipCoordinate) {
     return {
-      lat: shipLat,
-      lng: shipLng,
+      ...shipCoordinate,
       sourceLabel: 'Koordinat kapal dari master armada',
     };
   }

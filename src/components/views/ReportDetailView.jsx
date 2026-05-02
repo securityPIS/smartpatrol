@@ -37,6 +37,23 @@ function getReportGalleryItems(reportDetail) {
   return items;
 }
 
+function normalizeReportCoordinate(value, digits = 6) {
+  const numeric = typeof value === 'number'
+    ? value
+    : Number(String(value ?? '').replace(',', '.'));
+
+  if (!Number.isFinite(numeric)) return null;
+  return Number(numeric.toFixed(digits));
+}
+
+function normalizeReportCoordinatePair(latValue, lngValue, digits = 6) {
+  const lat = normalizeReportCoordinate(latValue, digits);
+  const lng = normalizeReportCoordinate(lngValue, digits);
+  if (lat == null || lng == null) return null;
+  if (Math.abs(lat) < 0.000001 && Math.abs(lng) < 0.000001) return null;
+  return { lat, lng };
+}
+
 export default function ReportDetailView({ isInline = false }) {
   const { selectedReportDetail, setSelectedReportDetail, setPreviewPhoto } = useReports();
   const { handleDeleteReport, handleAddReportGalleryPhoto } = usePatrol();
@@ -61,9 +78,10 @@ export default function ReportDetailView({ isInline = false }) {
   const headerToneClass = isMissed ? 'bg-rose-500/10 border-rose-500 text-rose-400' : selectedReportDetail.resultType === 'temuan' ? 'bg-yellow-500/10 border-yellow-500 text-yellow-400' : 'bg-emerald-500/10 border-emerald-500 text-emerald-400';
   const gpsSnapshot = selectedReportDetail.gpsSnapshot || null;
   const weatherSnapshot = selectedReportDetail.weatherSnapshot || null;
-  const latitude = gpsSnapshot?.lat;
-  const longitude = gpsSnapshot?.lng;
-  const hasGpsSnapshot = latitude != null && longitude != null;
+  const gpsCoordinate = normalizeReportCoordinatePair(gpsSnapshot?.lat, gpsSnapshot?.lng);
+  const latitude = gpsCoordinate?.lat ?? null;
+  const longitude = gpsCoordinate?.lng ?? null;
+  const hasGpsSnapshot = Boolean(gpsCoordinate);
   const mapsQuery = hasGpsSnapshot ? `${latitude},${longitude}` : '';
   const mapsHref = hasGpsSnapshot ? `https://www.google.com/maps?q=${mapsQuery}` : '#';
   const gpsSourceLabel = gpsSnapshot?.source === 'device' ? 'GPS perangkat saat sync' : gpsSnapshot?.source === 'ship' ? 'Koordinat kapal saat sync' : 'Snapshot sync laporan';

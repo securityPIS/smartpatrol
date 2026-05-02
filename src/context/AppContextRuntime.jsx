@@ -1317,21 +1317,31 @@ function normalizeSnapshotCoordinate(value, digits = 6) {
   return Number(numeric.toFixed(digits));
 }
 
+function normalizeSnapshotCoordinatePair(latValue, lngValue, digits = 6) {
+  const lat = normalizeSnapshotCoordinate(latValue, digits);
+  const lng = normalizeSnapshotCoordinate(lngValue, digits);
+  if (lat == null || lng == null) return null;
+
+  // Koordinat 0,0 adalah fallback error umum dari GPS/perangkat, bukan lokasi patroli valid.
+  if (Math.abs(lat) < 0.000001 && Math.abs(lng) < 0.000001) return null;
+
+  return { lat, lng };
+}
+
 function createShipLocationSnapshot(ship) {
   if (!ship) return null;
 
-  const lat = normalizeSnapshotCoordinate(ship.lat);
-  const lng = normalizeSnapshotCoordinate(ship.lng);
+  const coordinatePair = normalizeSnapshotCoordinatePair(ship.lat, ship.lng);
 
   return {
     id: ship.id || null,
     name: ship.name || '',
-    lat,
-    lng,
+    lat: coordinatePair?.lat ?? null,
+    lng: coordinatePair?.lng ?? null,
   };
 }
 
-const PATROL_SUBMIT_GEOLOCATION_TIMEOUT_MS = 1500;
+const PATROL_SUBMIT_GEOLOCATION_TIMEOUT_MS = 5000;
 const PATROL_SUBMIT_GEOLOCATION_MAX_AGE_MS = 30000;
 
 function createGeolocationRequestOptions(options = {}) {
@@ -1348,9 +1358,14 @@ async function requestCurrentGeolocation(options = {}) {
   try {
     const nativePosition = await getNativeGeolocationPosition(geolocationOptions);
     if (nativePosition?.coords) {
+      const coordinatePair = normalizeSnapshotCoordinatePair(
+        nativePosition.coords.latitude,
+        nativePosition.coords.longitude,
+      );
+      if (!coordinatePair) return null;
+
       return {
-        lat: normalizeSnapshotCoordinate(nativePosition.coords.latitude),
-        lng: normalizeSnapshotCoordinate(nativePosition.coords.longitude),
+        ...coordinatePair,
         accuracy: Number.isFinite(nativePosition.coords.accuracy)
           ? Math.round(nativePosition.coords.accuracy)
           : null,
@@ -1367,9 +1382,17 @@ async function requestCurrentGeolocation(options = {}) {
   return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        const coordinatePair = normalizeSnapshotCoordinatePair(
+          position.coords.latitude,
+          position.coords.longitude,
+        );
+        if (!coordinatePair) {
+          resolve(null);
+          return;
+        }
+
         resolve({
-          lat: normalizeSnapshotCoordinate(position.coords.latitude),
-          lng: normalizeSnapshotCoordinate(position.coords.longitude),
+          ...coordinatePair,
           accuracy: Number.isFinite(position.coords.accuracy)
             ? Math.round(position.coords.accuracy)
             : null,
@@ -6165,7 +6188,7 @@ export function AppProvider({ children }) {
         {
           fallbackWeather: weatherInfo,
           geolocationOptions: {
-            enableHighAccuracy: false,
+            enableHighAccuracy: true,
             timeout: PATROL_SUBMIT_GEOLOCATION_TIMEOUT_MS,
             maximumAge: PATROL_SUBMIT_GEOLOCATION_MAX_AGE_MS,
           },
