@@ -6360,6 +6360,11 @@ export function AppProvider({ children }) {
     if (!captureRequest?.id || !captureRequest?.type || !dataUrl) return;
     const url = await saveImageToDB(dataUrl);
     if (!url) return;
+    if (captureRequest.intent === 'incident-progress') {
+      setNewProgress((previousProgress) => ({ ...previousProgress, photoUrl: url }));
+      setPendingPatrolCameraCapture(null);
+      return;
+    }
     setActiveForms({
       [captureRequest.id]: {
         type: captureRequest.type,
@@ -7262,7 +7267,13 @@ export function AppProvider({ children }) {
       },
     });
   }, [allIncidents, currentShiftMeta.key, isAdmin, requestCloudSync, selectedIncident]);
-  const handlePhotoProgress = useCallback(async () => { const dataUrl = await pickLocalImage(); if (!dataUrl) return; const url = await saveImageToDB(dataUrl); if (url) setNewProgress(prev => ({ ...prev, photoUrl: url })); }, []);
+  const handlePhotoProgress = useCallback(() => {
+    setPendingPatrolCameraCapture({
+      id: 'incident-progress',
+      type: 'temuan',
+      intent: 'incident-progress',
+    });
+  }, []);
   const handleUpdateIncidentPhoto = useCallback(async (incidentId) => {
     const dataUrl = await pickLocalImage();
     if (!dataUrl) return;
