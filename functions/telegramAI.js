@@ -5,6 +5,37 @@ import fs from 'fs';
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const GEMINI_MODEL_NAME = 'gemini-2.5-flash';
+
+// Load the SmartPatrol knowledge base once per cold start so the file isn't
+// re-read on every Telegram request.
+const SMARTPATROL_KNOWLEDGE_BASE = (() => {
+  try {
+    return fs.readFileSync(new URL('./user_guideline.md', import.meta.url), 'utf-8');
+  } catch (error) {
+    console.error('Failed to load SmartPatrol knowledge base:', error);
+    return '';
+  }
+})();
+
+const TELEGRAM_BOT_SYSTEM_INSTRUCTION = `Anda adalah Asisten AI ramah dan cerdas dari SecurityPIS yang dapat menjawab beragam pertanyaan dalam bahasa Indonesia.
+
+ATURAN PRIORITAS:
+1. Jika pertanyaan pengguna berkaitan dengan aplikasi "SmartPatrol", operasi patroli maritim, SOP, alur kerja petugas/PIC/admin, fitur aplikasi, atau panduan teknis penggunaan SmartPatrol — gunakan "KNOWLEDGE BASE SMARTPATROL" di bawah ini sebagai sumber kebenaran utama. Jangan mengarang fitur atau prosedur di luar dokumen tersebut. Jika informasinya tidak ada di knowledge base, akui dengan jujur dan jangan menebak.
+
+2. Untuk pertanyaan umum di luar SmartPatrol (misal: cuaca, sejarah, sains, teknologi umum, hitung-hitungan, percakapan kasual), jawab seperti asisten AI biasa berdasarkan pengetahuan umum Anda — jangan paksa kaitkan dengan SmartPatrol.
+
+3. Jawab dengan profesional, ramah, ringkas, dan jelas dalam bahasa Indonesia. Hindari pengulangan disclaimer atau permintaan maaf yang tidak perlu.
+
+=== KNOWLEDGE BASE SMARTPATROL ===
+${SMARTPATROL_KNOWLEDGE_BASE}
+=== END OF KNOWLEDGE BASE ===`;
+
+// Cache the configured model so we don't rebuild the system prompt per request.
+const geminiChatModel = genAI.getGenerativeModel({
+  model: GEMINI_MODEL_NAME,
+  systemInstruction: TELEGRAM_BOT_SYSTEM_INSTRUCTION,
+});
 
 // Send Message Helper
 export async function sendTelegramMessage(chatId, text) {
@@ -72,28 +103,19 @@ Ada yang bisa saya bantu hari ini?`;
       return;
     }
 
-    // Load Knowledge Base
-    const knowledgeBase = fs.readFileSync(new URL('./user_guideline.md', import.meta.url), 'utf-8');
-
-    // Call Gemini Flash
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-3-flash-preview",
-      systemInstruction: `Anda adalah Asisten Bot AI cerdas yang dapat menjawab berbagai macam topik pertanyaan. 
-Jika pertanyaan pengguna berkaitan dengan aplikasi operasional maritim "SmartPatrol", SOP, atau panduan kerja, gunakan dokumen "Panduan Pengguna & Basis Pengetahuan" berikut sebagai acuan utama dan jangan mengarang fitur di luar dokumen tersebut.
-Untuk pertanyaan umum lainnya yang tidak terkait SmartPatrol, silakan jawab seperti biasa layaknya asisten AI yang serba bisa. Jawab dengan profesional, ramah, ringkas, dan jelas dalam bahasa Indonesia.
-
-=== KNOWLEDGE BASE SMARTPATROL ===
-${knowledgeBase}
-=== END OF KNOWLEDGE BASE ===`
-    });
-    
-    // Pertanyaan user langsung diberikan sebagai prompt utama
-    const result = await model.generateContent(text);
+    // The model + system instruction are configured once at module load
+    // (see geminiChatModel). The user's text is the only per-request input.
+    const result = await geminiChatModel.generateContent(text);
     const responseText = result.response.text();
 
-    await sendTelegramMessage(chatId, responseText);
+    if (!responseText || !responseText.trim()) {
+      console.warn('Gemini returned empty response for text:', text);
+      await sendTelegramMessage(chatId, 'Maaf, saya belum bisa menjawab pertanyaan tersebut. Silakan ulang dengan kalimat lain.');
+    } else {
+      await sendTelegramMessage(chatId, responseText);
+    }
   } catch (error) {
-    console.error('AI Error:', error);
+    console.error('AI Error (model:', GEMINI_MODEL_NAME, '):', error?.message || error, error?.stack);
     await sendTelegramMessage(chatId, 'Maaf, saya sedang mengalami kendala teknis saat memproses permintaan Anda.');
   }
 
