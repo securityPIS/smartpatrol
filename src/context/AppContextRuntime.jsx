@@ -4115,6 +4115,7 @@ export function AppProvider({ children }) {
   const patrolReportDomainWriteCacheRef = useRef(new Map());
   const patrolReportDomainUploadInFlightRef = useRef(new Set());
   const patrolReportLocalMediaRef = useRef(new Map());
+  const pendingShiftStatusRecordsRef = useRef(new Map());
   const localSharedStateRef = useRef(null);
   const activeSOSAlertRef = useRef(activeSOSAlert);
   const sosHistoryRef = useRef(sosHistory);
@@ -4933,9 +4934,44 @@ export function AppProvider({ children }) {
       patrolReportDomainUploadInFlightRef.current.delete(reportKey);
     }
   }, [hasOperationalCloudAccess, isOffline, prepareCloudPhotoUrl]);
+  const applyPendingShiftStatusRecords = useCallback((stateSnapshot = {}, fallbackShiftMeta = getShiftMeta()) => {
+    if (pendingShiftStatusRecordsRef.current.size === 0) return stateSnapshot;
+
+    const safeShiftMeta = getCanonicalShiftMeta(fallbackShiftMeta) || fallbackShiftMeta || getShiftMeta();
+    const activeShiftKey = stateSnapshot.activeShiftKey || safeShiftMeta.key;
+    const nextShiftStatusRecords = {
+      ...(stateSnapshot.shiftStatusRecords || {}),
+    };
+
+    pendingShiftStatusRecordsRef.current.forEach((pendingRecord, recordKey) => {
+      const normalizedPendingRecord = normalizeShiftStatusRecord(pendingRecord);
+      if (!normalizedPendingRecord || normalizedPendingRecord.shiftKey !== activeShiftKey) {
+        pendingShiftStatusRecordsRef.current.delete(recordKey);
+        return;
+      }
+
+      const existingRecord = normalizeShiftStatusRecord(nextShiftStatusRecords[normalizedPendingRecord.key]);
+      const existingTimestamp = getShiftStatusRecordTimestamp(existingRecord);
+      const pendingTimestamp = getShiftStatusRecordTimestamp(normalizedPendingRecord);
+      nextShiftStatusRecords[normalizedPendingRecord.key] = existingRecord
+        ? mergeShiftStatusRecord(existingRecord, normalizedPendingRecord)
+        : normalizedPendingRecord;
+
+      if (existingRecord && existingTimestamp >= pendingTimestamp) {
+        pendingShiftStatusRecordsRef.current.delete(recordKey);
+      }
+    });
+
+    return createSharedStateSnapshot({
+      ...stateSnapshot,
+      activeShiftKey,
+      shiftStatusRecords: retainShiftStatusRecordsForShift(nextShiftStatusRecords, activeShiftKey),
+    });
+  }, []);
   const applyCloudSharedState = useCallback((nextState, options = {}) => {
     if (!nextState || typeof nextState !== 'object') return null;
     const receivedAtServerMs = resolveExternalTimestampMs(options.receivedAtServerMs);
+    const freshShiftMeta = getShiftMeta();
 
     const nextShips = normalizeShipsCollection(nextState.shipsData || getInitialShipsData());
     const nextUsers = normalizeUsersCollection(nextState.usersData || getMockUsersList());
@@ -4951,7 +4987,7 @@ export function AppProvider({ children }) {
       historyEntries: sortHistoryEntries(nextState.historyEntries || createSeedHistoryEntries()),
       shiftStatusRecords: nextState.shiftStatusRecords || {},
       users: nextUsers,
-      currentShiftMeta: getShiftMeta(),
+      currentShiftMeta: freshShiftMeta,
     });
     const incomingState = normalizeSharedStateTimeAudit(createSharedStateSnapshot({
       activeShiftKey: incomingShiftState.activeShiftKey,
@@ -4975,7 +5011,7 @@ export function AppProvider({ children }) {
     const currentLocalState = localSharedStateRef.current || {};
     const resolvedActiveShiftKey = resolveLatestShiftKey(
       [currentLocalState.activeShiftKey, normalizedCloudState.activeShiftKey],
-      getShiftMeta(),
+      freshShiftMeta,
     );
     const mergedState = createSharedStateSnapshot({
       ...mergeSharedStateSnapshots(currentLocalState, normalizedCloudState),
@@ -4987,15 +5023,15 @@ export function AppProvider({ children }) {
       historyEntries: mergedState.historyEntries,
       shiftStatusRecords: mergedState.shiftStatusRecords || {},
       users: mergedState.usersData,
-      currentShiftMeta: getShiftMeta(),
+      currentShiftMeta: freshShiftMeta,
     });
-    const normalizedState = createSharedStateSnapshot({
+    const normalizedState = applyPendingShiftStatusRecords(createSharedStateSnapshot({
       ...mergedState,
       activeShiftKey: normalizedShiftState.activeShiftKey,
       checkpointsByShip: normalizedShiftState.checkpointsByShip,
       historyEntries: normalizedShiftState.historyEntries,
       shiftStatusRecords: normalizedShiftState.shiftStatusRecords || {},
-    });
+    }), freshShiftMeta);
     const serializedState = serializeSharedStateSnapshot(normalizedState);
     latestCloudSharedStateRef.current = normalizedCloudState;
     lastCloudSharedStateRef.current = serializedCloudState;
@@ -5120,7 +5156,7 @@ export function AppProvider({ children }) {
         : previousIncident;
     });
     return normalizedState;
-  }, []);
+  }, [applyPendingShiftStatusRecords]);
   const handleIncomingCloudPayload = useCallback((cloudPayload, options = {}) => {
     const shouldClearState = options.clearWhenEmpty !== false;
     const payloadState = cloudPayload?.state && typeof cloudPayload.state === 'object'
@@ -5699,8 +5735,28 @@ export function AppProvider({ children }) {
   }, [allIncidents, activeSOSAlert, sosHistory, setSelectedHistoryId, setCurrentPage, setPatrolTab, setSearchQuery, setActiveForms, setSelectedReportDetail, setSelectedIncident]);
 
   useEffect(() => {
-    const timerId = window.setInterval(() => setShiftClock(getTrustedNowMs()), 60 * 1000);
-    return () => window.clearInterval(timerId);
+    const refreshShiftClock = () => setShiftClock(getTrustedNowMs());
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        refreshShiftClock();
+      }
+    };
+
+    const timerId = window.setInterval(refreshShiftClock, 60 * 1000);
+    window.addEventListener('focus', refreshShiftClock);
+    window.addEventListener('pageshow', refreshShiftClock);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      window.clearInterval(timerId);
+      window.removeEventListener('focus', refreshShiftClock);
+      window.removeEventListener('pageshow', refreshShiftClock);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -6044,6 +6100,10 @@ export function AppProvider({ children }) {
     }
 
     const trustedTimestamp = createTrustedTimestampRecord();
+    const saveShiftMeta = getShiftMeta(new Date(trustedTimestamp.occurredAtTrustedMs));
+    if (saveShiftMeta.key !== currentShiftMeta.key) {
+      setShiftClock(trustedTimestamp.occurredAtTrustedMs);
+    }
     const normalizedItems = normalizeShiftStatusItems(items);
     const itemsByUserId = new Map(normalizedItems.filter(item => item.userId).map(item => [item.userId, item]));
     const itemsByName = new Map(
@@ -6067,7 +6127,7 @@ export function AppProvider({ children }) {
     const nextRecord = normalizeShiftStatusRecord({
       shipId: operationalShip.id,
       shipName: operationalShipName,
-      shiftKey: currentShiftMeta.key,
+      shiftKey: saveShiftMeta.key,
       filledByUserId: currentUserRecord.id,
       filledByName: currentUserRecord.name || currentUser,
       filledAtTrustedIso: trustedTimestamp.occurredAtTrustedIso,
@@ -6079,8 +6139,9 @@ export function AppProvider({ children }) {
     });
     if (!nextRecord) return false;
 
+    pendingShiftStatusRecordsRef.current.set(nextRecord.key, nextRecord);
     setShiftStatusRecords((previousRecords) => ({
-      ...retainShiftStatusRecordsForShift(previousRecords, currentShiftMeta.key),
+      ...retainShiftStatusRecordsForShift(previousRecords, saveShiftMeta.key),
       [nextRecord.key]: nextRecord,
     }));
     setShowShiftStatusModal(false);

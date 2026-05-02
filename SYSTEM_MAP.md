@@ -51,7 +51,9 @@ ShipsPage[handleConfirmAssign / handleTogglePersonnel]
 PatrolPage[auto-open ShiftStatusModal jika status shift belum ada]
   → AppContextRuntime[handleSaveCurrentShiftStatus]
     → createTrustedTimestampRecord() (trusted shift status snapshot)
+    → resolve shift key dari timestamp trusted segar + refresh shiftClock jika stale
     → setShiftStatusRecords(active shift only)
+    → pasang pendingShiftStatusRecordsRef agar cloud snapshot lama tidak rollback status baru
     → requestCloudSync('urgent') → saveCloudAppState + emit shared-signal lintas-device
     → checkpoint actions enabled
 
