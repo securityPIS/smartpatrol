@@ -94,7 +94,7 @@ export default function ShiftStatusModal() {
             {currentShiftMeta?.timeRange ? ` (${currentShiftMeta.timeRange})` : ''}
           </p>
           <p className="mt-3 text-sm text-slate-300">
-            Isi status setiap petugas sekali saja untuk membuka checklist patroli pada shift ini.
+            Status kapal ini cukup diisi satu kali per shift oleh salah satu petugas kapal.
           </p>
           <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-100">
             <Coffee className="h-3.5 w-3.5" />

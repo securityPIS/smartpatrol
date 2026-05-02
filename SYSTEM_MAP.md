@@ -1,6 +1,6 @@
 # SYSTEM_MAP — SmartPatrol
 
-> Peta sistem otomatis. Terakhir diperbarui: 2026-04-29.
+> Peta sistem otomatis. Terakhir diperbarui: 2026-05-02.
 > Bahasa pemrograman: **JavaScript (React 19 + Vite 8)**.
 
 ---
@@ -52,13 +52,13 @@ PatrolPage[user klik Isi Status atau mencoba aksi checkpoint saat status shift b
   → AppContextRuntime[handleSaveCurrentShiftStatus]
     → createTrustedTimestampRecord() (trusted shift status snapshot)
     → resolve shift key dari timestamp trusted segar + refresh shiftClock jika stale
-    → setShiftStatusRecords(active shift only)
+    → setShiftStatusRecords(record kapal + shift; cukup sekali diisi oleh salah satu petugas kapal)
     → pasang pendingShiftStatusRecordsRef agar cloud snapshot lama tidak rollback status baru
     → requestCloudSync('urgent') → saveCloudAppState + emit shared-signal lintas-device
     → checkpoint actions enabled
 
 PatrolPage[handleActionClick(checkpointId, type)]
-  → guard: isCurrentShiftStatusCompleted?
+  → guard: isCurrentShiftStatusCompleted? (ada record status untuk kapal + shift aktif)
     → tidak → buka ShiftStatusModal + blok checklist
     → ya → lanjut
   → usePatrol hook → pendingPatrolCameraCapture

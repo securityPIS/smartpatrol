@@ -1212,20 +1212,15 @@ function getShiftStatusRecordForShipShift(records = {}, shipId, shiftKey) {
   return normalizeShiftStatusRecord(records?.[recordKey]);
 }
 
-function doesShiftStatusRecordCoverGuards(record, guards = []) {
+function hasFilledShiftStatusRecord(record) {
   const normalizedRecord = normalizeShiftStatusRecord(record);
-  const normalizedGuards = ensureArray(guards).filter(user => user?.id || user?.name);
-  if (!normalizedRecord || normalizedGuards.length === 0) return false;
+  if (!normalizedRecord) return false;
 
-  const coveredGuardKeys = new Set(normalizedRecord.items.flatMap((item) => ([
-    item.userId,
-    createGuardNameKey(item.name),
-  ])).filter(Boolean));
-
-  return normalizedGuards.every((guard) => (
-    coveredGuardKeys.has(guard.id)
-    || coveredGuardKeys.has(createGuardNameKey(guard.name))
-  ));
+  return Boolean(
+    normalizedRecord.filledByUserId
+    || normalizedRecord.filledByName
+    || normalizedRecord.items.length > 0
+  );
 }
 
 function retainShiftStatusRecordsForShift(records = {}, shiftKey = null) {
@@ -4613,10 +4608,7 @@ export function AppProvider({ children }) {
     && !selectedHistoryEntry
     && activeOperationalGuards.length > 0
   );
-  const isCurrentShiftStatusCompleted = !isShiftStatusRequired || doesShiftStatusRecordCoverGuards(
-    currentShiftStatusRecord,
-    activeOperationalGuards,
-  );
+  const isCurrentShiftStatusCompleted = !isShiftStatusRequired || hasFilledShiftStatusRecord(currentShiftStatusRecord);
   const canAddTemporaryPatrolNode = Boolean(isPetugas && canPatrolCurrentShip && operationalShip && !selectedHistoryEntry);
   const shouldForcePatrolCameraCapture = true;
 
