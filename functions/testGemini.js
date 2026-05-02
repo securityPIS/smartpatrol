@@ -1,6 +1,10 @@
-// Local sanity check for the Gemini chat model used by the Telegram bot.
-// Run with:   GEMINI_API_KEY=... node functions/testGemini.js
-// The API key MUST come from the environment - do not hardcode it.
+/*
+Tujuan: Menjalankan sanity check lokal untuk model Gemini yang dipakai webhook Telegram SmartPatrol.
+Caller: Developer lokal sebelum deploy Cloud Functions.
+Dependensi: @google/generative-ai dan environment variable GEMINI_API_KEY.
+Main Functions: run.
+Side Effects: Memanggil Gemini API dan menulis hasil ke console.
+*/
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -14,7 +18,7 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 async function run() {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.1-pro-preview' });
     const result = await model.generateContent('hello');
     console.log('success:', result.response.text());
   } catch (e) {

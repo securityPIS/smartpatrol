@@ -1,11 +1,19 @@
+/*
+Tujuan: Menyediakan webhook Telegram AI dan notifikasi operasional SmartPatrol ke grup Telegram.
+Caller: Firebase Cloud Functions export dari functions/index.js dan trigger Firestore patrolReports/shared-state.
+Dependensi: Firebase Functions v2, Google Generative AI, Telegram Bot API, dan user_guideline.md sebagai knowledge base.
+Main Functions: telegramWebhook, sendTelegramMessage, onCheckpointReportCreated, dan onSharedStateUpdated.
+Side Effects: Membaca file knowledge base saat cold start, memanggil Gemini API, mengirim pesan Telegram, dan membaca snapshot Firestore trigger.
+*/
+
 import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import fs from 'fs';
 
-// Initialize Gemini
+// Inisialisasi Gemini sekali per cold start agar request Telegram tetap ringan.
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const GEMINI_MODEL_NAME = 'gemini-2.5-flash';
+const GEMINI_MODEL_NAME = 'gemini-3.1-pro-preview';
 
 // Load the SmartPatrol knowledge base once per cold start so the file isn't
 // re-read on every Telegram request.
