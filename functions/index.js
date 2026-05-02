@@ -22,7 +22,6 @@ import {
   sanitizeEmailValue,
   sanitizePhoneValue,
 } from './accessModels.js';
-import { sendTelegramMessage } from './telegramAI.js';
 
 initializeApp();
 
@@ -419,7 +418,7 @@ async function appendNotificationForAdminUsers(notification = {}) {
       id: createNotificationId('notif'),
       type: sanitizeString(notification.type || 'general', 60) || 'general',
       title: sanitizeString(notification.title || 'Notifikasi Sistem', 120) || 'Notifikasi Sistem',
-      message: sanitizeString(notification.message || '', 240),
+      message: sanitizeString(notification.message || '', 2000),
       senderName: sanitizeString(notification.senderName || 'Sistem', 80) || 'Sistem',
       senderRole: sanitizeString(notification.senderRole || 'SYSTEM', 40) || 'SYSTEM',
       targetUserIds,
@@ -927,6 +926,26 @@ function buildAdminWrapUpSummary(state = {}, shiftMeta = {}) {
   return `${segments.join('; ')}${moreCount ? `; +${moreCount} kapal lain` : ''}`;
 }
 
+function formatShiftTimeRange(shiftMeta = {}) {
+  const pad = (value) => String(Number(value || 0)).padStart(2, '0');
+  return `${pad(shiftMeta.startHour)}:${pad(shiftMeta.startMinute)} - ${pad(shiftMeta.endHour)}:${pad(shiftMeta.endMinute)}`;
+}
+
+function buildAdminWrapUpDetailedSummary(state = {}, shiftMeta = {}) {
+  const ships = ensureArray(state.shipsData).filter((ship) => ship?.name || ship?.id);
+  const shiftLabel = sanitizeString(shiftMeta.label || 'Shift', 80).toUpperCase();
+  const timeRange = formatShiftTimeRange(shiftMeta);
+  const header = `📊 SUMMARY LAPORAN ${shiftLabel} (${timeRange}) 📊`;
+  if (!ships.length) return `${header}\n\nBelum ada data kapal pada shift ini.`;
+
+  const blocks = ships.map((ship) => {
+    const summary = buildShipShiftSummary(state, ship, shiftMeta);
+    const shipName = normalizeShipName(ship.name || ship.id || 'Kapal');
+    return `🚢 Kapal: ${shipName}\n✅ Aman: ${summary.aman}\n⚠️ Temuan: ${summary.temuan}\n❌ Missed: ${summary.missed}`;
+  });
+  return `${header}\n\n${blocks.join('\n\n')}`;
+}
+
 export const registerPushToken = onCall(
   {
     region: TRUSTED_TIME_REGION,
@@ -1195,27 +1214,25 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           includePic: false,
           includePetugas: false,
         });
-        const wrapUpSummary = buildAdminWrapUpSummary(state, previousShift);
+        const shortSummary = buildAdminWrapUpSummary(state, previousShift);
+        const detailedSummary = buildAdminWrapUpDetailedSummary(state, previousShift);
         await sendPushToAccessRecords(adminTargets, {
-          type: 'shift_wrap_up',
-          title: 'Shift wrap up',
-          body: `Shift sebelumnya selesai. ${wrapUpSummary}`,
+          type: 'shift_history_created',
+          title: 'Summary Shift Wrap Up',
+          body: shortSummary,
           route: 'history/list',
           shiftKey: previousShift.key,
-          tag: `admin-wrap-${currentShift.key}`,
+          tag: `admin-summary-${currentShift.key}`,
         });
-
-        const chatId = process.env.TELEGRAM_CHAT_ID;
-        if (chatId) {
-          const telegramMessage = `📊 *SHIFT WRAP UP* 📊
-Shift sebelumnya selesai.
-
-${wrapUpSummary}
-
-🔗 Buka Riwayat Laporan:
-https://smartpatrol-7ff9e.web.app/?route=history/list`;
-          await sendTelegramMessage(chatId, telegramMessage);
-        }
+        await appendNotificationForAdminUsers({
+          type: 'shift_history_created',
+          title: 'Summary Shift Wrap Up',
+          message: detailedSummary,
+          senderName: 'Sistem',
+          senderRole: 'SYSTEM',
+          route: 'history/list',
+          dedupeKey: `shift-summary:${previousShift.key}`,
+        });
       }
     }
 

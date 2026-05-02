@@ -5982,41 +5982,6 @@ export function AppProvider({ children }) {
 
     setHistoryEntries(previousEntries => mergeHistoryEntries(previousEntries, nextHistoryBatch));
 
-    const entriesByShift = nextHistoryBatch.reduce((acc, entry) => {
-      const groupKey = getShiftHistoryGroupKey(entry);
-      if (!acc[groupKey]) acc[groupKey] = [];
-      acc[groupKey].push(entry);
-      return acc;
-    }, {});
-
-    const summaryNotifications = [];
-    Object.values(entriesByShift).forEach((entries) => {
-      if (entries.length === 0) return;
-      const firstEntry = entries[0];
-      const groupKey = getShiftHistoryGroupKey(firstEntry);
-      const shiftLabel = firstEntry.shift;
-      const timeRange = firstEntry.time || firstEntry.shiftMeta?.timeRange || '';
-      let message = `📊 SUMMARY LAPORAN ${shiftLabel.toUpperCase()} (${timeRange}) 📊\n\n`;
-
-      entries.forEach(entry => {
-        message += `🚢 Kapal: ${entry.ship}\n✅ Aman: ${entry.summary.aman}\n⚠️ Temuan: ${entry.summary.temuan}\n❌ Missed: ${entry.summary.missed}\n\n`;
-      });
-
-      summaryNotifications.push({
-        type: 'shift_history_created',
-        title: 'Summary Shift Wrap Up',
-        message: message.trim(),
-        senderName: 'Sistem',
-        senderRole: 'SYSTEM',
-        targetUserIds: getShipRecipients(null, { includeAdmins: true }),
-        route: 'history/list',
-        routeParams: {},
-        shiftKey: groupKey,
-        dedupeKey: `shift-summary:${groupKey}`,
-        createdAt: firstEntry.createdAt,
-      });
-    });
-
     const individualNotifications = nextHistoryBatch.flatMap((entry) => {
       const notificationsBatch = [
         {
@@ -6057,7 +6022,7 @@ export function AppProvider({ children }) {
       return notificationsBatch;
     });
 
-    appendNotifications([...summaryNotifications, ...individualNotifications]);
+    appendNotifications(individualNotifications);
     setCheckpointsByShip(workingCheckpointsByShip);
     setShiftStatusRecords((previousRecords) => retainShiftStatusRecordsForShift(previousRecords, currentShiftMeta.key));
     setActiveForms({});
