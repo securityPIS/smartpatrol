@@ -55,6 +55,14 @@ function sanitizeString(value, maxLength = 160) {
     .slice(0, maxLength);
 }
 
+function sanitizeMultilineMessage(value, maxLength = 2000) {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f<>]/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
 function sanitizeStorageSegment(value, fallback = 'part') {
   return sanitizeString(String(value || ''), 120)
     .trim()
@@ -418,7 +426,7 @@ async function appendNotificationForAdminUsers(notification = {}) {
       id: createNotificationId('notif'),
       type: sanitizeString(notification.type || 'general', 60) || 'general',
       title: sanitizeString(notification.title || 'Notifikasi Sistem', 120) || 'Notifikasi Sistem',
-      message: sanitizeString(notification.message || '', 2000),
+      message: sanitizeMultilineMessage(notification.message || '', 2000),
       senderName: sanitizeString(notification.senderName || 'Sistem', 80) || 'Sistem',
       senderRole: sanitizeString(notification.senderRole || 'SYSTEM', 40) || 'SYSTEM',
       targetUserIds,
@@ -774,12 +782,14 @@ function getCheckpointCollectionForShip(state = {}, ship = {}) {
   return [];
 }
 
-function summarizeCheckpointCollection(checkpoints = []) {
+function summarizeCheckpointCollection(checkpoints = [], options = {}) {
+  const { treatIncompleteAsMissed = false } = options;
   return ensureArray(checkpoints).reduce((summary, checkpoint) => {
     const status = sanitizeString(checkpoint?.status || '', 30).toLowerCase();
     const resultType = sanitizeString(checkpoint?.resultType || '', 30).toLowerCase();
     const isCompleted = status === 'completed' || Boolean(resultType && resultType !== 'pending');
-    const isMissed = status === 'missed' || resultType === 'missed';
+    const isExplicitMissed = status === 'missed' || resultType === 'missed';
+    const isMissed = isExplicitMissed || (treatIncompleteAsMissed && !isCompleted);
     const isTemporary = Boolean(checkpoint?.isTemporaryShiftNode);
 
     if (isTemporary) return summary;
@@ -896,21 +906,30 @@ function minutesBetween(leftDate, rightDate) {
 function getHistoryEntryForShift(state = {}, ship = {}, shiftMeta = {}) {
   const safeShipId = sanitizeString(ship.id || '', 120);
   const safeShipName = normalizeShipName(ship.name || '');
-  return ensureArray(state.historyEntries).find((entry) => (
-    sanitizeString(entry?.shiftKey || '', 120) === shiftMeta.key
-    && (
-      sanitizeString(entry?.shipId || '', 120) === safeShipId
-      || normalizeShipName(entry?.ship || entry?.shipName || '') === safeShipName
-    )
-  ));
+  const targetDateKey = sanitizeString(shiftMeta.dateKey || '', 120);
+  const targetShiftId = sanitizeString(shiftMeta.id || '', 80);
+  return ensureArray(state.historyEntries).find((entry) => {
+    const entryDateKey = sanitizeString(entry?.dateKey || '', 120);
+    const entryShiftId = sanitizeString(entry?.shiftId || '', 80);
+    if (entryDateKey !== targetDateKey || entryShiftId !== targetShiftId) return false;
+    const entryShipId = sanitizeString(entry?.shipSnapshot?.id || entry?.shipId || '', 120);
+    if (safeShipId && entryShipId && entryShipId === safeShipId) return true;
+    return normalizeShipName(entry?.ship || entry?.shipName || '') === safeShipName;
+  });
 }
 
 function buildShipShiftSummary(state = {}, ship = {}, shiftMeta = {}) {
   const historyEntry = getHistoryEntryForShift(state, ship, shiftMeta);
-  const sourceCheckpoints = historyEntry
-    ? ensureArray(historyEntry.checkpoints)
-    : getCheckpointCollectionForShip(state, ship);
-  return summarizeCheckpointCollection(sourceCheckpoints);
+  if (historyEntry) {
+    return summarizeCheckpointCollection(ensureArray(historyEntry.checkpoints));
+  }
+  // Fallback: live checkpoints from a shift that has already ended.
+  // Anything not yet completed is effectively "missed" once the shift is over,
+  // matching how the client builds history entries via createMissedCheckpoint.
+  return summarizeCheckpointCollection(
+    getCheckpointCollectionForShip(state, ship),
+    { treatIncompleteAsMissed: true },
+  );
 }
 
 function buildAdminWrapUpSummary(state = {}, shiftMeta = {}) {
@@ -1249,7 +1268,9 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
       }
     }
 
-    if (minutesBeforeEnd >= 0 && minutesBeforeEnd <= 60) {
+    // Fire only at the 1-hour-before-shift-end mark (single 5-min cron window),
+    // dedupe handles the rare case where two consecutive ticks land inside it.
+    if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
       const shipsWithPending = [];
       for (const ship of ships) {
         const checkpoints = getCheckpointCollectionForShip(state, ship);
