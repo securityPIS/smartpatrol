@@ -256,6 +256,10 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
       // notifikasi per-kapal "Riwayat shift tersimpan" cukup tampil in-app saja.
       if (notif.type === 'shift_history_created' && notif.title !== 'Summary Shift Wrap Up') continue;
 
+      // Hanya admin "Pending Checkpoint Summary" konsolidasi yang dikirim ke Telegram;
+      // per-kapal "Pending checkpoint" (FCM) dan client "Masih ada checkpoint pending" cukup in-app saja.
+      if (notif.type === 'checkpoint_pending' && notif.title !== 'Pending Checkpoint Summary') continue;
+
       let icon = '🔔';
       if (notif.type === 'shift_history_created') icon = '📊';
       if (notif.type === 'registration_pending') icon = '👤';
