@@ -1235,6 +1235,27 @@ function retainShiftStatusRecordsForShift(records = {}, shiftKey = null) {
   }, {});
 }
 
+// Hydrate-safe pruning: drop hanya record yang lebih tua dari maxAgeMs.
+// Tidak comparing ke currentShiftKey karena di Android cold start key tsb
+// belum reliable (trusted-time anchor masih async). Lookup tetap exact-match
+// di getShiftStatusRecordForShipShift, jadi records "shift lain" yang masih
+// segar aman di-keep — cuma muncul di UI kalau key-nya match.
+function pruneStaleShiftStatusRecords(records = {}, { maxAgeMs = 7 * 24 * 60 * 60 * 1000 } = {}) {
+  const cutoffMs = Date.now() - maxAgeMs;
+
+  return Object.values(records || {}).reduce((collection, record) => {
+    const normalizedRecord = normalizeShiftStatusRecord(record);
+    if (!normalizedRecord) return collection;
+
+    const recordTimestamp = getShiftStatusRecordTimestamp(normalizedRecord);
+    // Keep record kalau timestamp tidak diketahui (0) — defensive fallback.
+    if (recordTimestamp > 0 && recordTimestamp < cutoffMs) return collection;
+
+    collection[normalizedRecord.key] = normalizedRecord;
+    return collection;
+  }, {});
+}
+
 function buildGuardShiftSnapshot(users, shipName, checkpoints = [], shiftStatusRecord = null) {
   const scoreMaps = buildGuardScoreMaps(checkpoints);
   const normalizedShiftStatusRecord = normalizeShiftStatusRecord(shiftStatusRecord);
@@ -1582,7 +1603,7 @@ function migrateCheckpointStateToCurrentShift({
     activeShiftKey: safeCurrentShiftMeta.key,
     checkpointsByShip: nextCheckpointsByShip,
     historyEntries: sortHistoryEntries(nextHistoryEntries),
-    shiftStatusRecords: retainShiftStatusRecordsForShift(shiftStatusRecords, safeCurrentShiftMeta.key),
+    shiftStatusRecords: pruneStaleShiftStatusRecords(shiftStatusRecords),
     migrated: didMigrate,
   };
 }
@@ -2544,9 +2565,7 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
     notifications: mergeNotificationsCollection(baseState.notifications || [], nextState.notifications || []),
     shipsData: mergedShips,
     usersData: mergedUsers,
-    shiftStatusRecords: resolvedActiveShiftKey
-      ? retainShiftStatusRecordsForShift(mergedShiftStatusRecords, resolvedActiveShiftKey)
-      : mergedShiftStatusRecords,
+    shiftStatusRecords: pruneStaleShiftStatusRecords(mergedShiftStatusRecords),
     activeSOSAlert: resolveLatestActiveSOSAlert(mergedSOSHistory),
     sosHistory: mergedSOSHistory,
   });
@@ -3221,10 +3240,7 @@ function createCloudSyncStateSnapshot(stateSnapshot = {}, options = {}) {
     notifications: limitNotificationsForCloudSync(stateSnapshot.notifications || [], notificationLimit),
     shipsData: stateSnapshot.shipsData,
     usersData: stateSnapshot.usersData,
-    shiftStatusRecords: retainShiftStatusRecordsForShift(
-      stateSnapshot.shiftStatusRecords,
-      stateSnapshot.activeShiftKey,
-    ),
+    shiftStatusRecords: pruneStaleShiftStatusRecords(stateSnapshot.shiftStatusRecords),
     activeSOSAlert: stateSnapshot.activeSOSAlert || null,
     sosHistory: limitRecentRecords(stateSnapshot.sosHistory || [], sosHistoryLimit),
   });
@@ -3295,10 +3311,7 @@ function mapSharedStateTimeAudit(stateSnapshot = {}, mapper) {
     notifications: snapshot.notifications || [],
     shipsData: snapshot.shipsData || [],
     usersData: snapshot.usersData || [],
-    shiftStatusRecords: retainShiftStatusRecordsForShift(
-      snapshot.shiftStatusRecords,
-      snapshot.activeShiftKey,
-    ),
+    shiftStatusRecords: pruneStaleShiftStatusRecords(snapshot.shiftStatusRecords),
     activeSOSAlert: mapAuditableRecord(snapshot.activeSOSAlert, mapper, {
       fallbackTimestampKeys: ['triggeredAt', 'createdAt'],
     }),
@@ -4980,7 +4993,7 @@ export function AppProvider({ children }) {
     return createSharedStateSnapshot({
       ...stateSnapshot,
       activeShiftKey,
-      shiftStatusRecords: retainShiftStatusRecordsForShift(nextShiftStatusRecords, activeShiftKey),
+      shiftStatusRecords: pruneStaleShiftStatusRecords(nextShiftStatusRecords),
     });
   }, []);
   const applyCloudSharedState = useCallback((nextState, options = {}) => {
