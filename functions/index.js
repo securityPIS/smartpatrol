@@ -1298,17 +1298,15 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
         });
       }
 
-      if (shipsWithPending.length > 0
-        && await claimPushDedupe(`admin-checkpoint-pending:${currentShift.key}`)) {
-        const adminTargets = await resolveAccessTargets({
-          includeAdmins: true,
-          includePic: false,
-          includePetugas: false,
-        });
+      if (shipsWithPending.length > 0) {
         const totalPending = shipsWithPending.reduce(
           (sum, item) => sum + Number(item.pendingCount || 0),
           0,
         );
+        const adminDedupeKey = `admin-checkpoint-pending:${currentShift.key}:${totalPending}`;
+        if (!(await claimPushDedupe(adminDedupeKey))) continue;
+
+        const adminTargets = await resolveAccessTargets({
         const detailedSummary = buildAdminPendingCheckpointSummary(shipsWithPending, currentShift);
         const shortSummary = `${totalPending} checkpoint pending di ${shipsWithPending.length} kapal sebelum shift berakhir.`;
         await sendPushToAccessRecords(adminTargets, {
@@ -1326,7 +1324,7 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           senderName: 'Sistem',
           senderRole: 'SYSTEM',
           route: 'patrol/live',
-          dedupeKey: `admin-checkpoint-pending:${currentShift.key}`,
+          dedupeKey: `admin-checkpoint-pending:${currentShift.key}:${totalPending}`,
         });
       }
     }
