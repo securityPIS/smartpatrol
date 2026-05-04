@@ -1303,7 +1303,6 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
         });
       }
     }
-    }
 
     // Notifikasi per-kapal: 1 jam sebelum shift berakhir, kirim reminder ke PIC/Petugas.
     if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
