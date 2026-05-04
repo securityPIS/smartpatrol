@@ -959,24 +959,22 @@ function buildShipShiftSummary(state = {}, ship = {}, shiftMeta = {}) {
   if (historyEntry) {
     return summarizeCheckpointCollection(ensureArray(historyEntry.checkpoints));
   }
-  // Fallback: live checkpoints from a shift that has already ended.
-  // Anything not yet completed is effectively "missed" once the shift is over,
-  // matching how the client builds history entries via createMissedCheckpoint.
-  return summarizeCheckpointCollection(
-    buildNormalizedCheckpointsForShip(state, ship),
-    { treatIncompleteAsMissed: true },
-  );
+  return null;
 }
 
 function buildAdminWrapUpSummary(state = {}, shiftMeta = {}) {
   const ships = ensureArray(state.shipsData).filter((ship) => ship?.name || ship?.id);
   if (!ships.length) return `${shiftMeta.label} sebelumnya sudah tersimpan.`;
 
-  const segments = ships.slice(0, 5).map((ship) => {
+  const segments = [];
+  for (const ship of ships) {
+    if (segments.length >= 5) break;
     const summary = buildShipShiftSummary(state, ship, shiftMeta);
+    if (!summary) continue;
     const shipName = normalizeShipName(ship.name || ship.id || 'Kapal');
-    return `${shipName}: ${summary.completed}/${summary.total}, temuan ${summary.temuan}, missed ${summary.missed}`;
-  });
+    segments.push(`${shipName}: ${summary.completed}/${summary.total}, temuan ${summary.temuan}, missed ${summary.missed}`);
+  }
+  if (!segments.length) return `${shiftMeta.label} sebelumnya sudah tersimpan.`;
   const moreCount = Math.max(0, ships.length - segments.length);
   return `${segments.join('; ')}${moreCount ? `; +${moreCount} kapal lain` : ''}`;
 }
@@ -993,11 +991,14 @@ function buildAdminWrapUpDetailedSummary(state = {}, shiftMeta = {}) {
   const header = `📊 SUMMARY LAPORAN ${shiftLabel} (${timeRange}) 📊`;
   if (!ships.length) return `${header}\n\nBelum ada data kapal pada shift ini.`;
 
-  const blocks = ships.map((ship) => {
+  const blocks = ships.reduce((acc, ship) => {
     const summary = buildShipShiftSummary(state, ship, shiftMeta);
+    if (!summary) return acc;
     const shipName = normalizeShipName(ship.name || ship.id || 'Kapal');
-    return `🚢 Kapal: ${shipName}\n✅ Aman: ${summary.aman}\n⚠️ Temuan: ${summary.temuan}\n❌ Missed: ${summary.missed}`;
-  });
+    acc.push(`🚢 Kapal: ${shipName}\n✅ Aman: ${summary.aman}\n⚠️ Temuan: ${summary.temuan}\n❌ Missed: ${summary.missed}`);
+    return acc;
+  }, []);
+  if (!blocks.length) return `${header}\n\nBelum ada data riwayat shift tersimpan untuk periode ini.`;
   return `${header}\n\n${blocks.join('\n\n')}`;
 }
 
