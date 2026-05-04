@@ -1268,35 +1268,71 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
       }
     }
 
-    // Fire only at the 1-hour-before-shift-end mark (single 5-min cron window),
-    // dedupe handles the rare case where two consecutive ticks land inside it.
-    if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
-      const shipsWithPending = [];
-      for (const ship of ships) {
-        const checkpoints = getCheckpointCollectionForShip(state, ship);
-        const pendingCount = countPendingCheckpoints(checkpoints);
-        if (pendingCount <= 0) continue;
-        shipsWithPending.push({ ship, pendingCount });
+     // Fire only at the 1-hour-before-shift-end mark (single 5-min cron window),
+     // dedupe handles the rare case where two consecutive ticks land inside it.
+     const shipsWithPending = [];
+     if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
+       for (const ship of ships) {
+         const checkpoints = getCheckpointCollectionForShip(state, ship);
+         const pendingCount = countPendingCheckpoints(checkpoints);
+         if (pendingCount <= 0) continue;
+         shipsWithPending.push({ ship, pendingCount });
 
-        const shipName = normalizeShipName(ship.name || ship.id || '');
-        const dedupeKey = `checkpoint-pending:${currentShift.key}:${sanitizeString(ship.id || shipName, 120)}`;
-        if (!await claimPushDedupe(dedupeKey)) continue;
-        const targets = await resolveAccessTargets({
-          shipName,
-          includeAdmins: false,
-          includePic: true,
-          includePetugas: true,
-        });
-        await sendPushToAccessRecords(targets, {
-          type: 'checkpoint_pending',
-          title: 'Pending checkpoint',
-          body: `${pendingCount} checkpoint ${shipName || 'kapal'} belum selesai sebelum shift berakhir.`,
-          route: 'patrol/live',
-          shipName,
-          shiftKey: currentShift.key,
-          tag: `checkpoint-pending-${currentShift.key}-${shipName}`,
-        });
-      }
+         const shipName = normalizeShipName(ship.name || ship.id || '');
+         const dedupeKey = `checkpoint-pending:${currentShift.key}:${sanitizeString(ship.id || shipName, 120)}`;
+         if (!await claimPushDedupe(dedupeKey)) continue;
+         const targets = await resolveAccessTargets({
+           shipName,
+           includeAdmins: false,
+           includePic: true,
+           includePetugas: true,
+         });
+         await sendPushToAccessRecords(targets, {
+           type: 'checkpoint_pending',
+           title: 'Pending checkpoint',
+           body: `${pendingCount} checkpoint ${shipName || 'kapal'} belum selesai sebelum shift berakhir.`,
+           route: 'patrol/live',
+           shipName,
+           shiftKey: currentShift.key,
+           tag: `checkpoint-pending:${currentShift.key}-${shipName}`,
+         });
+       }
+     }
+
+     // Admin summary: runs every tick when there is pending checkpoint data
+     if (shipsWithPending.length > 0) {
+       const totalPending = shipsWithPending.reduce(
+         (sum, item) => sum + Number(item.pendingCount || 0),
+         0
+       );
+       const adminDedupeKey = `admin-checkpoint-pending:${currentShift.key}:${totalPending}`;
+       if (await claimPushDedupe(adminDedupeKey)) {
+         const adminTargets = await resolveAccessTargets({
+           includeAdmins: true,
+           includePic: false,
+           includePetugas: false,
+         });
+         const detailedSummary = buildAdminPendingCheckpointSummary(shipsWithPending, currentShift);
+         const shortSummary = `${totalPending} checkpoint pending di ${shipsWithPending.length} kapal sebelum shift berakhir.`;
+         await sendPushToAccessRecords(adminTargets, {
+           type: 'checkpoint_pending',
+           title: 'Pending Checkpoint Summary',
+           body: shortSummary,
+           route: 'patrol/live',
+           shiftKey: currentShift.key,
+           tag: `admin-pending-${currentShift.key}`,
+         });
+         await appendNotificationForAdminUsers({
+           type: 'checkpoint_pending',
+           title: 'Pending Checkpoint Summary',
+           message: detailedSummary,
+           senderName: 'Sistem',
+           senderRole: 'SYSTEM',
+           route: 'patrol/live',
+           dedupeKey: adminDedupeKey,
+         });
+       }
+     }
 
       if (shipsWithPending.length > 0) {
         const totalPending = shipsWithPending.reduce(
