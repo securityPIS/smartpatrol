@@ -2,8 +2,8 @@
 Tujuan: Menyediakan trusted server time, kontrol akses operasional, dan notifikasi onboarding admin lewat Cloud Functions.
 Caller: Client web/native untuk sinkronisasi waktu, binding akun Firebase Auth, approval onboarding, registrasi push token, dan trigger Firestore.
 Dependensi: Firebase Functions v2, Firebase Admin SDK, dan model sanitasi security lokal.
-Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, push notification, approval onboarding, dan trusted time.
-Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, pushTokens, shared-state.notifications, memperbarui custom claims Firebase Auth, mengirim FCM, dan mengembalikan trusted server time.
+Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, push notification, approval onboarding, trusted time, dan pruneStaleCheckpointsFromSharedState.
+Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, pushTokens, shared-state.notifications, shared-state.checkpointsByShip (cleanup blob bengkak), memperbarui custom claims Firebase Auth, mengirim FCM, dan mengembalikan trusted server time.
 */
 
 import { createHash } from 'node:crypto';
@@ -782,6 +782,42 @@ function getCheckpointCollectionForShip(state = {}, ship = {}) {
   return [];
 }
 
+function normalizeCheckpointNameKey(name) {
+  return sanitizeString(name || '', 120).trim().toLowerCase();
+}
+
+function createShipCheckpointId(ship, checkpointName, index) {
+  const slug = sanitizeString(checkpointName || '', 120)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || `checkpoint-${index + 1}`;
+  return `${sanitizeString(ship?.id || ship?.name || 'ship', 120)}::${slug}::${index + 1}`;
+}
+
+function buildNormalizedCheckpointsForShip(state = {}, ship = {}) {
+  const definitions = ensureArray(ship.customCheckpoints);
+  if (definitions.length === 0) return getCheckpointCollectionForShip(state, ship);
+
+  const rawCheckpoints = getCheckpointCollectionForShip(state, ship);
+  const byId = new Map(rawCheckpoints.map((cp) => [sanitizeString(cp?.id || '', 200), cp]));
+  const byName = new Map(rawCheckpoints.map((cp) => [normalizeCheckpointNameKey(cp?.name), cp]));
+
+  return definitions.map((def, index) => {
+    const expectedId = createShipCheckpointId(ship, def?.name, index);
+    const nameKey = normalizeCheckpointNameKey(def?.name);
+    const matched = byId.get(expectedId) || (nameKey ? byName.get(nameKey) : null);
+    if (matched && matched.status === 'completed') return matched;
+    return {
+      id: expectedId,
+      name: sanitizeString(def?.name || '', 80) || `Checkpoint ${index + 1}`,
+      status: matched?.status || 'pending',
+      resultType: matched?.resultType || null,
+      isTemporaryShiftNode: false,
+    };
+  });
+}
+
 function summarizeCheckpointCollection(checkpoints = [], options = {}) {
   const { treatIncompleteAsMissed = false } = options;
   return ensureArray(checkpoints).reduce((summary, checkpoint) => {
@@ -927,7 +963,7 @@ function buildShipShiftSummary(state = {}, ship = {}, shiftMeta = {}) {
   // Anything not yet completed is effectively "missed" once the shift is over,
   // matching how the client builds history entries via createMissedCheckpoint.
   return summarizeCheckpointCollection(
-    getCheckpointCollectionForShip(state, ship),
+    buildNormalizedCheckpointsForShip(state, ship),
     { treatIncompleteAsMissed: true },
   );
 }
@@ -1312,7 +1348,7 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
     // Notifikasi per-kapal: 1 jam sebelum shift berakhir, kirim reminder ke PIC/Petugas.
     if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
       for (const ship of ships) {
-        const checkpoints = getCheckpointCollectionForShip(state, ship);
+        const checkpoints = buildNormalizedCheckpointsForShip(state, ship);
         const pendingCount = countPendingCheckpoints(checkpoints);
         if (pendingCount <= 0) continue;
 
@@ -1336,8 +1372,51 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
         });
       }
     }
+
+    await pruneStaleCheckpointsFromSharedState(ships);
   },
 );
+
+async function pruneStaleCheckpointsFromSharedState(ships = []) {
+  const eligibleShips = ships.filter(
+    (ship) => ensureArray(ship.customCheckpoints).length > 0,
+  );
+  if (eligibleShips.length === 0) return;
+
+  await firestore.runTransaction(async (transaction) => {
+    const ref = getSharedStateRef();
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return;
+
+    const data = snapshot.data() || {};
+    const state = ensureObject(data.state);
+    const checkpointsByShip = ensureObject(state.checkpointsByShip);
+    let didPrune = false;
+    const pruned = { ...checkpointsByShip };
+
+    for (const ship of eligibleShips) {
+      const definitions = ensureArray(ship.customCheckpoints);
+      const candidates = [ship.id, ship.name, sanitizeStorageSegment(ship.name || '', '')]
+        .map((k) => sanitizeString(k || '', 120)).filter(Boolean);
+
+      for (const key of candidates) {
+        if (!Array.isArray(pruned[key])) continue;
+        if (pruned[key].length <= definitions.length) break;
+        pruned[key] = buildNormalizedCheckpointsForShip({ checkpointsByShip: pruned }, ship);
+        didPrune = true;
+        break;
+      }
+    }
+
+    if (!didPrune) return;
+
+    transaction.set(ref, {
+      state: { ...state, checkpointsByShip: pruned },
+      updatedAt: FieldValue.serverTimestamp(),
+      clientUpdatedAt: Date.now(),
+    }, { merge: true });
+  });
+}
 
 export const getServerTime = onRequest(
   {
