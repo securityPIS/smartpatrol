@@ -1240,7 +1240,7 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
         });
       }
 
-      if (await claimPushDedupe(`admin-shift-wrap:${currentShift.key}`)) {
+      if (await claimPushDedupe(`admin-shift-wrap:${previousShift.key}`)) {
         const adminTargets = await resolveAccessTargets({
           includeAdmins: true,
           includePic: false,
@@ -1254,7 +1254,7 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           body: shortSummary,
           route: 'history/list',
           shiftKey: previousShift.key,
-          tag: `admin-summary-${currentShift.key}`,
+          tag: `admin-summary-${previousShift.key}`,
         });
         await appendNotificationForAdminUsers({
           type: 'shift_history_created',
