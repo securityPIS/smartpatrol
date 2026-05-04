@@ -4040,7 +4040,13 @@ export function AppProvider({ children }) {
   const [shiftStatusRecords, setShiftStatusRecords] = useState(() => initialShiftState.shiftStatusRecords || {});
   const [notifications, setNotifications] = useState(() => sortNotifications(persistedState?.notifications || []));
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
-  const [shiftClock, setShiftClock] = useState(() => getTrustedNowMs());
+  // Pakai getTrustedDate().getTime() bukan getTrustedNowMs() langsung — di Android
+  // cold start, getTrustedNowMs() return null sebelum anchor server sync, dan
+  // new Date(null) === new Date(0) === 1970-01-01 → currentShiftMeta jadi shift
+  // di 1970 → lookup record selalu miss → badge "STATUS SHIFT WAJIB DIISI" terus
+  // muncul. getTrustedDate() sudah handle fallback ke device time, jadi selalu
+  // return Date valid dan .getTime() selalu finite.
+  const [shiftClock, setShiftClock] = useState(() => getTrustedDate().getTime());
   const [activeSOSAlert, setActiveSOSAlert] = useState(() => persistedState?.activeSOSAlert || null);
   const [sosHistory, setSosHistory] = useState(() => persistedState?.sosHistory || []);
   const [pendingRegistrations, setPendingRegistrations] = useState([]);
@@ -5763,7 +5769,10 @@ export function AppProvider({ children }) {
   }, [allIncidents, activeSOSAlert, sosHistory, setSelectedHistoryId, setCurrentPage, setPatrolTab, setSearchQuery, setActiveForms, setSelectedReportDetail, setSelectedIncident]);
 
   useEffect(() => {
-    const refreshShiftClock = () => setShiftClock(getTrustedNowMs());
+    // Sama seperti initial state: pakai getTrustedDate().getTime() supaya shiftClock
+    // selalu finite. Sebelumnya setShiftClock(null) di-no-op oleh React (state sama)
+    // dan shiftClock stuck null seterusnya kalau anchor tidak pernah sync.
+    const refreshShiftClock = () => setShiftClock(getTrustedDate().getTime());
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         refreshShiftClock();
