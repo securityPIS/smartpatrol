@@ -1302,51 +1302,12 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           dedupeKey: `shift-summary:${previousShift.key}`,
         });
       }
-
-      if (await claimPushDedupe(`admin-checkpoint-pending:${previousShift.key}`)) {
-        const shipsWithPending = [];
-        for (const ship of ships) {
-          const summary = buildShipShiftSummary(state, ship, previousShift);
-          const pendingCount = Math.max(0, summary.total - summary.completed);
-          if (pendingCount <= 0) continue;
-          shipsWithPending.push({ ship, pendingCount });
-        }
-
-        if (shipsWithPending.length > 0) {
-          const adminTargets = await resolveAccessTargets({
-            includeAdmins: true,
-            includePic: false,
-            includePetugas: false,
-          });
-          const detailedPendingSummary = buildAdminPendingCheckpointSummary(shipsWithPending, previousShift);
-          const totalPending = shipsWithPending.reduce(
-            (sum, item) => sum + Number(item.pendingCount || 0),
-            0,
-          );
-          const shortPendingSummary = `${totalPending} checkpoint pending di ${shipsWithPending.length} kapal pada ${previousShift.label} yang baru berakhir.`;
-          await sendPushToAccessRecords(adminTargets, {
-            type: 'checkpoint_pending',
-            title: 'Pending Checkpoint Summary',
-            body: shortPendingSummary,
-            route: 'patrol/live',
-            shiftKey: previousShift.key,
-            tag: `admin-pending-${previousShift.key}`,
-          });
-          await appendNotificationForAdminUsers({
-            type: 'checkpoint_pending',
-            title: 'Pending Checkpoint Summary',
-            message: detailedPendingSummary,
-            senderName: 'Sistem',
-            senderRole: 'SYSTEM',
-            route: 'patrol/live',
-            dedupeKey: `admin-checkpoint-pending:${previousShift.key}`,
-          });
-        }
-      }
+    }
     }
 
     // Notifikasi per-kapal: 1 jam sebelum shift berakhir, kirim reminder ke PIC/Petugas.
     if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
+      const shipsWithPending = [];
       for (const ship of ships) {
         const checkpoints = buildNormalizedCheckpointsForShip(state, ship);
         const pendingCount = countPendingCheckpoints(checkpoints);
@@ -1370,6 +1331,40 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           shiftKey: currentShift.key,
           tag: `checkpoint-pending-${currentShift.key}-${shipName}`,
         });
+        shipsWithPending.push({ ship, pendingCount });
+      }
+
+      if (shipsWithPending.length > 0) {
+        if (await claimPushDedupe(`admin-checkpoint-pending:${currentShift.key}`)) {
+          const adminTargets = await resolveAccessTargets({
+            includeAdmins: true,
+            includePic: false,
+            includePetugas: false,
+          });
+          const detailedPendingSummary = buildAdminPendingCheckpointSummary(shipsWithPending, currentShift);
+          const totalPending = shipsWithPending.reduce(
+            (sum, item) => sum + Number(item.pendingCount || 0),
+            0,
+          );
+          const shortPendingSummary = `${totalPending} checkpoint pending di ${shipsWithPending.length} kapal pada ${currentShift.label} yang akan segera berakhir.`;
+          await sendPushToAccessRecords(adminTargets, {
+            type: 'checkpoint_pending',
+            title: 'Pending Checkpoint Summary',
+            body: shortPendingSummary,
+            route: 'patrol/live',
+            shiftKey: currentShift.key,
+            tag: `admin-pending-${currentShift.key}`,
+          });
+          await appendNotificationForAdminUsers({
+            type: 'checkpoint_pending',
+            title: 'Pending Checkpoint Summary',
+            message: detailedPendingSummary,
+            senderName: 'Sistem',
+            senderRole: 'SYSTEM',
+            route: 'patrol/live',
+            dedupeKey: `admin-checkpoint-pending:${currentShift.key}`,
+          });
+        }
       }
     }
 
