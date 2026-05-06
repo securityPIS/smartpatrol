@@ -1,3 +1,11 @@
+/*
+Tujuan: Smoke test statis untuk memastikan rules Firebase tidak kembali public-open.
+Caller: `npm run test:security`.
+Dependensi: node:test, node:assert, firestore.rules, dan storage.rules.
+Main Functions: Memvalidasi keberadaan rule sidecar auth, domain report, dan proteksi storage.
+Side Effects: Membaca file rules lokal tanpa menulis state.
+*/
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -10,8 +18,10 @@ test('firestore rules tidak lagi public-open dan punya koleksi security sidecar'
   assert.match(rules, /match \/pendingRegistrations\/\{uid\}/);
   assert.match(rules, /match \/userAccess\/\{uid\}/);
   assert.match(rules, /match \/patrolReports\/\{shiftKey\}\/ships\/\{shipId\}\/checkpoints\/\{checkpointId\}/);
+  assert.match(rules, /match \/incidents\/\{incidentId\}/);
   assert.match(rules, /hasOperationalSharedStateAccess/);
   assert.match(rules, /isValidPatrolReportWrite/);
+  assert.match(rules, /isValidIncidentReportWrite/);
   assert.match(rules, /isAssignedOperationalShip/);
 });
 

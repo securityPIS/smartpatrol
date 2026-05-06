@@ -3800,6 +3800,153 @@ function compactIncidentRecordForCloudSync(record = {}) {
   };
 }
 
+function removeUndefinedFields(record = {}) {
+  return Object.fromEntries(
+    Object.entries(record || {}).filter(([, value]) => value !== undefined),
+  );
+}
+
+function normalizeIncidentInfoOverrides(infoOverrides = {}) {
+  if (!infoOverrides || typeof infoOverrides !== 'object' || Array.isArray(infoOverrides)) return {};
+
+  const normalizedInfo = {};
+  if (Object.prototype.hasOwnProperty.call(infoOverrides, 'deskripsi')) {
+    normalizedInfo.deskripsi = sanitizeMultilineText(infoOverrides.deskripsi || '', 320);
+  }
+  if (Object.prototype.hasOwnProperty.call(infoOverrides, 'penyebab')) {
+    normalizedInfo.penyebab = sanitizeMultilineText(infoOverrides.penyebab || '', 240);
+  }
+  if (Object.prototype.hasOwnProperty.call(infoOverrides, 'tindakLanjut')) {
+    normalizedInfo.tindakLanjut = sanitizeMultilineText(infoOverrides.tindakLanjut || '', 240);
+  }
+
+  return normalizedInfo;
+}
+
+function compactIncidentMetaForDomainSync(meta = {}) {
+  if (!meta || typeof meta !== 'object') return {};
+
+  const normalizedMeta = {};
+  const status = sanitizeText(meta.status || '', 30);
+  const infoOverrides = normalizeIncidentInfoOverrides(meta.infoOverrides || {});
+  const documentation = mergeDocumentationItems(
+    [],
+    ensureArray(meta.documentation).map((item) => compactMediaAuditRecordForCloudSync({
+      ...item,
+      photoUrl: stripLocalAssetUrlSync(item?.photoUrl),
+    })),
+  );
+  const progress = mergeProgressItems(
+    [],
+    ensureArray(meta.progress).map((item) => compactMediaAuditRecordForCloudSync({
+      ...item,
+      photoUrl: stripLocalAssetUrlSync(item?.photoUrl),
+    })),
+  );
+
+  if (status) normalizedMeta.status = status;
+  if (Object.keys(infoOverrides).length > 0) normalizedMeta.infoOverrides = infoOverrides;
+  if (documentation.length > 0) normalizedMeta.documentation = documentation;
+  if (progress.length > 0) normalizedMeta.progress = progress;
+  if (meta.deleted === true) normalizedMeta.deleted = true;
+
+  return normalizedMeta;
+}
+
+function createIncidentDomainSyncRecord(incident = {}, meta = {}, options = {}) {
+  if (!incident || typeof incident !== 'object') return null;
+
+  const incidentId = sanitizeText(
+    options.incidentId || incident.id || incident.incidentId || incident.firestoreId || '',
+    180,
+  ).trim();
+  if (!incidentId) return null;
+
+  const compactMeta = compactIncidentMetaForDomainSync(meta);
+  const infoOverrides = compactMeta.infoOverrides || {};
+  const updatedAt = sanitizeText(
+    options.updatedAt
+      || meta.updatedAt
+      || incident.updatedAt
+      || incident.createdAt
+      || incident.completedAt
+      || '',
+    80,
+  ) || null;
+  const status = sanitizeText(compactMeta.status || incident.status || 'open', 30) || 'open';
+
+  return removeUndefinedFields(compactIncidentRecordForCloudSync({
+    ...incident,
+    ...infoOverrides,
+    id: incidentId,
+    incidentId,
+    location: sanitizeText(incident.location || incident.name || incident.checkpointName || '', 120),
+    shipName: sanitizeText(incident.shipName || options.shipName || '', 100),
+    status,
+    updatedAt,
+    updatedBy: sanitizeText(options.updatedBy || incident.updatedBy || '', 100) || null,
+    documentation: compactMeta.documentation,
+    progress: compactMeta.progress,
+    infoOverrides: compactMeta.infoOverrides,
+    deleted: compactMeta.deleted === true ? true : undefined,
+  }));
+}
+
+function extractIncidentMetaFromDomainDocument(document = {}) {
+  if (!document || typeof document !== 'object') return null;
+
+  const incidentId = sanitizeText(document.id || document.incidentId || document.firestoreId || '', 180).trim();
+  if (!incidentId) return null;
+
+  const embeddedMeta = document.incidentMeta && typeof document.incidentMeta === 'object' && !Array.isArray(document.incidentMeta)
+    ? document.incidentMeta
+    : {};
+  const meta = compactIncidentMetaForDomainSync({
+    status: document.status || embeddedMeta.status,
+    infoOverrides: document.infoOverrides || embeddedMeta.infoOverrides,
+    documentation: document.documentation || embeddedMeta.documentation,
+    progress: document.progress || embeddedMeta.progress,
+    deleted: document.deleted === true || embeddedMeta.deleted === true,
+  });
+
+  return Object.keys(meta).length > 0 ? { incidentId, meta } : null;
+}
+
+function stripIncidentDomainMetaFields(document = {}) {
+  const {
+    documentation: _documentation,
+    progress: _progress,
+    infoOverrides: _infoOverrides,
+    incidentMeta: _incidentMeta,
+    deleted: _deleted,
+    ...incidentFields
+  } = document || {};
+
+  return incidentFields;
+}
+
+function splitIncidentDomainDocuments(documents = []) {
+  return ensureArray(documents).reduce((collection, document) => {
+    const incidentId = sanitizeText(document?.id || document?.incidentId || document?.firestoreId || '', 180).trim();
+    if (!incidentId) return collection;
+
+    collection.incidents.push(stripIncidentDomainMetaFields({
+      ...document,
+      id: incidentId,
+    }));
+
+    const extractedMeta = extractIncidentMetaFromDomainDocument({
+      ...document,
+      id: incidentId,
+    });
+    if (extractedMeta) {
+      collection.incidentMeta[extractedMeta.incidentId] = extractedMeta.meta;
+    }
+
+    return collection;
+  }, { incidents: [], incidentMeta: {} });
+}
+
 function compactHistoryEntryForCloudSync(entry = {}) {
   if (!entry || typeof entry !== 'object') return entry;
 
@@ -5393,6 +5540,23 @@ export function AppProvider({ children }) {
       patrolReportDomainUploadInFlightRef.current.delete(reportKey);
     }
   }, [hasOperationalCloudAccess, isOffline, prepareCloudPhotoUrl]);
+  const syncIncidentDetailToDomain = useCallback((incident, meta = {}, options = {}) => {
+    if (!incident || incident.isSOS) return null;
+
+    const domainIncident = createIncidentDomainSyncRecord(incident, meta, {
+      incidentId: options.incidentId,
+      shipName: options.shipName || incident.shipName || operationalShipName,
+      updatedAt: options.updatedAt,
+      updatedBy: options.updatedBy || currentUser,
+    });
+    if (!domainIncident) return null;
+
+    return saveIncidentReport(domainIncident, {
+      clientUpdatedAt: options.clientUpdatedAt,
+      appendProgressItems: options.appendProgressItems,
+      appendDocumentationItems: options.appendDocumentationItems,
+    });
+  }, [currentUser, operationalShipName]);
   const applyPendingShiftStatusRecords = useCallback((stateSnapshot = {}, fallbackShiftMeta = getShiftMeta()) => {
     if (pendingShiftStatusRecordsRef.current.size === 0) return stateSnapshot;
 
@@ -5987,6 +6151,27 @@ export function AppProvider({ children }) {
       ))
       : allIncidents
   ), [allIncidents, assignedShipForCurrentUser, isPetugas]);
+  useEffect(() => {
+    if (!selectedIncident?.id) return;
+
+    const latestIncident = allIncidents.find((incident) => incident.id === selectedIncident.id);
+    if (!latestIncident) return;
+
+    setSelectedIncident((previousIncident) => {
+      if (!previousIncident || previousIncident.id !== latestIncident.id) return previousIncident;
+
+      const mergedIncident = {
+        ...previousIncident,
+        ...latestIncident,
+        readOnly: Boolean(previousIncident.readOnly || latestIncident.readOnly),
+        photoUrl: resolveMergedAssetUrl(latestIncident.photoUrl, previousIncident.photoUrl),
+      };
+
+      return serializeSharedStateSnapshot(mergedIncident) === serializeSharedStateSnapshot(previousIncident)
+        ? previousIncident
+        : mergedIncident;
+    });
+  }, [allIncidents, selectedIncident?.id]);
   const activeShiftGuardSnapshot = useMemo(
     () => (operationalShipName ? buildGuardShiftSnapshot(usersData, operationalShipName, checkpoints, currentShiftStatusRecord) : []),
     [checkpoints, currentShiftStatusRecord, operationalShipName, usersData],
@@ -7537,9 +7722,46 @@ export function AppProvider({ children }) {
 
     const localPhotoUrl = newProgress.photoUrl;
     const progressId = `progress-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`;
+    const progressRecord = {
+      id: progressId,
+      ...newProgress,
+      comment: sanitizeMultilineText(newProgress.comment, 240),
+      photoUrl: localPhotoUrl,
+      time,
+      date,
+      author: currentUser,
+      createdAt,
+      ...trustedTimestamp,
+    };
+    const domainProgressRecord = {
+      ...progressRecord,
+      photoUrl: stripLocalAssetUrlSync(localPhotoUrl),
+    };
+    const baseMeta = incidentMeta[incidentId] || {};
+    const nextMeta = mergeIncidentMetaCollection({
+      [incidentId]: baseMeta,
+    }, {
+      [incidentId]: {
+        status: baseMeta.status || 'open',
+        progress: [progressRecord],
+      },
+    })[incidentId];
+    const domainMeta = mergeIncidentMetaCollection({
+      [incidentId]: baseMeta,
+    }, {
+      [incidentId]: {
+        status: baseMeta.status || 'open',
+        progress: [domainProgressRecord],
+      },
+    })[incidentId];
 
     // Simpan state dengan URL lokal dulu (instan muncul di UI)
-    setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { id: progressId, ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: localPhotoUrl, time, date, author: currentUser, createdAt, ...trustedTimestamp }] } }));
+    setIncidentMeta(prev => mergeIncidentMetaCollection(prev, {
+      [incidentId]: {
+        status: prev[incidentId]?.status || 'open',
+        progress: [progressRecord],
+      },
+    }));
     appendNotifications([{
       type: 'incident_progress_updated',
       title: 'Update temuan baru',
@@ -7556,11 +7778,13 @@ export function AppProvider({ children }) {
     }]);
     setNewProgress({ comment: '', photoUrl: null });
 
-    // Dual-write: simpan progress ke domain doc kecil (non-patrol, non-SOS)
-    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
-      const updatedIncident = { ...incident };
-      void saveIncidentReport(updatedIncident, { clientUpdatedAt: trustedTimestamp.occurredAtClientMs });
-    }
+    void syncIncidentDetailToDomain(incident, domainMeta || nextMeta, {
+      incidentId,
+      clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+      updatedAt: createdAt,
+      updatedBy: currentUser,
+      appendProgressItems: [domainProgressRecord],
+    });
     requestCloudSync('urgent');
 
     // Upload foto ke Firebase Storage di background & update cache
@@ -7576,6 +7800,10 @@ export function AppProvider({ children }) {
           });
           if (uploadedUrl) {
             cloudAssetCacheRef.current.set(localPhotoUrl, uploadedUrl);
+            const uploadedProgressRecord = {
+              ...progressRecord,
+              photoUrl: uploadedUrl,
+            };
             // Update state dengan URL cloud agar sync berikutnya langsung pakai URL cloud
             setIncidentMeta(prev => {
               const currentProgress = prev[incidentId]?.progress || [];
@@ -7584,13 +7812,24 @@ export function AppProvider({ children }) {
               );
               return { ...prev, [incidentId]: { ...prev[incidentId], progress: updatedProgress } };
             });
+            void syncIncidentDetailToDomain(incident, {
+              ...(domainMeta || nextMeta),
+              progress: [uploadedProgressRecord],
+            }, {
+              incidentId,
+              clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+              updatedAt: createdAt,
+              updatedBy: currentUser,
+              appendProgressItems: [uploadedProgressRecord],
+            });
+            requestCloudSync('normal');
           }
         } catch (uploadError) {
           console.error('Gagal upload foto progress temuan (background), retry queue akan coba lagi.', uploadError);
         }
       }
     }
-  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, usersData]);
+  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, incidentMeta, newProgress, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, syncIncidentDetailToDomain, usersData]);
   const handleAddIncidentDocumentation = useCallback(async (incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
@@ -7606,61 +7845,112 @@ export function AppProvider({ children }) {
     const time = formatAppTime(trustedNow);
     const date = formatAppDate(trustedNow);
 
-    // Upload foto ke Firebase Storage dulu sebelum simpan ke state
-    let resolvedPhotoUrl = photoUrlFromCamera;
-    try {
-      const uploadedUrl = await uploadCloudDataUrlAsset({
-        dataUrl,
-        path: createCloudAssetPath('incident-documentation', incidentId, `doc-${trustedTimestamp.occurredAtTrustedMs}`, photoUrlFromCamera),
-      });
-      if (uploadedUrl) {
-        resolvedPhotoUrl = uploadedUrl;
-        cloudAssetCacheRef.current.set(photoUrlFromCamera, uploadedUrl);
-      }
-    } catch (uploadError) {
-      console.error('Gagal upload foto dokumentasi temuan', uploadError);
-    }
-
     const docId = `doc-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`;
+    const documentationRecord = {
+      id: docId,
+      photoUrl: photoUrlFromCamera,
+      createdAt,
+      date,
+      time,
+      author: currentUser,
+      ...trustedTimestamp,
+    };
+    const domainDocumentationRecord = {
+      ...documentationRecord,
+      photoUrl: stripLocalAssetUrlSync(photoUrlFromCamera),
+    };
+    const baseMeta = incidentMeta[incidentId] || {};
+    const domainMeta = mergeIncidentMetaCollection({
+      [incidentId]: baseMeta,
+    }, {
+      [incidentId]: {
+        status: baseMeta.status || 'open',
+        documentation: [domainDocumentationRecord],
+      },
+    })[incidentId];
+
     setIncidentMeta((previousMeta) => ({
       ...previousMeta,
       [incidentId]: {
         ...previousMeta[incidentId],
         status: previousMeta[incidentId]?.status || 'open',
         documentation: [
-          {
-            id: docId,
-            photoUrl: resolvedPhotoUrl,
-            createdAt,
-            date,
-            time,
-            author: currentUser,
-            ...trustedTimestamp,
-          },
+          documentationRecord,
           ...(previousMeta[incidentId]?.documentation || []),
         ],
       },
     }));
 
-    // Dual-write: simpan dokumentasi baru ke domain doc kecil
-    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
-      const updatedIncident = { ...incident };
-      void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
-    }
+    void syncIncidentDetailToDomain(incident, domainMeta, {
+      incidentId,
+      clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+      updatedAt: createdAt,
+      updatedBy: currentUser,
+      appendDocumentationItems: [domainDocumentationRecord],
+    });
     requestCloudSync('urgent');
-  }, [allIncidents, canManageIncident, currentUser, requestCloudSync, saveIncidentReport, selectedIncident, showTrustedTimeGateDialog]);
+
+    try {
+      const uploadedUrl = await uploadCloudDataUrlAsset({
+        dataUrl,
+        path: createCloudAssetPath('incident-documentation', incidentId, `doc-${trustedTimestamp.occurredAtTrustedMs}`, photoUrlFromCamera),
+      });
+      if (uploadedUrl) {
+        cloudAssetCacheRef.current.set(photoUrlFromCamera, uploadedUrl);
+        const uploadedDocumentationRecord = {
+          ...documentationRecord,
+          photoUrl: uploadedUrl,
+        };
+        setIncidentMeta((previousMeta) => {
+          const documentationItems = previousMeta[incidentId]?.documentation || [];
+          return {
+            ...previousMeta,
+            [incidentId]: {
+              ...previousMeta[incidentId],
+              documentation: documentationItems.map((item) => (
+                item.id === docId ? { ...item, photoUrl: uploadedUrl } : item
+              )),
+            },
+          };
+        });
+        void syncIncidentDetailToDomain(incident, {
+          ...domainMeta,
+          documentation: [uploadedDocumentationRecord],
+        }, {
+          incidentId,
+          clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+          updatedAt: createdAt,
+          updatedBy: currentUser,
+          appendDocumentationItems: [uploadedDocumentationRecord],
+        });
+        requestCloudSync('normal');
+      }
+    } catch (uploadError) {
+      console.error('Gagal upload foto dokumentasi temuan', uploadError);
+    }
+  }, [allIncidents, canManageIncident, currentUser, incidentMeta, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, syncIncidentDetailToDomain]);
   const handleUpdateIncidentInfo = useCallback((incidentId, updates) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!incident || !canManageIncident(incident)) return false;
+    const trustedTimestamp = createTrustedTimestampRecord();
+    const updatedAt = trustedTimestamp.occurredAtTrustedIso;
 
     const nextIncidentInfo = {
       deskripsi: sanitizeMultilineText(updates?.deskripsi || '', 320),
       penyebab: sanitizeMultilineText(updates?.penyebab || '', 240),
       tindakLanjut: sanitizeMultilineText(updates?.tindakLanjut || '', 240),
     };
+    const baseMeta = incidentMeta[incidentId] || {};
+    const nextMeta = mergeIncidentMetaCollection({
+      [incidentId]: baseMeta,
+    }, {
+      [incidentId]: {
+        ...baseMeta,
+        infoOverrides: nextIncidentInfo,
+      },
+    })[incidentId];
 
-    setIncidentMeta((previousMeta) => ({
-      ...previousMeta,
+    setIncidentMeta((previousMeta) => mergeIncidentMetaCollection(previousMeta, {
       [incidentId]: {
         ...previousMeta[incidentId],
         infoOverrides: nextIncidentInfo,
@@ -7668,22 +7958,38 @@ export function AppProvider({ children }) {
     }));
 
     if (!incident.readOnly && typeof incidentId === 'string' && incidentId.startsWith('p-')) {
-      const checkpointId = incidentId.replace('p-', '');
+      const activeCheckpointForIncident = Object.values(checkpointsByShip)
+        .flat()
+        .find((checkpoint) => createPatrolIncidentId(checkpoint) === incidentId && !checkpoint.readOnly);
+      const updatedCheckpointForDomain = activeCheckpointForIncident
+        ? {
+          ...activeCheckpointForIncident,
+          kejadian: nextIncidentInfo.deskripsi,
+          penyebab: nextIncidentInfo.penyebab,
+          tindakLanjut: nextIncidentInfo.tindakLanjut,
+          updatedAt,
+        }
+        : null;
       setCheckpointsByShip((previousState) => Object.fromEntries(
         Object.entries(previousState).map(([shipId, shipCheckpoints]) => ([
           shipId,
-          shipCheckpoints.map((checkpoint) => (
-            (createPatrolIncidentId(checkpoint) === incidentId || String(checkpoint.id) === String(checkpointId)) && !checkpoint.readOnly
-              ? {
-                ...checkpoint,
-                kejadian: nextIncidentInfo.deskripsi,
-                penyebab: nextIncidentInfo.penyebab,
-                tindakLanjut: nextIncidentInfo.tindakLanjut,
-              }
-              : checkpoint
-          )),
+          shipCheckpoints.map((checkpoint) => {
+            if (createPatrolIncidentId(checkpoint) !== incidentId || checkpoint.readOnly) return checkpoint;
+            return {
+              ...checkpoint,
+              kejadian: nextIncidentInfo.deskripsi,
+              penyebab: nextIncidentInfo.penyebab,
+              tindakLanjut: nextIncidentInfo.tindakLanjut,
+              updatedAt,
+            };
+          }),
         ])),
       ));
+      if (updatedCheckpointForDomain) {
+        void syncPatrolReportToDomain(updatedCheckpointForDomain, {
+          skipMediaUpload: true,
+        });
+      }
     } else if (!incident.readOnly) {
       setIncidentsData((previousIncidents) => previousIncidents.map((entry) => (
         entry.id === incidentId
@@ -7692,6 +7998,7 @@ export function AppProvider({ children }) {
             deskripsi: nextIncidentInfo.deskripsi,
             penyebab: nextIncidentInfo.penyebab,
             tindakLanjut: nextIncidentInfo.tindakLanjut,
+            updatedAt,
           }
           : entry
       )));
@@ -7703,25 +8010,20 @@ export function AppProvider({ children }) {
         : previousIncident
     ));
 
-    // Dual-write: simpan update ke domain doc kecil sebagai referensi
-    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
-      const updatedIncident = { ...incident, ...nextIncidentInfo };
-      void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
-    }
-    setSelectedIncident((previousIncident) => (
-      previousIncident?.id === incidentId
-        ? { ...previousIncident, ...nextIncidentInfo }
-        : previousIncident
-    ));
-
-    // Dual-write: simpan update ke domain doc kecil sebagai referensi
-    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
-      const updatedIncident = { ...incident, ...nextIncidentInfo };
-      void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
-    }
+    void syncIncidentDetailToDomain({
+      ...incident,
+      ...nextIncidentInfo,
+      updatedAt,
+    }, nextMeta, {
+      incidentId,
+      clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+      updatedAt,
+      updatedBy: currentUser,
+    });
+    requestCloudSync('urgent');
 
     return true;
-  }, [allIncidents, canManageIncident, saveIncidentReport, selectedIncident]);
+  }, [allIncidents, canManageIncident, checkpointsByShip, currentUser, incidentMeta, requestCloudSync, selectedIncident, syncIncidentDetailToDomain, syncPatrolReportToDomain]);
   const handleCloseIncident = useCallback((incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canCloseIncident(incident)) return;
@@ -7734,7 +8036,12 @@ export function AppProvider({ children }) {
         if (showTrustedTimeGateDialog()) return;
         const trustedTimestamp = createTrustedTimestampRecord();
         const createdAt = trustedTimestamp.occurredAtTrustedIso;
-        setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...(prev[incidentId] || {}), status: 'closed' } }));
+        setIncidentMeta(prev => mergeIncidentMetaCollection(prev, {
+          [incidentId]: {
+            ...(prev[incidentId] || {}),
+            status: 'closed',
+          },
+        }));
         if (incident?.isSOS) {
           const resolvedSOS = {
             ...(activeSOSAlert?.id === incidentId ? activeSOSAlert : incident),
@@ -7768,15 +8075,23 @@ export function AppProvider({ children }) {
           dedupeKey: incident?.isSOS ? `sos-closed:${incidentId}` : `incident-closed:${incidentId}`,
           createdAt,
         }]);
-        // Dual-write: simpan status closed ke domain doc kecil
-        if (!incident?.isSOS && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident?.isPatrol) {
-          const updatedIncident = { ...incident, status: 'closed' };
-          void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
-        }
+        void syncIncidentDetailToDomain({
+          ...incident,
+          status: 'closed',
+          updatedAt: createdAt,
+        }, {
+          ...(incidentMeta[incidentId] || {}),
+          status: 'closed',
+        }, {
+          incidentId,
+          clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+          updatedAt: createdAt,
+          updatedBy: currentUser,
+        });
         requestCloudSync('urgent');
       }
     });
-  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, incident, incidentId, operationalShipName, requestCloudSync, saveIncidentReport, selectedIncident, showTrustedTimeGateDialog, usersData]);
+  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, incidentMeta, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, syncIncidentDetailToDomain, usersData]);
   const handleDeleteIncident = useCallback((incidentId) => {
     if (!isAdmin) return;
 
@@ -7834,6 +8149,7 @@ export function AppProvider({ children }) {
               return nextMeta;
             });
           }
+          void deleteIncidentReport(incidentId);
         } else {
           const deletedAt = new Date().toISOString();
           setDeletedRecords((previousDeletedRecords) => markDeletedRecord(previousDeletedRecords, 'incidents', incidentId, deletedAt));
@@ -7868,23 +8184,43 @@ export function AppProvider({ children }) {
     const url = await saveImageToDB(dataUrl);
     if (!url) return;
     if (typeof incidentId === 'string' && incidentId.startsWith('p-')) {
-      const checkpointId = incidentId.replace('p-', '');
+      const activeCheckpointForIncident = Object.values(checkpointsByShip)
+        .flat()
+        .find((checkpoint) => createPatrolIncidentId(checkpoint) === incidentId && !checkpoint.readOnly);
+      const updatedCheckpointForDomain = activeCheckpointForIncident
+        ? { ...activeCheckpointForIncident, photoUrl: url }
+        : null;
       setCheckpointsByShip(previousState => Object.fromEntries(
         Object.entries(previousState).map(([shipId, shipCheckpoints]) => ([
           shipId,
           shipCheckpoints.map(checkpoint => (
-            String(checkpoint.id) === String(checkpointId)
+            createPatrolIncidentId(checkpoint) === incidentId && !checkpoint.readOnly
               ? { ...checkpoint, photoUrl: url }
               : checkpoint
           )),
         ])),
       ));
+      if (updatedCheckpointForDomain) {
+        void syncPatrolReportToDomain(updatedCheckpointForDomain);
+      }
     } else {
       setIncidentsData(prev => prev.map(inc => inc.id === incidentId ? { ...inc, photoUrl: url } : inc));
+      const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
+      if (incident && !incident.isSOS) {
+        void syncIncidentDetailToDomain({
+          ...incident,
+          photoUrl: stripLocalAssetUrlSync(url),
+        }, incidentMeta[incidentId] || {}, {
+          incidentId,
+          clientUpdatedAt: Date.now(),
+          updatedAt: new Date().toISOString(),
+          updatedBy: currentUser,
+        });
+      }
     }
     setSelectedIncident(prev => prev && prev.id === incidentId ? { ...prev, photoUrl: url } : prev);
     requestCloudSync('urgent');
-  }, [requestCloudSync]);
+  }, [allIncidents, checkpointsByShip, currentUser, incidentMeta, requestCloudSync, selectedIncident, syncIncidentDetailToDomain, syncPatrolReportToDomain]);
 
   // Ship form handlers
   const handleSaveShip = useCallback(() => {
@@ -8208,16 +8544,27 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => { };
 
-    let incidentsUnsubscribed = false;
     const unsubIncidents = subscribeToIncidents((incidentDocuments) => {
       if (!Array.isArray(incidentDocuments) || incidentDocuments.length === 0) return;
+      const {
+        incidents: domainIncidents,
+        incidentMeta: domainIncidentMeta,
+      } = splitIncidentDomainDocuments(incidentDocuments);
 
       setIncidentsData((prevIncidents) => {
-        const mergedIncidents = mergeIncidentsCollection(prevIncidents, incidentDocuments);
+        const mergedIncidents = mergeIncidentsCollection(prevIncidents, domainIncidents);
         return serializeSharedStateSnapshot(mergedIncidents) === serializeSharedStateSnapshot(prevIncidents)
           ? prevIncidents
           : mergedIncidents;
       });
+      if (Object.keys(domainIncidentMeta).length > 0) {
+        setIncidentMeta((previousMeta) => {
+          const mergedMeta = mergeIncidentMetaCollection(previousMeta, domainIncidentMeta);
+          return serializeSharedStateSnapshot(mergedMeta) === serializeSharedStateSnapshot(previousMeta)
+            ? previousMeta
+            : mergedMeta;
+        });
+      }
     }, (error) => {
       console.error('Gagal subscribe domain laporan temuan', error);
     });

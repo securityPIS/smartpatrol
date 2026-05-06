@@ -1,3 +1,11 @@
+/*
+Tujuan: Menampilkan detail temuan/SOS, progress, dokumentasi, audit waktu, dan editor 5W1H.
+Caller: IncidentDetailModal, DailyReportPage, dan panel detail temuan inline.
+Dependensi: AppContextRuntime incident/report/role/ship hooks, AsyncImage, TimeAuditStatus, dan ikon lucide-react.
+Main Functions: Render detail temuan, tambah progress/dokumentasi, edit info, tutup/hapus temuan.
+Side Effects: Memanggil handler context untuk mutasi temuan dan membuka preview foto/map eksternal.
+*/
+
 import React, { useEffect, useMemo, useState } from 'react';
 import { useIncidents, useReports, useRole, useShips } from '../../context/AppContextRuntime';
 import { ChevronDown, AlertTriangle, CheckCircle2, Camera, X, Plus, FileText, Trash2, Images, Pencil, Save, MapPin, ExternalLink } from 'lucide-react';
@@ -519,7 +527,7 @@ export default function IncidentDetailView({ isInline = false }) {
             <div className="pt-2">
               <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-4 flex items-center gap-2"><FileText className="w-4 h-4" /> RIWAYAT UPDATE</h4>
               <div className="space-y-5 border-l-2 border-cyan-800 ml-2 pl-5">
-                {incidentMeta[selectedIncident.id]?.progress?.map((prog, idx) => (
+                {progressItems.map((prog, idx) => (
                   <div key={idx} className="relative">
                     <div className="absolute -left-[25px] top-0 w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] border-2 border-[#070b19]"></div>
                     <p className="text-[10px] font-mono text-cyan-500 mb-1.5">{prog.date} {prog.time} {' · '} <span className="text-emerald-400 font-bold">{prog.author}</span></p>
@@ -529,7 +537,7 @@ export default function IncidentDetailView({ isInline = false }) {
                     </div>
                   </div>
                 ))}
-                {(!incidentMeta[selectedIncident.id]?.progress || incidentMeta[selectedIncident.id]?.progress.length === 0) && (
+                {progressItems.length === 0 && (
                   <p className="text-sm text-cyan-700 italic border border-dashed border-cyan-900/50 p-4 rounded-xl text-center">{isSOSIncident ? 'Belum ada update tindak lanjut SOS.' : 'Belum ada update progres.'}</p>
                 )}
               </div>

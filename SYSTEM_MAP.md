@@ -1,6 +1,6 @@
 # SYSTEM_MAP — SmartPatrol
 
-> Peta sistem otomatis. Terakhir diperbarui: 2026-05-02.
+> Peta sistem otomatis. Terakhir diperbarui: 2026-05-07.
 > Bahasa pemrograman: **JavaScript (React 19 + Vite 8)**.
 
 ---
@@ -156,6 +156,7 @@ AppContextRuntime[setupNativePushNotifications]
 
 Firestore trigger:
   patrolReports/* temuan baru → notifyOnPatrolReportWrite → FCM incident_created
+  incidents/{incidentId} progress bertambah → notifyOnIncidentReportWrite → FCM incident_progress_updated
   smartpatrol/shared-state activeSOSAlert baru → notifyOnSharedStateWrite → FCM sos
   smartpatrol/shared-state incidentsData baru → notifyOnSharedStateWrite → FCM incident_created
   smartpatrol/shared-state incidentMeta.progress bertambah → notifyOnSharedStateWrite → FCM incident_progress_updated
@@ -311,7 +312,7 @@ SmartPatrol/
 | `services/firebase/access.js` | `createPendingRegistration`, `uploadRegistrationPhotoAsset`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `subscribeToPendingRegistrations` | Lapisan onboarding terisolasi dan sidecar authz. Public register hanya menulis `pendingRegistrations/{uid}`, sedangkan approval/binding akses operasional dijalankan lewat Cloud Functions. |
 | `services/firebase/cloudState.js` | `subscribeToCloudAppState`, `fetchCloudAppState`, `saveCloudAppState`, `uploadCloudDataUrlAsset` | CRUD Firestore single-document (`smartpatrol/shared-state`). Menggunakan `runTransaction` untuk merge. Akses client sekarang digate oleh `userAccess/{uid}` di rules. |
 | `services/firebase/patrolReports.js` | `subscribeToPatrolReports`, `savePatrolReport` | CRUD Firestore domain kecil untuk `patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}`. Dipakai agar laporan patroli dan status media muncul realtime tanpa menunggu merge blob besar. |
-| `services/firebase/incidentReports.js` | `subscribeToIncidents`, `saveIncidentReport`, `deleteIncidentReport` | CRUD Firestore domain kecil untuk `incidents/{incidentId}`. Setiap write incident (submit, update, close, delete) dual-write ke collection ini. Listener `onSnapshot` merge langsung ke `incidentsData` — realtime tanpa polling 8 detik. |
+| `services/firebase/incidentReports.js` | `subscribeToIncidents`, `saveIncidentReport`, `deleteIncidentReport` | CRUD Firestore domain kecil untuk `incidents/{incidentId}`. Submit/update/close/delete temuan dual-write ke collection ini; progress dan dokumentasi memakai append kecil agar realtime tanpa menunggu blob `shared-state`. Listener `onSnapshot` merge langsung ke `incidentsData` dan `incidentMeta`. |
 | `services/native/capacitorBridge.js` | `isNativeRuntime`, `captureNativeCameraPhoto`, `getNativeGeolocationPosition`, `getNativeNetworkStatus`, `addNativeNetworkStatusListener`, `getNativeTimeSnapshot`, `getNativeLaunchNotificationPayload` | Adapter Capacitor Android untuk kamera-only, GPS native, status jaringan native, monotonic clock Android, dan payload launch notifikasi tanpa menambah coupling langsung ke komponen domain. |
 | `services/native/pushNotifications.js` | `setupNativePushNotifications` | Adapter Capacitor Push Notifications: membuat channel Android, meminta izin, registrasi/unregistrasi token FCM ke Cloud Function, membaca payload launch/action notifikasi, dan meneruskan payload push ke AppContext untuk navigasi halaman tujuan. |
 | `services/time/trustedTime.js` | `initializeTrustedTime`, `getTrustedNowMs`, `getTrustedDate`, `getTrustedTimeSnapshot`, `createTrustedTimestampRecord`, `syncServerTime`, `detectClockTampering`, `subscribeTrustedTime`, `startOfflineSession`, `finishOfflineSession` | NTP-like clock: sinkronisasi ke server, deteksi tamper via native monotonic Android atau `performance.now()` drift, offline session tracking. |
@@ -375,7 +376,7 @@ SmartPatrol/
 
 | File | Fungsi | Peran |
 |---|---|---|
-| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `registerPushToken`, `unregisterPushToken`, `notifyOnPatrolReportWrite`, `notifyOnSharedStateWrite`, `sendScheduledOperationalPushNotifications`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + FCM push untuk pending checkpoint, temuan, update temuan, shift started, admin wrap-up, dan SOS. Region `asia-southeast2`. |
+| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `registerPushToken`, `unregisterPushToken`, `notifyOnPatrolReportWrite`, `notifyOnIncidentReportWrite`, `notifyOnSharedStateWrite`, `sendScheduledOperationalPushNotifications`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + FCM push untuk pending checkpoint, temuan, update temuan dari domain kecil, shift started, admin wrap-up, dan SOS. Region `asia-southeast2`. |
 | `functions/telegramAI.js` | `telegramWebhook`, `sendTelegramMessage`, `onCheckpointReportCreated`, `onSharedStateUpdated` | Webhook bot Telegram + trigger Telegram untuk temuan checkpoint, SOS, insiden manual, update progress temuan dari `incidentMeta.progress`, dan notifikasi admin terfilter. |
 
 ### Data
@@ -418,6 +419,12 @@ patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}
   -> metadata laporan, audit timestamp, GPS/cuaca, mediaStatus, photoUrl Storage
   -> listener device lain merge langsung ke checkpointsByShip
   -> shared-state tetap ditulis sebagai fallback/cache selama migrasi domain bertahap
+
+incidents/{incidentId}
+  -> satu dokumen kecil per temuan manual/patroli untuk metadata realtime
+  -> menyimpan progress, dokumentasi, status, dan infoOverrides tanpa menunggu shared-state
+  -> listener device lain merge langsung ke incidentsData + incidentMeta
+  -> shared-state tetap ditulis sebagai fallback offline/audit dan push dedupe
 ```
 
 ```

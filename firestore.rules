@@ -1,8 +1,8 @@
-// Tujuan: Mengunci Firestore SmartPatrol agar shared-state hanya bisa diakses user operasional approved.
+// Tujuan: Mengunci Firestore SmartPatrol agar shared-state dan domain reports hanya bisa diakses user operasional approved.
 // Caller: Firebase Firestore rules engine untuk client web SmartPatrol.
 // Dependensi: Koleksi sidecar userAccess/{uid} dan pendingRegistrations/{uid}.
-// Main Functions: Mengizinkan shared-state untuk userAccess enabled, create onboarding publik terbatas, dan read admin/owner.
-// Side Effects: Menolak write publik ke state operasional dan membatasi approval ke callable/admin SDK.
+// Main Functions: Mengizinkan shared-state/domain reports untuk userAccess enabled, create onboarding publik terbatas, dan read admin/owner.
+// Side Effects: Menolak write publik ke state operasional/domain dan membatasi approval ke callable/admin SDK.
 
 rules_version = '2';
 service cloud.firestore {
@@ -102,6 +102,51 @@ service cloud.firestore {
         && (isAdmin() || isAssignedOperationalShip(request.resource.data.shipName));
     }
 
+    function hasValidIncidentReportSignalKeys() {
+      return request.resource.data.keys().hasAny([
+        'schemaVersion',
+        'clientUpdatedAt',
+        'serverUpdatedAt',
+        'id',
+        'incidentId',
+        'location',
+        'deskripsi',
+        'penyebab',
+        'tindakLanjut',
+        'reportedBy',
+        'shipName',
+        'photoUrl',
+        'status',
+        'createdAt',
+        'updatedAt',
+        'progress',
+        'documentation',
+        'infoOverrides',
+        'date',
+        'time',
+        'isSOS',
+        'isPatrol',
+        'occurredAtTrustedMs',
+        'occurredAtTrustedIso',
+        'receivedAtServerMs',
+        'timeTrustLevel',
+        'clockTamperDetected'
+      ]);
+    }
+
+    function isValidIncidentReportWrite(incidentId) {
+      return hasOperationalSharedStateAccess()
+        && hasValidIncidentReportSignalKeys()
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.clientUpdatedAt is number
+        && request.resource.data.serverUpdatedAt == request.time
+        && request.resource.data.id == incidentId
+        && request.resource.data.shipName is string
+        && (request.resource.data.status == null
+          || request.resource.data.status in ['open', 'closed', 'active', 'resolved'])
+        && (isAdmin() || isAssignedOperationalShip(request.resource.data.shipName));
+    }
+
     function isOwner(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
@@ -126,15 +171,7 @@ service cloud.firestore {
 
     match /incidents/{incidentId} {
       allow read: if hasOperationalSharedStateAccess();
-      allow create, update: if hasOperationalSharedStateAccess()
-        && request.resource.data.keys().hasAny([
-          'id', 'location', 'deskripsi', 'penyebab', 'tindakLanjut',
-          'reportedBy', 'shipName', 'photoUrl', 'status', 'createdAt',
-          'date', 'time', 'isSOS', 'isPatrol',
-          'occurredAtTrustedMs', 'occurredAtTrustedIso',
-          'receivedAtServerMs', 'timeTrustLevel', 'clockTamperDetected'
-        ])
-        && (isAdmin() || isAssignedOperationalShip(request.resource.data.shipName));
+      allow create, update: if isValidIncidentReportWrite(incidentId);
       allow delete: if isAdmin();
     }
 

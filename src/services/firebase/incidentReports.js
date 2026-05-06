@@ -1,12 +1,13 @@
 /*
-Tujuan: Adapter Firestore domain kecil untuk laporan insiden realtime (mirip patrolReports).
+Tujuan: Adapter Firestore domain kecil untuk laporan insiden dan update temuan realtime (mirip patrolReports).
 Caller: AppContextRuntime saat submit/update/delete insiden dan listener lintas-device.
 Dependensi: Firebase Firestore singleton dan status cloud sync SmartPatrol.
-Main Functions: Subscribe koleksi insiden, upsert dokumen insiden, hapus dokumen insiden.
+Main Functions: Subscribe koleksi insiden, upsert dokumen insiden/progress/dokumentasi, hapus dokumen insiden.
 Side Effects: Membaca/menulis `incidents/{incidentId}` di Firestore.
 */
 
 import {
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -83,15 +84,38 @@ export async function saveIncidentReport(incident, options = {}) {
   const clientUpdatedAt = Number.isFinite(options.clientUpdatedAt)
     ? options.clientUpdatedAt
     : Date.now();
+  const appendProgressItems = Array.isArray(options.appendProgressItems)
+    ? options.appendProgressItems.filter(Boolean)
+    : [];
+  const appendDocumentationItems = Array.isArray(options.appendDocumentationItems)
+    ? options.appendDocumentationItems.filter(Boolean)
+    : [];
+  const {
+    progress,
+    documentation,
+    ...incidentFields
+  } = incident;
 
   const payload = {
-    ...incident,
+    ...incidentFields,
     schemaVersion: INCIDENTS_SCHEMA_VERSION,
     clientUpdatedAt,
     serverUpdatedAt: serverTimestamp(),
   };
 
-  await setDoc(docRef, payload);
+  if (appendProgressItems.length > 0) {
+    payload.progress = arrayUnion(...appendProgressItems);
+  } else if (Array.isArray(progress)) {
+    payload.progress = progress;
+  }
+
+  if (appendDocumentationItems.length > 0) {
+    payload.documentation = arrayUnion(...appendDocumentationItems);
+  } else if (Array.isArray(documentation)) {
+    payload.documentation = documentation;
+  }
+
+  await setDoc(docRef, payload, { merge: true });
   return payload;
 }
 

@@ -1,9 +1,9 @@
 /*
-Tujuan: Menyediakan trusted server time, kontrol akses operasional, dan notifikasi onboarding admin lewat Cloud Functions.
+Tujuan: Menyediakan trusted server time, kontrol akses operasional, dan notifikasi operasional/admin lewat Cloud Functions.
 Caller: Client web/native untuk sinkronisasi waktu, binding akun Firebase Auth, approval onboarding, registrasi push token, dan trigger Firestore.
 Dependensi: Firebase Functions v2, Firebase Admin SDK, dan model sanitasi security lokal.
 Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, push notification, approval onboarding, trusted time, dan pruneStaleCheckpointsFromSharedState.
-Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, pushTokens, shared-state.notifications, shared-state.checkpointsByShip (cleanup blob bengkak), memperbarui custom claims Firebase Auth, mengirim FCM, dan mengembalikan trusted server time.
+Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, pushTokens, incidents, shared-state.notifications, shared-state.checkpointsByShip (cleanup blob bengkak), memperbarui custom claims Firebase Auth, mengirim FCM, dan mengembalikan trusted server time.
 */
 
 import { createHash } from 'node:crypto';
@@ -764,6 +764,26 @@ function getProgressItems(meta = {}) {
   return ensureArray(meta?.progress);
 }
 
+function getDomainIncidentProgressItems(incident = {}) {
+  return ensureArray(incident?.progress || incident?.incidentMeta?.progress);
+}
+
+function getLatestProgressItem(progressItems = []) {
+  const normalizedProgressItems = ensureArray(progressItems);
+  if (normalizedProgressItems.length === 0) return null;
+
+  return normalizedProgressItems
+    .map((item, index) => ({
+      item,
+      index,
+      timestamp: new Date(item?.createdAt || item?.updatedAt || '').getTime(),
+    }))
+    .sort((left, right) => (
+      (Number.isNaN(right.timestamp) ? 0 : right.timestamp) - (Number.isNaN(left.timestamp) ? 0 : left.timestamp)
+      || right.index - left.index
+    ))[0]?.item || null;
+}
+
 function isActiveSOS(alert = {}) {
   return Boolean(alert?.id && sanitizeString(alert.status || 'active', 30) !== 'resolved');
 }
@@ -1242,6 +1262,51 @@ export const notifyOnPatrolReportWrite = onDocumentWritten(
       checkpointId: sanitizeString(event.params.checkpointId || '', 120),
       dedupeKey,
       tag: `finding-${incidentId}`,
+    });
+  },
+);
+
+export const notifyOnIncidentReportWrite = onDocumentWritten(
+  {
+    region: TRUSTED_TIME_REGION,
+    document: 'incidents/{incidentId}',
+    maxInstances: 20,
+  },
+  async (event) => {
+    const afterSnapshot = event.data?.after;
+    if (!afterSnapshot?.exists) return;
+
+    const before = event.data?.before?.exists ? event.data.before.data() || {} : {};
+    const after = afterSnapshot.data() || {};
+    const beforeProgress = getDomainIncidentProgressItems(before);
+    const afterProgress = getDomainIncidentProgressItems(after);
+    if (afterProgress.length <= beforeProgress.length) return;
+
+    const safeIncidentId = sanitizeString(after.id || after.incidentId || event.params.incidentId || '', 180);
+    if (!safeIncidentId) return;
+
+    const latestProgress = getLatestProgressItem(afterProgress);
+    const progressId = sanitizeString(latestProgress?.id || latestProgress?.createdAt || `${afterProgress.length}`, 180);
+    if (!progressId || !await claimPushDedupe(`incident-progress:${safeIncidentId}:${progressId}`)) return;
+
+    const shipName = getIncidentShipName(after, {});
+    const targets = await resolveAccessTargets({
+      shipName,
+      targetUserIds: getIncidentTargetUserIds(after),
+      includeAdmins: true,
+      includePic: true,
+      includePetugas: true,
+    });
+
+    await sendPushToAccessRecords(targets, {
+      type: 'incident_progress_updated',
+      title: 'Update temuan',
+      body: `${getIncidentLabel(after)} mendapat update baru dari ${sanitizeString(latestProgress?.author || 'petugas', 80)}.`,
+      route: 'incidents/detail',
+      incidentId: safeIncidentId,
+      shipName,
+      dedupeKey: `incident-progress:${safeIncidentId}:${progressId}`,
+      tag: `incident-progress-${safeIncidentId}`,
     });
   },
 );
