@@ -7287,7 +7287,7 @@ export function AppProvider({ children }) {
   }, [clearUserManagementFeedback, isAdmin]);
 
   // Progress & incident meta handlers
-  const handleAddProgress = useCallback((incidentId) => {
+  const handleAddProgress = useCallback(async (incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
     if (showTrustedTimeGateDialog()) return;
@@ -7296,7 +7296,31 @@ export function AppProvider({ children }) {
     const createdAt = trustedTimestamp.occurredAtTrustedIso;
     const time = formatAppTime(trustedNow);
     const date = formatAppDate(trustedNow);
-    setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { id: `progress-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`, ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: newProgress.photoUrl, time, date, author: currentUser, createdAt, ...trustedTimestamp }] } }));
+
+    // Upload foto ke Firebase Storage dulu jika ada
+    let resolvedPhotoUrl = newProgress.photoUrl;
+    if (resolvedPhotoUrl && (resolvedPhotoUrl.startsWith('idb://') || resolvedPhotoUrl.startsWith('data:'))) {
+      try {
+        const dataUrl = resolvedPhotoUrl.startsWith('idb://')
+          ? await loadImageFromDB(resolvedPhotoUrl)
+          : resolvedPhotoUrl;
+        if (dataUrl) {
+          const uploadedUrl = await uploadCloudDataUrlAsset({
+            dataUrl,
+            path: createCloudAssetPath('incident-progress', incidentId, `progress-${trustedTimestamp.occurredAtTrustedMs}`, resolvedPhotoUrl),
+          });
+          if (uploadedUrl) {
+            resolvedPhotoUrl = uploadedUrl;
+            cloudAssetCacheRef.current.set(resolvedPhotoUrl, uploadedUrl);
+          }
+        }
+      } catch (uploadError) {
+        console.error('Gagal upload foto progress temuan', uploadError);
+      }
+    }
+
+    const progressId = `progress-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`;
+    setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { id: progressId, ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: resolvedPhotoUrl, time, date, author: currentUser, createdAt, ...trustedTimestamp }] } }));
     appendNotifications([{
       type: 'incident_progress_updated',
       title: 'Update temuan baru',
@@ -7319,8 +7343,8 @@ export function AppProvider({ children }) {
     if (showTrustedTimeGateDialog()) return;
     const dataUrl = await pickLocalImage();
     if (!dataUrl) return;
-    const photoUrl = await saveImageToDB(dataUrl);
-    if (!photoUrl) return;
+    const photoUrlFromCamera = await saveImageToDB(dataUrl);
+    if (!photoUrlFromCamera) return;
 
     const trustedTimestamp = createTrustedTimestampRecord();
     const trustedNow = new Date(trustedTimestamp.occurredAtTrustedMs);
@@ -7328,6 +7352,22 @@ export function AppProvider({ children }) {
     const time = formatAppTime(trustedNow);
     const date = formatAppDate(trustedNow);
 
+    // Upload foto ke Firebase Storage dulu sebelum simpan ke state
+    let resolvedPhotoUrl = photoUrlFromCamera;
+    try {
+      const uploadedUrl = await uploadCloudDataUrlAsset({
+        dataUrl,
+        path: createCloudAssetPath('incident-documentation', incidentId, `doc-${trustedTimestamp.occurredAtTrustedMs}`, photoUrlFromCamera),
+      });
+      if (uploadedUrl) {
+        resolvedPhotoUrl = uploadedUrl;
+        cloudAssetCacheRef.current.set(photoUrlFromCamera, uploadedUrl);
+      }
+    } catch (uploadError) {
+      console.error('Gagal upload foto dokumentasi temuan', uploadError);
+    }
+
+    const docId = `doc-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`;
     setIncidentMeta((previousMeta) => ({
       ...previousMeta,
       [incidentId]: {
@@ -7335,8 +7375,8 @@ export function AppProvider({ children }) {
         status: previousMeta[incidentId]?.status || 'open',
         documentation: [
           {
-            id: `doc-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
-            photoUrl,
+            id: docId,
+            photoUrl: resolvedPhotoUrl,
             createdAt,
             date,
             time,
