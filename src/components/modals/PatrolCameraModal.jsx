@@ -2,7 +2,7 @@
 Tujuan: Menyediakan kamera khusus laporan patroli tanpa jalur impor galeri.
 Caller: App shell melalui pendingPatrolCameraCapture dari AppContextRuntime.
 Dependensi: React, lucide-react, AppContextRuntime, adapter native Capacitor, dan utilitas kompresi gambar.
-Main Functions: Menampilkan preview kamera web/Android WebView, mengambil foto 4:5, mengganti kamera depan/belakang, fallback ke kamera native Android, dan memilih galeri hanya untuk update temuan.
+Main Functions: Menampilkan preview kamera web/Android WebView, mengambil foto dengan kualitas terbaik (native camera di Android, input capture di web mobile), mengganti kamera depan/belakang, fallback ke kamera native Android, dan memilih galeri hanya untuk update temuan.
 Side Effects: Memicu permission kamera/galeri, membuka stream kamera perangkat atau UI native fallback, membaca file lokal, dan menghentikan stream saat modal ditutup.
 */
 
@@ -64,6 +64,65 @@ function pickGalleryImageDataUrl() {
   });
 }
 
+/**
+ * Fungsi untuk membuka kamera native perangkat dari browser (web mobile).
+ * Menggunakan <input type="file" capture="environment"> agar perangkat
+ * membuka aplikasi kamera bawaan dengan resolusi penuh, bukan stream WebView.
+ */
+function pickWebCameraDataUrl(cameraDirection = 'environment') {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.capture = cameraDirection; // 'environment' = belakang, 'user' = depan
+  input.multiple = false;
+  input.tabIndex = -1;
+  input.setAttribute('aria-hidden', 'true');
+  input.style.position = 'fixed';
+  input.style.left = '-9999px';
+  input.style.width = '1px';
+  input.style.height = '1px';
+  input.style.opacity = '0';
+  input.style.pointerEvents = 'none';
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      input.onchange = null;
+      input.oncancel = null;
+      if (input.parentNode) {
+        input.parentNode.removeChild(input);
+      }
+    };
+
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) {
+        cleanup();
+        resolve(null);
+        return;
+      }
+
+      try {
+        // Kompresi tetap jalan agar ukuran foto terkontrol untuk sync
+        const dataUrl = await readImageFileAsDataUrl(file);
+        cleanup();
+        resolve(dataUrl);
+      } catch (error) {
+        console.error('Gagal membaca foto dari kamera web', error);
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    input.oncancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 export default function PatrolCameraModal() {
   const {
     pendingPatrolCameraCapture,
@@ -110,8 +169,8 @@ export default function PatrolCameraModal() {
         video: {
           facingMode: { ideal: cameraFacingMode },
           aspectRatio: { ideal: 4 / 5 },
-          width: { ideal: 1080 },
-          height: { ideal: 1350 },
+          width: { min: 720, ideal: 1280 },
+          height: { min: 960, ideal: 1600 },
         },
         audio: false,
       });
@@ -134,6 +193,7 @@ export default function PatrolCameraModal() {
     }
   }, [cameraFacingMode, canUseNativeFallback, pendingPatrolCameraCapture, stopCameraStream, supportsEmbeddedCamera]);
 
+  // Efek untuk memulai native camera otomatis di Android, atau web camera di browser
   React.useEffect(() => {
     if (!pendingPatrolCameraCapture) {
       stopCameraStream();
@@ -141,12 +201,35 @@ export default function PatrolCameraModal() {
       return;
     }
 
+    // Di Android (Capacitor native), langsung buka native camera API tanpa preview
+    if (canUseNativeFallback) {
+      setCameraError('');
+      setIsStartingCamera(true);
+      const direction = cameraFacingMode === 'user' ? 'front' : 'rear';
+
+      captureNativeCameraPhoto({ direction }).then((dataUrl) => {
+        if (!dataUrl) {
+          setIsStartingCamera(false);
+          setCameraError('Pengambilan foto dibatalkan atau tidak menghasilkan gambar.');
+          return;
+        }
+        handlePatrolCameraCapture(dataUrl);
+      }).catch((error) => {
+        console.error('Gagal mengambil foto kamera native', error);
+        setIsStartingCamera(false);
+        setCameraError('Kamera native tidak bisa mengambil foto. Periksa izin kamera Android.');
+      });
+
+      return () => {
+        // cleanup tidak perlu stop stream karena native camera tidak pakai stream
+      };
+    }
+
+    // Di Web, coba preview getUserMedia dulu
     if (!supportsEmbeddedCamera) {
       stopCameraStream();
       setCameraError(
-        canUseNativeFallback
-          ? 'Preview kamera tidak didukung di perangkat ini. Gunakan kamera Android sebagai cadangan.'
-          : 'Browser ini belum mendukung akses kamera langsung.',
+        'Browser ini belum mendukung akses kamera langsung.',
       );
       return;
     }
@@ -156,7 +239,7 @@ export default function PatrolCameraModal() {
     return () => {
       stopCameraStream();
     };
-  }, [canUseNativeFallback, pendingPatrolCameraCapture, startCameraStream, stopCameraStream, supportsEmbeddedCamera]);
+  }, [canUseNativeFallback, cameraFacingMode, pendingPatrolCameraCapture, startCameraStream, stopCameraStream, supportsEmbeddedCamera, handlePatrolCameraCapture]);
 
   const handleClose = React.useCallback(() => {
     stopCameraStream();
@@ -194,7 +277,8 @@ export default function PatrolCameraModal() {
     }
 
     context.drawImage(video, offsetX, offsetY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
-    const dataUrl = canvas.toDataURL('image/webp', 0.82);
+    // Naikkan quality untuk capture dari stream agar detail lebih terjaga
+    const dataUrl = canvas.toDataURL('image/webp', 0.92);
     await handlePatrolCameraCapture(dataUrl);
     stopCameraStream();
   }, [handlePatrolCameraCapture, stopCameraStream]);
@@ -231,6 +315,33 @@ export default function PatrolCameraModal() {
     const direction = cameraFacingMode === 'user' ? 'front' : 'rear';
     handleNativeCapture(direction);
   }, [cameraFacingMode, handleNativeCapture]);
+
+  // Handler untuk web: buka kamera native perangkat via input capture
+  const handleWebNativeCapture = React.useCallback(async () => {
+    if (canUseNativeFallback) {
+      // Di Android native, sudah dihandle otomatis di useEffect
+      return;
+    }
+
+    setIsStartingCamera(true);
+    setCameraError('');
+
+    try {
+      const dir = cameraFacingMode === 'user' ? 'user' : 'environment';
+      const dataUrl = await pickWebCameraDataUrl(dir);
+      if (!dataUrl) {
+        setCameraError('Pengambilan foto dibatalkan atau tidak menghasilkan gambar.');
+        return;
+      }
+      await handlePatrolCameraCapture(dataUrl);
+      stopCameraStream();
+    } catch (error) {
+      console.error('Gagal mengambil foto kamera web', error);
+      setCameraError('Kamera tidak bisa mengambil foto.');
+    } finally {
+      setIsStartingCamera(false);
+    }
+  }, [canUseNativeFallback, cameraFacingMode, handlePatrolCameraCapture, stopCameraStream]);
 
   const handlePickGallery = React.useCallback(async () => {
     if (!isIncidentProgressCapture) return;
@@ -269,38 +380,164 @@ export default function PatrolCameraModal() {
         </div>
 
         <div className="flex-1 flex flex-col p-4 gap-4">
-          <div className="w-full max-w-sm mx-auto aspect-[4/5] rounded-2xl overflow-hidden border border-cyan-900/50 bg-black relative">
-            <video
-              ref={videoRef}
-              className="w-full h-full object-cover"
-              playsInline
-              muted
-              autoPlay
-            />
+          {/* Android native: tidak pakai preview, langsung tampilkan instruksi */}
+          {canUseNativeFallback ? (
+            <div className="w-full max-w-sm mx-auto aspect-[4/5] rounded-2xl overflow-hidden border border-cyan-900/50 bg-black relative flex items-center justify-center">
+              {isStartingCamera ? (
+                <div className="flex flex-col items-center justify-center gap-3 text-center px-6">
+                  <Camera className="w-12 h-12 text-cyan-300 animate-pulse" />
+                  <p className="text-sm font-medium text-cyan-200">Membuka kamera Android...</p>
+                </div>
+              ) : cameraError ? (
+                <div className="flex flex-col items-center justify-center gap-3 text-center px-6">
+                  <CameraOff className="w-10 h-10 text-rose-400" />
+                  <p className="text-sm font-medium text-rose-300">{cameraError}</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-3 text-center px-6">
+                  <Camera className="w-12 h-12 text-cyan-400/60" />
+                  <p className="text-xs text-cyan-400/60">Kamera Android siap digunakan</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Web: preview stream getUserMedia atau fallback instruksi */
+            <div className="w-full max-w-sm mx-auto aspect-[4/5] rounded-2xl overflow-hidden border border-cyan-900/50 bg-black relative">
+              <video
+                ref={videoRef}
+                className="w-full h-full object-cover"
+                playsInline
+                muted
+                autoPlay
+              />
 
-            {(isStartingCamera || cameraError) && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#020617]/90 text-center px-6">
-                {cameraError ? <CameraOff className="w-10 h-10 text-rose-400" /> : <Camera className="w-10 h-10 text-cyan-300 animate-pulse" />}
-                <p className={`text-sm font-medium ${cameraError ? 'text-rose-300' : 'text-cyan-200'}`}>
-                  {cameraError || 'Membuka kamera...'}
-                </p>
-              </div>
-            )}
-          </div>
+              {(isStartingCamera || cameraError) && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#020617]/90 text-center px-6">
+                  {cameraError ? <CameraOff className="w-10 h-10 text-rose-400" /> : <Camera className="w-10 h-10 text-cyan-300 animate-pulse" />}
+                  <p className={`text-sm font-medium ${cameraError ? 'text-rose-300' : 'text-cyan-200'}`}>
+                    {cameraError || 'Membuka kamera...'}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-3">
-            {cameraError ? (
-              <div className={canUseNativeFallback ? 'grid grid-cols-[1fr_auto] gap-3' : 'space-y-3'}>
-                <button
-                  type="button"
-                  onClick={canUseNativeFallback ? handleNativeFallbackCapture : startCameraStream}
-                  disabled={isStartingCamera}
-                  className="py-4 rounded-xl bg-cyan-600 text-white font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Camera className="w-4 h-4" />
-                  {canUseNativeFallback ? `Kamera ${activeCameraLabel}` : 'Coba Lagi'}
-                </button>
-                {canUseNativeFallback && (
+            {canUseNativeFallback ? (
+              /* Android native: tombol kamera + switch */
+              <div className="space-y-3">
+                {cameraError ? (
+                  <div className="grid grid-cols-[1fr_auto] gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const direction = cameraFacingMode === 'user' ? 'front' : 'rear';
+                        handleNativeCapture(direction);
+                      }}
+                      disabled={isStartingCamera}
+                      className="py-4 rounded-xl bg-cyan-600 text-white font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <Camera className="w-4 h-4" />
+                      Coba Lagi - {activeCameraLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSwitchWebCamera}
+                      disabled={isStartingCamera}
+                      className="w-14 rounded-xl border border-cyan-700/60 bg-[#0b1229] text-cyan-300 flex items-center justify-center disabled:opacity-50"
+                      aria-label="Ganti kamera depan atau belakang"
+                      title="Ganti kamera"
+                    >
+                      <RefreshCcw className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className={isIncidentProgressCapture ? 'grid grid-cols-[auto_1fr_auto] gap-3' : 'grid grid-cols-[1fr_auto] gap-3'}>
+                    {isIncidentProgressCapture && (
+                      <button
+                        type="button"
+                        onClick={handlePickGallery}
+                        disabled={isStartingCamera}
+                        className="w-14 rounded-xl border border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-200 flex items-center justify-center disabled:opacity-50 hover:bg-fuchsia-500/20"
+                        aria-label="Pilih foto dari galeri"
+                        title="Pilih galeri"
+                      >
+                        <Images className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const direction = cameraFacingMode === 'user' ? 'front' : 'rear';
+                        handleNativeCapture(direction);
+                      }}
+                      disabled={isStartingCamera}
+                      className="py-4 rounded-xl bg-emerald-600 text-white font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <Camera className="w-4 h-4" />
+                      Ambil Foto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSwitchWebCamera}
+                      disabled={isStartingCamera}
+                      className="w-14 rounded-xl border border-cyan-700/60 bg-[#0b1229] text-cyan-300 flex items-center justify-center disabled:opacity-50"
+                      aria-label="Ganti kamera depan atau belakang"
+                      title="Ganti kamera"
+                    >
+                      <RefreshCcw className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Web: tombol capture dari stream atau kamera native browser */
+              cameraError ? (
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={handleWebNativeCapture}
+                    disabled={isStartingCamera}
+                    className="w-full py-4 rounded-xl bg-cyan-600 text-white font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Buka Kamera HP (Kualitas Tinggi)
+                  </button>
+                  {supportsEmbeddedCamera && (
+                    <button
+                      type="button"
+                      onClick={startCameraStream}
+                      disabled={isStartingCamera}
+                      className="w-full py-3 rounded-xl border border-cyan-700/60 bg-[#0b1229] text-cyan-300 font-bold uppercase tracking-widest text-xs disabled:opacity-50"
+                    >
+                      Coba Preview Webcam
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className={isIncidentProgressCapture ? 'grid grid-cols-[1fr_1fr_auto] gap-3' : 'grid grid-cols-[1fr_auto] gap-3'}>
+                  {isIncidentProgressCapture && (
+                    <button
+                      type="button"
+                      onClick={handlePickGallery}
+                      disabled={isStartingCamera}
+                      className="py-4 rounded-xl border border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-200 font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50 hover:bg-fuchsia-500/20"
+                      aria-label="Pilih foto dari galeri"
+                      title="Pilih galeri"
+                    >
+                      <Images className="w-4 h-4" />
+                      Galeri
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleCapture}
+                    disabled={isStartingCamera}
+                    className="py-4 rounded-xl bg-emerald-600 text-white font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Ambil Foto
+                  </button>
                   <button
                     type="button"
                     onClick={handleSwitchWebCamera}
@@ -311,42 +548,8 @@ export default function PatrolCameraModal() {
                   >
                     <RefreshCcw className="w-4 h-4" />
                   </button>
-                )}
-              </div>
-            ) : (
-              <div className={isIncidentProgressCapture ? 'grid grid-cols-[auto_1fr_auto] gap-3' : 'grid grid-cols-[1fr_auto] gap-3'}>
-                {isIncidentProgressCapture && (
-                  <button
-                    type="button"
-                    onClick={handlePickGallery}
-                    disabled={isStartingCamera}
-                    className="w-14 rounded-xl border border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-200 flex items-center justify-center disabled:opacity-50 hover:bg-fuchsia-500/20"
-                    aria-label="Pilih foto dari galeri"
-                    title="Pilih galeri"
-                  >
-                    <Images className="w-4 h-4" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleCapture}
-                  disabled={isStartingCamera}
-                  className="py-4 rounded-xl bg-emerald-600 text-white font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Camera className="w-4 h-4" />
-                  Ambil Foto
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSwitchWebCamera}
-                  disabled={isStartingCamera}
-                  className="w-14 rounded-xl border border-cyan-700/60 bg-[#0b1229] text-cyan-300 flex items-center justify-center disabled:opacity-50"
-                  aria-label="Ganti kamera depan atau belakang"
-                  title="Ganti kamera"
-                >
-                  <RefreshCcw className="w-4 h-4" />
-                </button>
-              </div>
+                </div>
+              )
             )}
 
             <button

@@ -1,4 +1,12 @@
-export async function readImageFileAsDataUrl(file, maxEdge = 1280, quality = 0.82) {
+/*
+Tujuan: Kompresi gambar ke WebP dengan resize dan quality yang bisa diatur.
+Caller: PatrolCameraModal, PatrolFormView, IncidentFormView, dan komponen lain yang perlu upload foto.
+Dependensi: Canvas API browser.
+Main Functions: readImageFileAsDataUrl (resize + WebP), readFileAsDataUrl (fallback baca mentah).
+Side Effects: Memakai canvas 2D untuk kompresi WebP. Me-revoke objectURL setelah selesai.
+*/
+
+export async function readImageFileAsDataUrl(file, maxEdge = 1600, quality = 0.88) {
   if (!file || !file.type.startsWith("image/")) {
     throw new Error("File yang dipilih bukan gambar.");
   }
