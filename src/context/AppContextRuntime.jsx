@@ -4058,6 +4058,10 @@ export function AppProvider({ children }) {
   const [pendingRegistrations, setPendingRegistrations] = useState([]);
   const hasAppliedRoleLandingRef = useRef(false);
   const publicRegistrationFlowRef = useRef(false);
+  // Guard: flag yang menjadi true setelah onAuthStateChanged mengirim user valid
+  // (bukan null). Mencegah resetAuthSession prematur saat cold start,
+  // ketika Firebase Auth SDK sempat mengirim null sementara sebelum merestore sesi.
+  const firebaseUserEverSetRef = useRef(false);
 
   // Crew migration effect
   useEffect(() => {
@@ -8251,6 +8255,9 @@ export function AppProvider({ children }) {
     }
 
     return subscribeToFirebaseAuthChanges((nextUser) => {
+      if (nextUser) {
+        firebaseUserEverSetRef.current = true;
+      }
       setFirebaseAuthUser(nextUser);
       setFirebaseAuthReady(true);
       if (!nextUser) {
@@ -8316,6 +8323,10 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!isFirebaseAuthEnabled || !firebaseAuthReady) return;
     if (authBusy || authAccessBusy || firebaseAuthUser || !sessionUserId) return;
+    // Guard: jangan reset sesi jika Firebase Auth belum pernah mengirim user valid.
+    // Saat cold start, onAuthStateChanged bisa mengirim null sementara sebelum
+    // IndexedDB selesai dimuat — menyebabkan flash LoginPage jika sesi dihapus.
+    if (!firebaseUserEverSetRef.current) return;
     resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
   }, [authAccessBusy, authBusy, firebaseAuthReady, firebaseAuthUser, resetAuthSession, sessionUserId]);
   useEffect(() => {
@@ -8341,6 +8352,9 @@ export function AppProvider({ children }) {
     if (isFirebaseAuthEnabled) {
       if (!firebaseAuthReady || authBusy || authAccessBusy) return;
       if (!firebaseAuthUser || !authAccessEnabled) {
+        // Guard: jangan reset sesi jika Firebase Auth belum pernah mengirim user valid.
+        // Mencegah flash LoginPage saat cold start.
+        if (!firebaseUserEverSetRef.current) return;
         resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
         return;
       }
