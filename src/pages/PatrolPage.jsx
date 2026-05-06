@@ -23,16 +23,18 @@ function ensureArray(value) {
 }
 
 function getPatrolSummary(checkpoints) {
-  return ensureArray(checkpoints).reduce((summary, checkpoint) => {
-    summary.total += 1;
+  const summary = ensureArray(checkpoints).reduce((acc, checkpoint) => {
+    acc.total += 1;
     if (checkpoint.status === 'completed') {
-      summary.completed += 1;
-      if (checkpoint.resultType === 'aman') summary.aman += 1;
-      if (checkpoint.resultType === 'temuan') summary.temuan += 1;
+      acc.completed += 1;
+      if (checkpoint.resultType === 'aman') acc.aman += 1;
+      if (checkpoint.resultType === 'temuan') acc.temuan += 1;
     }
-    if (checkpoint.status === 'missed' || checkpoint.resultType === 'missed') summary.missed += 1;
-    return summary;
+    return acc;
   }, { aman: 0, temuan: 0, missed: 0, completed: 0, total: 0 });
+  // MISSED = total - (aman + temuan), berlaku untuk shift ongoing maupun history
+  summary.missed = Math.max(0, summary.total - (summary.aman + summary.temuan));
+  return summary;
 }
 
 function getSummaryCardMeta(type) {

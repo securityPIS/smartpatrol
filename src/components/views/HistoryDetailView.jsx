@@ -112,10 +112,12 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
   const safeSummary = React.useMemo(() => {
     const entrySummary = entry?.summary;
     if (entrySummary && typeof entrySummary === 'object') return entrySummary;
+    const aman = checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'aman').length;
+    const temuan = checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'temuan').length;
     return {
-      aman: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'aman').length,
-      temuan: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'temuan').length,
-      missed: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'missed' || checkpoint?.resultType === 'missed').length,
+      aman,
+      temuan,
+      missed: Math.max(0, checkpointEntries.length - (aman + temuan)),
       completed: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed').length,
       total: checkpointEntries.length,
     };
