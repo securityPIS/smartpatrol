@@ -622,6 +622,7 @@ async function sendPushToAccessRecords(accessRecords = [], push = {}) {
     shiftKey: push.shiftKey || '',
     checkpointId: push.checkpointId || '',
     historyId: push.historyId || '',
+    dedupeKey: push.dedupeKey || '',
     senderName: push.senderName || 'SmartPatrol',
     senderRole: push.senderRole || 'SYSTEM',
     createdAt: push.createdAt || new Date().toISOString(),
@@ -1118,6 +1119,7 @@ export const notifyOnPatrolReportWrite = onDocumentWritten(
       shipName,
       shiftKey: sanitizeString(event.params.shiftKey || '', 120),
       checkpointId: sanitizeString(event.params.checkpointId || '', 120),
+      dedupeKey,
       tag: `finding-${incidentId}`,
     });
   },
@@ -1194,6 +1196,7 @@ export const notifyOnSharedStateWrite = onDocumentWritten(
           route: 'incidents/detail',
           incidentId,
           shipName,
+          dedupeKey: `manual-incident:${incidentId}`,
           tag: `incident-${incidentId}`,
         });
       });
@@ -1225,6 +1228,7 @@ export const notifyOnSharedStateWrite = onDocumentWritten(
           route: 'incidents/detail',
           incidentId: safeIncidentId,
           shipName,
+          dedupeKey: `incident-progress:${safeIncidentId}:${progressId}`,
           tag: `incident-progress-${safeIncidentId}`,
         });
       });

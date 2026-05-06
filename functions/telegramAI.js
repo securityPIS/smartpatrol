@@ -235,8 +235,10 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
     
     // Deteksi notifikasi baru atau yang pesannya berubah (untuk pending/wrap-up yang terupdate)
     const newOrUpdatedNotifs = afterNotifs.filter(after => {
-      const before = beforeNotifs.find(b => b.id === after.id);
-      if (!before) return true; // Baru
+      const before = beforeNotifs.find(b => 
+        (after.dedupeKey && b.dedupeKey === after.dedupeKey) || b.id === after.id
+      );
+      if (!before) return true; // Baru (belum ada dedupeKey/id yang cocok)
       return before.message !== after.message; // Update konten (misal: jumlah pending berubah)
     });
     
@@ -246,6 +248,7 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
         'sos',
         'patrol_finding',
         'incident_created',
+        'incident_progress_updated',
         'shift_started',
         'shift_ending_soon',
         'checkpoint_missed',

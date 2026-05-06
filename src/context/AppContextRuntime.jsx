@@ -6021,26 +6021,47 @@ export function AppProvider({ children }) {
     return true;
   }, [activeSOSAlert, notificationRecipientIds, refreshCloudSharedState, sosHistory]);
 
-  const createNotificationFromPushPayload = useCallback((payload = {}) => createNotificationRecord({
-    type: sanitizeText(payload.type || 'push', 80),
-    title: sanitizeText(payload.title || 'SmartPatrol', 120),
-    message: sanitizeText(payload.body || payload.message || '', 240),
-    senderName: sanitizeText(payload.senderName || 'SmartPatrol', 100),
-    senderRole: sanitizeText(payload.senderRole || 'SYSTEM', 40),
-    targetUserIds: notificationRecipientIds,
-    route: normalizeNotificationRoute({
-      route: payload.route,
-      type: payload.type,
-      incidentId: payload.incidentId || payload.sosId || '',
-    }),
-    routeParams: payload.incidentId ? { incidentId: sanitizeText(payload.incidentId, 180) } : {},
-    incidentId: sanitizeText(payload.incidentId || payload.sosId || '', 180),
-    shipName: sanitizeText(payload.shipName || '', 100),
-    shiftKey: sanitizeText(payload.shiftKey || '', 160),
-    historyId: sanitizeText(payload.historyId || '', 180),
-    dedupeKey: sanitizeText(payload.dedupeKey || '', 240),
-    createdAt: sanitizeText(payload.createdAt || new Date().toISOString(), 80),
-  }), [notificationRecipientIds]);
+  const createNotificationFromPushPayload = useCallback((payload = {}) => {
+    // Fallback: generate dedupeKey stabil jika payload FCM lama belum membawanya.
+    const resolvedDedupeKey = sanitizeText(payload.dedupeKey || '', 240) || (() => {
+      const type = sanitizeText(payload.type || '', 80);
+      const incidentId = sanitizeText(payload.incidentId || '', 180);
+      if (!incidentId) return '';
+      if (type === 'incident_progress_updated') {
+        // progressId tidak tersedia di payload lama, tapi incidentId + type cukup
+        // untuk mencegah duplikasi dari FCM yang sama (satu progress per cycle).
+        return `incident-progress-fallback:${incidentId}:${type}`;
+      }
+      if (type === 'incident_created') {
+        const checkpointId = sanitizeText(payload.checkpointId || '', 160);
+        return checkpointId
+          ? `patrol-finding-fallback:${incidentId}:${checkpointId}`
+          : `manual-incident-fallback:${incidentId}`;
+      }
+      return '';
+    })();
+
+    return createNotificationRecord({
+      type: sanitizeText(payload.type || 'push', 80),
+      title: sanitizeText(payload.title || 'SmartPatrol', 120),
+      message: sanitizeText(payload.body || payload.message || '', 240),
+      senderName: sanitizeText(payload.senderName || 'SmartPatrol', 100),
+      senderRole: sanitizeText(payload.senderRole || 'SYSTEM', 40),
+      targetUserIds: notificationRecipientIds,
+      route: normalizeNotificationRoute({
+        route: payload.route,
+        type: payload.type,
+        incidentId: payload.incidentId || payload.sosId || '',
+      }),
+      routeParams: payload.incidentId ? { incidentId: sanitizeText(payload.incidentId, 180) } : {},
+      incidentId: sanitizeText(payload.incidentId || payload.sosId || '', 180),
+      shipName: sanitizeText(payload.shipName || '', 100),
+      shiftKey: sanitizeText(payload.shiftKey || '', 160),
+      historyId: sanitizeText(payload.historyId || '', 180),
+      dedupeKey: resolvedDedupeKey,
+      createdAt: sanitizeText(payload.createdAt || new Date().toISOString(), 80),
+    });
+  }, [notificationRecipientIds]);
 
   const handleNativePushForeground = useCallback((payload = {}) => {
     const notification = createNotificationFromPushPayload(payload);
@@ -6613,6 +6634,7 @@ export function AppProvider({ children }) {
           routeParams: { incidentId: submittedItem.incidentId },
           incidentId: submittedItem.incidentId,
           shipName: operationalShipName,
+          dedupeKey: `patrol-finding:${currentShiftMeta.key}:${operationalShipName}:${id}:${submittedItem.incidentId}`,
           createdAt: submittedItem.completedAt,
         }]);
       }
@@ -6817,6 +6839,7 @@ export function AppProvider({ children }) {
       routeParams: { incidentId: newIncident.id },
       incidentId: newIncident.id,
       shipName: operationalShipName,
+      dedupeKey: `manual-incident:${newIncident.id}`,
       createdAt,
     }]);
     closeIncidentModal();
@@ -7449,6 +7472,7 @@ export function AppProvider({ children }) {
       routeParams: { incidentId },
       incidentId,
       shipName: incident?.shipName || operationalShipName,
+      dedupeKey: `incident-progress:${incidentId}:${progressId}`,
       createdAt,
     }]);
     setNewProgress({ comment: '', photoUrl: null });
@@ -7633,6 +7657,7 @@ export function AppProvider({ children }) {
           routeParams: { incidentId },
           incidentId,
           shipName: incident?.shipName || operationalShipName,
+          dedupeKey: incident?.isSOS ? `sos-closed:${incidentId}` : `incident-closed:${incidentId}`,
           createdAt,
         }]);
         requestCloudSync('urgent');
