@@ -6054,6 +6054,31 @@ export function AppProvider({ children }) {
     setActiveShiftKey(currentShiftMeta.key);
   }, [activeShiftKey, appendNotifications, checkpointsByShip, currentShiftMeta.key, getShipRecipients, shiftStatusRecords, shipsData, usersData, weatherInfo]);
 
+  // Periodic checkpoint migration guard:
+  // Pastikan checkpoint dari shift sebelumnya (misal data masuk via cloud sync)
+  // tidak nyangkut di checkpointsByShip. Efek ini berjalan tiap ada perubahan
+  // data agar catatan lama otomatis dipindahkan ke historyEntries.
+  useEffect(() => {
+    if (shipsData.length === 0) return;
+
+    const migrationResult = migrateCheckpointStateToCurrentShift({
+      ships: shipsData,
+      checkpointsByShip,
+      historyEntries,
+      shiftStatusRecords,
+      users: usersData,
+      currentShiftMeta,
+    });
+
+    if (!migrationResult.migrated) return;
+
+    setCheckpointsByShip(migrationResult.checkpointsByShip);
+    setHistoryEntries(migrationResult.historyEntries);
+    if (migrationResult.shiftStatusRecords) {
+      setShiftStatusRecords(migrationResult.shiftStatusRecords);
+    }
+  }, [checkpointsByShip, historyEntries, shiftStatusRecords, shipsData, usersData, currentShiftMeta]);
+
   const updateOperationalShipCheckpoints = useCallback((updater) => {
     if (!operationalShip?.id) return;
     setCheckpointsByShip((previousState) => {
