@@ -7297,30 +7297,11 @@ export function AppProvider({ children }) {
     const time = formatAppTime(trustedNow);
     const date = formatAppDate(trustedNow);
 
-    // Upload foto ke Firebase Storage dulu jika ada
-    let resolvedPhotoUrl = newProgress.photoUrl;
-    if (resolvedPhotoUrl && (resolvedPhotoUrl.startsWith('idb://') || resolvedPhotoUrl.startsWith('data:'))) {
-      try {
-        const dataUrl = resolvedPhotoUrl.startsWith('idb://')
-          ? await loadImageFromDB(resolvedPhotoUrl)
-          : resolvedPhotoUrl;
-        if (dataUrl) {
-          const uploadedUrl = await uploadCloudDataUrlAsset({
-            dataUrl,
-            path: createCloudAssetPath('incident-progress', incidentId, `progress-${trustedTimestamp.occurredAtTrustedMs}`, resolvedPhotoUrl),
-          });
-          if (uploadedUrl) {
-            resolvedPhotoUrl = uploadedUrl;
-            cloudAssetCacheRef.current.set(resolvedPhotoUrl, uploadedUrl);
-          }
-        }
-      } catch (uploadError) {
-        console.error('Gagal upload foto progress temuan', uploadError);
-      }
-    }
-
+    const localPhotoUrl = newProgress.photoUrl;
     const progressId = `progress-${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`;
-    setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { id: progressId, ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: resolvedPhotoUrl, time, date, author: currentUser, createdAt, ...trustedTimestamp }] } }));
+
+    // Simpan state dengan URL lokal dulu (instan muncul di UI)
+    setIncidentMeta(prev => ({ ...prev, [incidentId]: { ...prev[incidentId], status: prev[incidentId]?.status || 'open', progress: [...(prev[incidentId]?.progress || []), { id: progressId, ...newProgress, comment: sanitizeMultilineText(newProgress.comment, 240), photoUrl: localPhotoUrl, time, date, author: currentUser, createdAt, ...trustedTimestamp }] } }));
     appendNotifications([{
       type: 'incident_progress_updated',
       title: 'Update temuan baru',
@@ -7336,6 +7317,34 @@ export function AppProvider({ children }) {
     }]);
     setNewProgress({ comment: '', photoUrl: null });
     requestCloudSync('urgent');
+
+    // Upload foto ke Firebase Storage di background & update cache
+    if (localPhotoUrl && (localPhotoUrl.startsWith('idb://') || localPhotoUrl.startsWith('data:'))) {
+      const dataUrl = localPhotoUrl.startsWith('idb://')
+        ? await loadImageFromDB(localPhotoUrl)
+        : localPhotoUrl;
+      if (dataUrl) {
+        try {
+          const uploadedUrl = await uploadCloudDataUrlAsset({
+            dataUrl,
+            path: createCloudAssetPath('incident-progress', incidentId, `progress-${trustedTimestamp.occurredAtTrustedMs}`, localPhotoUrl),
+          });
+          if (uploadedUrl) {
+            cloudAssetCacheRef.current.set(localPhotoUrl, uploadedUrl);
+            // Update state dengan URL cloud agar sync berikutnya langsung pakai URL cloud
+            setIncidentMeta(prev => {
+              const currentProgress = prev[incidentId]?.progress || [];
+              const updatedProgress = currentProgress.map(p =>
+                p.id === progressId ? { ...p, photoUrl: uploadedUrl } : p
+              );
+              return { ...prev, [incidentId]: { ...prev[incidentId], progress: updatedProgress } };
+            });
+          }
+        } catch (uploadError) {
+          console.error('Gagal upload foto progress temuan (background), retry queue akan coba lagi.', uploadError);
+        }
+      }
+    }
   }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, newProgress, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, usersData]);
   const handleAddIncidentDocumentation = useCallback(async (incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
