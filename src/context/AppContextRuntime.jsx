@@ -4183,10 +4183,11 @@ export function AppProvider({ children }) {
   const [pendingRegistrations, setPendingRegistrations] = useState([]);
   const hasAppliedRoleLandingRef = useRef(false);
   const publicRegistrationFlowRef = useRef(false);
-  // Guard: flag yang menjadi true setelah onAuthStateChanged mengirim user valid
-  // (bukan null). Mencegah resetAuthSession prematur saat cold start,
-  // ketika Firebase Auth SDK sempat mengirim null sementara sebelum merestore sesi.
-  const firebaseUserEverSetRef = useRef(false);
+  // Tracking deterministik: UID Firebase yang sudah selesai di-resolve accessnya.
+  // String kosong = belum settle; string UID = sudah selesai.
+  const [authAccessResolvedUid, setAuthAccessResolvedUid] = useState('');
+  // Fallback offline: UID yang masih boleh akses lokal walau callable gagal.
+  const [authAccessOfflineUid, setAuthAccessOfflineUid] = useState('');
 
   // Crew migration effect
   useEffect(() => {
@@ -8386,15 +8387,20 @@ export function AppProvider({ children }) {
     }
 
     return subscribeToFirebaseAuthChanges((nextUser) => {
-      if (nextUser) {
-        firebaseUserEverSetRef.current = true;
-      }
       setFirebaseAuthUser(nextUser);
       setFirebaseAuthReady(true);
-      if (!nextUser) {
+      if (nextUser) {
+        // Ada user Firebase aktif: reset resolved UID agar effect resolver
+        // memuat RBAC untuk UID baru (atau re-resolve untuk UID yang sama).
+        setAuthAccessResolvedUid('');
+        setAuthAccessBusy(true);
+      } else {
+        // Tidak ada user: clear access state, biarkan validator yang putuskan reset sesi.
         publicRegistrationFlowRef.current = false;
         setAuthAccessState(null);
         setAuthAccessBusy(false);
+        setAuthAccessResolvedUid('');
+        setAuthAccessOfflineUid('');
       }
     });
   }, []);
@@ -8410,25 +8416,37 @@ export function AppProvider({ children }) {
       return;
     }
 
+    const currentUid = sanitizeText(firebaseAuthUser.uid || '', 160);
+    if (!currentUid) return;
+
     let cancelled = false;
     setAuthAccessBusy(true);
 
     resolveOperationalAccess()
       .then((accessResult) => {
         if (cancelled) return;
-        setAuthAccessState(accessResult || null);
         if (accessResult?.access) {
+          setAuthAccessState(accessResult);
+          setAuthAccessResolvedUid(currentUid);
+          setAuthAccessOfflineUid('');
           setUsersData((previousUsers) => upsertOperationalUserRecord(previousUsers, {
             access: accessResult.access,
             profile: accessResult.profile,
             authUser: firebaseAuthUser,
           }));
+        } else {
+          // Access denied or pending — tetap set resolved agar validator bisa putuskan logout.
+          setAuthAccessState(accessResult || null);
+          setAuthAccessResolvedUid(currentUid);
+          setAuthAccessOfflineUid('');
         }
       })
       .catch((error) => {
         if (cancelled) return;
         console.error('Gagal memuat akses operasional user aktif', error);
+        // Network error / offline — set offline fallback agar sesi tetap valid.
         setAuthAccessState(null);
+        setAuthAccessOfflineUid(currentUid);
       })
       .finally(() => {
         if (!cancelled) {
@@ -8454,12 +8472,13 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!isFirebaseAuthEnabled || !firebaseAuthReady) return;
     if (authBusy || authAccessBusy || firebaseAuthUser || !sessionUserId) return;
-    // Guard: jangan reset sesi jika Firebase Auth belum pernah mengirim user valid.
-    // Saat cold start, onAuthStateChanged bisa mengirim null sementara sebelum
-    // IndexedDB selesai dimuat — menyebabkan flash LoginPage jika sesi dihapus.
-    if (!firebaseUserEverSetRef.current) return;
+    // Guard: jangan reset sesi jika resolveOperationalAccess belum settle untuk UID aktif.
+    // authAccessResolvedUid === '' berarti masih pending. authAccessOfflineUid di-set
+    // saat offline/callable gagal, agar sesi tidak di-reset karena error jaringan.
+    const currentUid = sanitizeText(firebaseAuthUser?.uid || '', 160);
+    if (authAccessResolvedUid !== currentUid && authAccessOfflineUid !== currentUid) return;
     resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
-  }, [authAccessBusy, authBusy, firebaseAuthReady, firebaseAuthUser, resetAuthSession, sessionUserId]);
+  }, [authAccessBusy, authAccessBusy, authAccessResolvedUid, authAccessOfflineUid, authBusy, firebaseAuthReady, firebaseAuthUser, resetAuthSession, sessionUserId]);
   useEffect(() => {
     if (!isAdmin || !hasOperationalCloudAccess) {
       setPendingRegistrations([]);
@@ -8483,9 +8502,11 @@ export function AppProvider({ children }) {
     if (isFirebaseAuthEnabled) {
       if (!firebaseAuthReady || authBusy || authAccessBusy) return;
       if (!firebaseAuthUser || !authAccessEnabled) {
-        // Guard: jangan reset sesi jika Firebase Auth belum pernah mengirim user valid.
-        // Mencegah flash LoginPage saat cold start.
-        if (!firebaseUserEverSetRef.current) return;
+        // Guard: jangan reset sesi jika resolveOperationalAccess belum settle.
+        // authAccessResolvedUid === '' berarti masih pending;
+        // authAccessOfflineUid di-set saat offline agar sesi tetap valid.
+        const currentUid = sanitizeText(firebaseAuthUser?.uid || '', 160);
+        if (authAccessResolvedUid !== currentUid && authAccessOfflineUid !== currentUid) return;
         resetAuthSession('Sesi cloud Anda telah berakhir. Silakan login kembali.');
         return;
       }
@@ -8629,6 +8650,18 @@ export function AppProvider({ children }) {
     showSettingsDropdown,
     theme,
   ]);
+  // isAuthSessionRestoring = true saat sessionUserId ada tapi auth belum settle
+  // (cold start: Firebase Auth belum ready, access masih loading, resolved UID belum cocok).
+  const isAuthSessionRestoring = useMemo(() => {
+    if (!sessionUserId) return false;
+    if (!isFirebaseAuthEnabled) return false;
+    if (!firebaseAuthReady) return true;
+    if (authBusy || authAccessBusy) return true;
+    const currentUid = sanitizeText(firebaseAuthUser?.uid || '', 160);
+    if (currentUid && authAccessResolvedUid !== currentUid && authAccessOfflineUid !== currentUid) return true;
+    return false;
+  }, [sessionUserId, firebaseAuthReady, firebaseAuthUser, authBusy, authAccessBusy, authAccessResolvedUid, authAccessOfflineUid]);
+
   const authValue = useMemo(() => ({
     sessionUserId,
     authAccessStatus,
@@ -8644,6 +8677,7 @@ export function AppProvider({ children }) {
     handleRegister,
     handleLogout,
     handleAuthPhotoUpload,
+    isAuthSessionRestoring,
   }), [
     authAccessBusy,
     authAccessStatus,
@@ -8656,6 +8690,7 @@ export function AppProvider({ children }) {
     handleLogin,
     handleLogout,
     handleRegister,
+    isAuthSessionRestoring,
     sessionUserId,
   ]);
   const roleValue = useMemo(() => ({

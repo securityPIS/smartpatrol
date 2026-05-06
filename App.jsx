@@ -14,8 +14,7 @@ import {
 import Header from './src/components/Header';
 import BottomNav from './src/components/BottomNav';
 import SideNav from './src/components/SideNav';
-
-// LoginPage stays eager and is always the first screen rendered on cold load.
+import LoadingSkeleton from './src/components/LoadingSkeleton';
 import LoginPage from './src/pages/LoginPage';
 import PatrolPage from './src/pages/PatrolPage';
 import IncidentsPage from './src/pages/IncidentsPage';
@@ -97,7 +96,7 @@ class PageErrorBoundary extends React.Component {
 }
 
 function AppShell() {
-  const { sessionUserId } = useAuth();
+  const { sessionUserId, isAuthSessionRestoring } = useAuth();
   const { currentPage, theme, showSettingsDropdown, setShowSettingsDropdown, showNotificationsDropdown, setShowNotificationsDropdown, confirmDialog, setConfirmDialog } = useUI();
   const { isAdmin, isPic } = useRole();
   const { pendingPatrolCameraCapture, activePatrolItem } = usePatrol();
@@ -107,6 +106,28 @@ function AppShell() {
   const { selectedReportDetail, previewPhoto } = useReports();
   const { activeSOSAlert } = useSOS();
   const canAccessDashboard = isAdmin || isPic;
+
+  // Saat ada sessionUserId tapi auth masih restoring (cold start),
+  // tampilkan loading skeleton agar LoginPage tidak muncul flash.
+  if (isAuthSessionRestoring) {
+    return (
+      <>
+        <LoadingSkeleton />
+        {confirmDialog && (
+          <ConfirmModal
+            isOpen={!!confirmDialog}
+            title={confirmDialog?.title}
+            message={confirmDialog?.message}
+            onConfirm={() => confirmDialog?.onConfirm?.()}
+            onCancel={() => setConfirmDialog(null)}
+            confirmText={confirmDialog?.confirmText}
+            cancelText={confirmDialog?.cancelText}
+            isAlert={confirmDialog?.isAlert}
+          />
+        )}
+      </>
+    );
+  }
 
   if (!sessionUserId) {
     return (
