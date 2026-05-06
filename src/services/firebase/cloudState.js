@@ -145,9 +145,37 @@ export async function publishCloudSyncSignal(signal) {
   return signal;
 }
 
+async function uploadWithRetry(dataUrl, path, maxRetries = 3) {
+  if (!firebaseStorage) return null;
+
+  // Daftar delay retry: 1 detik, 3 detik, 7 detik
+  const retryDelays = [1000, 3000, 7000];
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const storageRef = ref(firebaseStorage, path);
+      await uploadString(storageRef, dataUrl, 'data_url');
+      return getDownloadURL(storageRef);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        console.warn(
+          `Upload aset gagal percobaan ke-${attempt + 1}/${maxRetries + 1}, retry dalam ${retryDelays[attempt] || 5000}ms...`,
+          error,
+        );
+        await new Promise(resolve => setTimeout(resolve, retryDelays[attempt] || 5000));
+      }
+    }
+  }
+
+  throw lastError || new Error('Upload gagal setelah retry');
+}
+
 export async function uploadCloudDataUrlAsset({ dataUrl, path }) {
   if (!isCloudWriteEnabled || !dataUrl || !path) return null;
 
+  // Coba via callable function dulu (tanpa retry sendiri, callable sudah handle retry)
   if (firebaseFunctions) {
     try {
       const uploadOperationalAsset = httpsCallable(firebaseFunctions, 'uploadOperationalAsset');
@@ -162,15 +190,17 @@ export async function uploadCloudDataUrlAsset({ dataUrl, path }) {
         return downloadUrl;
       }
     } catch (error) {
-      console.warn('Upload aset patroli via callable gagal, mencoba fallback Storage SDK.', error);
+      console.warn('Upload aset patroli via callable gagal, mencoba fallback Storage SDK dengan retry.', error);
     }
   }
 
-  if (!firebaseStorage) return null;
-
-  const storageRef = ref(firebaseStorage, path);
-  await uploadString(storageRef, dataUrl, 'data_url');
-  return getDownloadURL(storageRef);
+  // Fallback Storage SDK dengan retry 3x exponential backoff
+  try {
+    return await uploadWithRetry(dataUrl, path, 3);
+  } catch (error) {
+    console.error('Upload aset patroli gagal setelah semua percobaan.', error);
+    return null;
+  }
 }
 
 export {

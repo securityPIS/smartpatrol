@@ -4714,11 +4714,104 @@ export function AppProvider({ children }) {
 
     return false;
   }, []);
+  // Batch pool: maksimal N upload gambar concurrent
+  async function processConcurrentBatch(items, maxConcurrent = 3) {
+    if (items.length === 0) return [];
+    const results = [];
+    let index = 0;
+
+    async function worker() {
+      while (index < items.length) {
+        const currentIndex = index++;
+        try {
+          results[currentIndex] = await items[currentIndex]();
+        } catch (error) {
+          results[currentIndex] = null;
+        }
+      }
+    }
+
+    const workers = Array.from({ length: Math.min(maxConcurrent, items.length) }, () => worker());
+    await Promise.all(workers);
+    return results;
+  }
+
+  // Antrian retry upload gambar yang gagal — dicek periodik
+  const failedUploadQueueRef = useRef([]);
+  const failedUploadRetryTimerRef = useRef(null);
+  const RETRY_QUEUE_INTERVAL_MS = 30000; // 30 detik
+
+  const processFailedUploadQueue = useCallback(async () => {
+    const queue = failedUploadQueueRef.current;
+    if (queue.length === 0) return;
+
+    const currentQueue = [...queue];
+    failedUploadQueueRef.current = [];
+
+    for (const item of currentQueue) {
+      // Cek apakah item masih valid (belum terupload sukses di sesi sebelumnya)
+      if (cloudAssetCacheRef.current.has(item.photoUrl)) {
+        const cached = cloudAssetCacheRef.current.get(item.photoUrl);
+        if (cached && cached.startsWith('http')) continue; // sudah sukses
+      }
+
+      try {
+        const dataUrl = item.isInlineDataAsset
+          ? item.photoUrl
+          : await loadImageFromDB(item.photoUrl);
+        if (!dataUrl) {
+          localAssetAvailabilityRef.current.set(item.photoUrl, false);
+          continue;
+        }
+
+        const uploadedUrl = await uploadCloudDataUrlAsset({
+          dataUrl,
+          path: createCloudAssetPath(...item.pathSegments),
+        });
+
+        if (uploadedUrl) {
+          cloudAssetCacheRef.current.set(item.photoUrl, uploadedUrl);
+          localAssetAvailabilityRef.current.set(item.photoUrl, true);
+        } else {
+          // Gagal lagi, masukkan kembali ke queue jika masih ada percobaan
+          if ((item.retryCount || 0) < 5) {
+            failedUploadQueueRef.current.push({
+              ...item,
+              retryCount: (item.retryCount || 0) + 1,
+            });
+          }
+        }
+      } catch {
+        if ((item.retryCount || 0) < 5) {
+          failedUploadQueueRef.current.push({
+            ...item,
+            retryCount: (item.retryCount || 0) + 1,
+          });
+        }
+      }
+    }
+  }, []);
+
+  // Timer periodik untuk retry queue
+  useEffect(() => {
+    const timerId = setInterval(() => {
+      if (failedUploadQueueRef.current.length > 0 && !isOffline) {
+        void processFailedUploadQueue();
+      }
+    }, RETRY_QUEUE_INTERVAL_MS);
+
+    failedUploadRetryTimerRef.current = timerId;
+    return () => clearInterval(timerId);
+  }, [isOffline, processFailedUploadQueue]);
+
   const prepareCloudPhotoUrl = useCallback(async (photoUrl, pathSegments, options = {}) => {
     const shouldSkipUpload = Boolean(options?.skipUpload);
     if (!photoUrl || typeof photoUrl !== 'string') return photoUrl || null;
     if (cloudAssetCacheRef.current.has(photoUrl)) {
-      return cloudAssetCacheRef.current.get(photoUrl) || null;
+      const cached = cloudAssetCacheRef.current.get(photoUrl);
+      // Jika cache berisi null (gagal sebelumnya), jangan langsung return null
+      // — biarkan coba upload ulang
+      if (cached !== null) return cached;
     }
 
     if (isPortableInlineAssetUrl(photoUrl)) {
@@ -4730,10 +4823,9 @@ export function AppProvider({ children }) {
     const isInlineDataAsset = photoUrl.startsWith('data:');
     if (!isIndexedDbAsset && !isInlineDataAsset) return photoUrl;
     if (shouldSkipUpload) return null;
-    if (isIndexedDbAsset && localAssetAvailabilityRef.current.get(photoUrl) === false) {
-      return null;
-    }
 
+    // Jika IndexedDB asset dan sebelumnya ditandai tidak tersedia, masih coba load
+    // (bisa saja file sudah tersedia ulang setelah cleanup atau re-capture)
     const dataUrl = isInlineDataAsset ? photoUrl : await loadImageFromDB(photoUrl);
     if (!dataUrl) {
       localAssetAvailabilityRef.current.set(photoUrl, false);
@@ -4754,122 +4846,241 @@ export function AppProvider({ children }) {
       cloudAssetCacheRef.current.set(photoUrl, resolvedUrl);
       return resolvedUrl;
     } catch (error) {
-      console.error('Gagal upload aset patroli ke cloud', error);
+      console.error('Gagal upload aset patroli ke cloud, memasukkan ke antrian retry.', error);
+      // Hapus cache agar retry berikutnya bisa coba upload ulang
+      cloudAssetCacheRef.current.delete(photoUrl);
+      // Masukkan ke antrian retry background
+      failedUploadQueueRef.current.push({
+        photoUrl,
+        pathSegments,
+        isInlineDataAsset,
+        retryCount: 0,
+      });
       return null;
     }
   }, []);
   const prepareSharedStateForCloudSync = useCallback(async (stateSnapshot, options = {}) => {
     const shouldSkipAssetUpload = Boolean(options?.skipAssetUpload);
     const boundedStateSnapshot = fitSharedStateToCloudBudget(stateSnapshot);
-    const preparedCheckpointsByShip = Object.fromEntries(await Promise.all(
-      Object.entries(boundedStateSnapshot.checkpointsByShip || {}).map(async ([shipId, shipCheckpoints]) => ([
-        shipId,
-        await Promise.all((shipCheckpoints || []).map(async (checkpoint) => compactCheckpointRecordForCloudSync({
-          ...checkpoint,
+
+    if (shouldSkipAssetUpload) {
+      return prepareStateForUrgentCloudSync(boundedStateSnapshot);
+    }
+
+    // Kumpulkan semua tugas upload gambar, urutkan berdasarkan prioritas
+    const uploadTasks = [];
+
+    // PRIORITAS 1: Dokumentasi temuan (incident documentation & progress)
+    Object.entries(boundedStateSnapshot.incidentMeta || {}).forEach(([incidentId, meta]) => {
+      (meta?.documentation || []).forEach((documentationItem, documentationIndex) => {
+        const photoUrl = documentationItem?.photoUrl;
+        if (!photoUrl || !isLocalOnlyAssetUrl(photoUrl)) return;
+        uploadTasks.push(async () => compactMediaAuditRecordForCloudSync({
+          ...documentationItem,
           photoUrl: await prepareCloudPhotoUrl(
-            checkpoint.photoUrl,
-            ['checkpoints', shipId, checkpoint.id, checkpoint.photoUrl],
-            { skipUpload: shouldSkipAssetUpload },
+            photoUrl,
+            ['incident-documentation', incidentId, documentationItem.id || documentationIndex, photoUrl],
+            { skipUpload: false },
           ),
-          galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => (
-            compactMediaAuditRecordForCloudSync({
-              ...galleryPhoto,
+        }));
+      });
+      (meta?.progress || []).forEach((progressItem, progressIndex) => {
+        const photoUrl = progressItem?.photoUrl;
+        if (!photoUrl || !isLocalOnlyAssetUrl(photoUrl)) return;
+        uploadTasks.push(async () => compactMediaAuditRecordForCloudSync({
+          ...progressItem,
+          photoUrl: await prepareCloudPhotoUrl(
+            photoUrl,
+            ['incident-progress', incidentId, progressItem.id || progressIndex, photoUrl],
+            { skipUpload: false },
+          ),
+        }));
+      });
+    });
+
+    // PRIORITAS 2: Checkpoints (temuan lebih dulu, lalu aman)
+    const checkpointTasks = [];
+    Object.entries(boundedStateSnapshot.checkpointsByShip || {}).forEach(([shipId, shipCheckpoints]) => {
+      (shipCheckpoints || []).forEach((checkpoint) => {
+        const cpPhotoUrl = checkpoint?.photoUrl;
+        if (cpPhotoUrl && isLocalOnlyAssetUrl(cpPhotoUrl)) {
+          checkpointTasks.push(async () => ({
+            photoUrl: await prepareCloudPhotoUrl(
+              cpPhotoUrl,
+              ['checkpoints', shipId, checkpoint.id, cpPhotoUrl],
+              { skipUpload: false },
+            ),
+          }));
+        }
+        (checkpoint?.galleryPhotos || []).forEach((galleryPhoto, galleryIndex) => {
+          const gpPhotoUrl = galleryPhoto?.photoUrl;
+          if (gpPhotoUrl && isLocalOnlyAssetUrl(gpPhotoUrl)) {
+            checkpointTasks.push(async () => ({
               photoUrl: await prepareCloudPhotoUrl(
-                galleryPhoto.photoUrl,
-                ['checkpoints-gallery', shipId, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
-                { skipUpload: shouldSkipAssetUpload },
+                gpPhotoUrl,
+                ['checkpoints-gallery', shipId, checkpoint.id, galleryPhoto.id || galleryIndex, gpPhotoUrl],
+                { skipUpload: false },
               ),
-            })
-          ))),
-        }))),
+              id: galleryPhoto.id,
+              author: galleryPhoto.author,
+              createdAt: galleryPhoto.createdAt,
+            }));
+          }
+        });
+      });
+    });
+    uploadTasks.push(...checkpointTasks);
+
+    // PRIORITAS 3: History entries
+    (boundedStateSnapshot.historyEntries || []).forEach((entry) => {
+      (entry.checkpoints || []).forEach((checkpoint) => {
+        const hcpPhotoUrl = checkpoint?.photoUrl;
+        if (hcpPhotoUrl && isLocalOnlyAssetUrl(hcpPhotoUrl)) {
+          uploadTasks.push(async () => ({
+            photoUrl: await prepareCloudPhotoUrl(
+              hcpPhotoUrl,
+              ['history', entry.id || entry.key, checkpoint.id, hcpPhotoUrl],
+              { skipUpload: false },
+            ),
+          }));
+        }
+        (checkpoint?.galleryPhotos || []).forEach((galleryPhoto, galleryIndex) => {
+          const hgpPhotoUrl = galleryPhoto?.photoUrl;
+          if (hgpPhotoUrl && isLocalOnlyAssetUrl(hgpPhotoUrl)) {
+            uploadTasks.push(async () => ({
+              photoUrl: await prepareCloudPhotoUrl(
+                hgpPhotoUrl,
+                ['history-gallery', entry.id || entry.key, checkpoint.id, galleryPhoto.id || galleryIndex, hgpPhotoUrl],
+                { skipUpload: false },
+              ),
+              id: galleryPhoto.id,
+              author: galleryPhoto.author,
+              createdAt: galleryPhoto.createdAt,
+            }));
+          }
+        });
+      });
+      (entry.crewSnapshot || []).forEach((crew) => {
+        const crewPhotoUrl = crew?.photoUrl;
+        if (crewPhotoUrl && isLocalOnlyAssetUrl(crewPhotoUrl)) {
+          uploadTasks.push(async () => ({
+            photoUrl: await prepareCloudPhotoUrl(
+              crewPhotoUrl,
+              ['history-crew', entry.id || entry.key, crew.id || crew.name, crewPhotoUrl],
+              { skipUpload: false },
+            ),
+          }));
+        }
+      });
+    });
+
+    // PRIORITAS 4: Incidents data, ships, users (foto profil)
+    (boundedStateSnapshot.incidentsData || []).forEach((incident) => {
+      const incPhotoUrl = incident?.photoUrl;
+      if (incPhotoUrl && isLocalOnlyAssetUrl(incPhotoUrl)) {
+        uploadTasks.push(async () => ({
+          photoUrl: await prepareCloudPhotoUrl(
+            incPhotoUrl,
+            ['incidents', incident.id, 'photo', incPhotoUrl],
+            { skipUpload: false },
+          ),
+        }));
+      }
+    });
+
+    (boundedStateSnapshot.shipsData || []).forEach((ship) => {
+      const shipPhotoUrl = ship?.photoUrl;
+      if (shipPhotoUrl && isLocalOnlyAssetUrl(shipPhotoUrl)) {
+        uploadTasks.push(async () => ({
+          photoUrl: await prepareCloudPhotoUrl(
+            shipPhotoUrl,
+            ['ships', ship.id, 'cover', shipPhotoUrl],
+            { skipUpload: false },
+          ),
+        }));
+      }
+    });
+
+    (boundedStateSnapshot.usersData || []).forEach((user) => {
+      const userPhotoUrl = user?.photoUrl;
+      if (userPhotoUrl && isLocalOnlyAssetUrl(userPhotoUrl)) {
+        uploadTasks.push(async () => ({
+          photoUrl: await prepareCloudPhotoUrl(
+            userPhotoUrl,
+            ['users', user.id, 'avatar', userPhotoUrl],
+            { skipUpload: false },
+          ),
+        }));
+      }
+    });
+
+    // Jalankan upload dengan batch pool max 3 concurrent
+    if (uploadTasks.length > 0) {
+      await processConcurrentBatch(uploadTasks, 3);
+    }
+
+    // Kompilasi hasil akhir (compact records, foto sudah di-cache oleh prepareCloudPhotoUrl)
+    const preparedCheckpointsByShip = Object.fromEntries(
+      Object.entries(boundedStateSnapshot.checkpointsByShip || {}).map(([shipId, shipCheckpoints]) => ([
+        shipId,
+        (shipCheckpoints || []).map((checkpoint) => compactCheckpointRecordForCloudSync({
+          ...checkpoint,
+          photoUrl: cloudAssetCacheRef.current.get(checkpoint?.photoUrl) || stripLocalAssetUrlSync(checkpoint?.photoUrl) || null,
+          galleryPhotos: (checkpoint.galleryPhotos || []).map((gp) => compactMediaAuditRecordForCloudSync({
+            ...gp,
+            photoUrl: cloudAssetCacheRef.current.get(gp?.photoUrl) || stripLocalAssetUrlSync(gp?.photoUrl) || null,
+          })),
+        })),
       ])),
-    ));
+    );
 
-    const preparedShipsData = await Promise.all((boundedStateSnapshot.shipsData || []).map(async (ship) => ({
-      ...ship,
-      photoUrl: await prepareCloudPhotoUrl(
-        ship.photoUrl,
-        ['ships', ship.id, 'cover', ship.photoUrl],
-        { skipUpload: shouldSkipAssetUpload },
-      ),
-    })));
-
-    const preparedUsersData = await Promise.all((boundedStateSnapshot.usersData || []).map(async (user) => ({
-      ...user,
-      photoUrl: await prepareCloudPhotoUrl(
-        user.photoUrl,
-        ['users', user.id, 'avatar', user.photoUrl],
-        { skipUpload: shouldSkipAssetUpload },
-      ),
-    })));
-
-    const preparedIncidentsData = await Promise.all((boundedStateSnapshot.incidentsData || []).map(async (incident) => compactIncidentRecordForCloudSync({
-      ...incident,
-      photoUrl: await prepareCloudPhotoUrl(
-        incident.photoUrl,
-        ['incidents', incident.id, 'photo', incident.photoUrl],
-        { skipUpload: shouldSkipAssetUpload },
-      ),
-    })));
-
-    const preparedIncidentMeta = Object.fromEntries(await Promise.all(
-      Object.entries(boundedStateSnapshot.incidentMeta || {}).map(async ([incidentId, meta]) => ([
+    const preparedIncidentMeta = Object.fromEntries(
+      Object.entries(boundedStateSnapshot.incidentMeta || {}).map(([incidentId, meta]) => ([
         incidentId,
         {
           ...meta,
-          documentation: await Promise.all((meta?.documentation || []).map(async (documentationItem, documentationIndex) => (
-            compactMediaAuditRecordForCloudSync({
-              ...documentationItem,
-              photoUrl: await prepareCloudPhotoUrl(
-                documentationItem.photoUrl,
-                ['incident-documentation', incidentId, documentationItem.id || documentationIndex, documentationItem.photoUrl],
-                { skipUpload: shouldSkipAssetUpload },
-              ),
-            })
-          ))),
-          progress: await Promise.all((meta?.progress || []).map(async (progressItem, progressIndex) => (
-            compactMediaAuditRecordForCloudSync({
-              ...progressItem,
-              photoUrl: await prepareCloudPhotoUrl(
-                progressItem.photoUrl,
-                ['incident-progress', incidentId, progressItem.id || progressIndex, progressItem.photoUrl],
-                { skipUpload: shouldSkipAssetUpload },
-              ),
-            })
-          ))),
+          documentation: (meta?.documentation || []).map((d) => compactMediaAuditRecordForCloudSync({
+            ...d,
+            photoUrl: cloudAssetCacheRef.current.get(d?.photoUrl) || stripLocalAssetUrlSync(d?.photoUrl) || null,
+          })),
+          progress: (meta?.progress || []).map((p) => compactMediaAuditRecordForCloudSync({
+            ...p,
+            photoUrl: cloudAssetCacheRef.current.get(p?.photoUrl) || stripLocalAssetUrlSync(p?.photoUrl) || null,
+          })),
         },
       ])),
-    ));
+    );
 
-    const preparedHistoryEntries = await Promise.all((boundedStateSnapshot.historyEntries || []).map(async (entry) => compactHistoryEntryForCloudSync({
+    const preparedShipsData = (boundedStateSnapshot.shipsData || []).map((ship) => ({
+      ...ship,
+      photoUrl: cloudAssetCacheRef.current.get(ship?.photoUrl) || stripLocalAssetUrlSync(ship?.photoUrl) || null,
+    }));
+
+    const preparedUsersData = (boundedStateSnapshot.usersData || []).map((user) => ({
+      ...user,
+      photoUrl: cloudAssetCacheRef.current.get(user?.photoUrl) || stripLocalAssetUrlSync(user?.photoUrl) || null,
+    }));
+
+    const preparedIncidentsData = (boundedStateSnapshot.incidentsData || []).map((incident) => compactIncidentRecordForCloudSync({
+      ...incident,
+      photoUrl: cloudAssetCacheRef.current.get(incident?.photoUrl) || stripLocalAssetUrlSync(incident?.photoUrl) || null,
+    }));
+
+    const preparedHistoryEntries = (boundedStateSnapshot.historyEntries || []).map((entry) => compactHistoryEntryForCloudSync({
       ...entry,
-      checkpoints: await Promise.all((entry.checkpoints || []).map(async (checkpoint) => compactCheckpointRecordForCloudSync({
+      checkpoints: (entry.checkpoints || []).map((checkpoint) => compactCheckpointRecordForCloudSync({
         ...checkpoint,
-        photoUrl: await prepareCloudPhotoUrl(
-          checkpoint.photoUrl,
-          ['history', entry.id || entry.key, checkpoint.id, checkpoint.photoUrl],
-          { skipUpload: shouldSkipAssetUpload },
-        ),
-        galleryPhotos: await Promise.all((checkpoint.galleryPhotos || []).map(async (galleryPhoto, galleryIndex) => (
-          compactMediaAuditRecordForCloudSync({
-            ...galleryPhoto,
-            photoUrl: await prepareCloudPhotoUrl(
-              galleryPhoto.photoUrl,
-              ['history-gallery', entry.id || entry.key, checkpoint.id, galleryPhoto.id || galleryIndex, galleryPhoto.photoUrl],
-              { skipUpload: shouldSkipAssetUpload },
-            ),
-          })
-        ))),
-      }))),
-      crewSnapshot: await Promise.all((entry.crewSnapshot || []).map(async (crew) => ({
+        photoUrl: cloudAssetCacheRef.current.get(checkpoint?.photoUrl) || stripLocalAssetUrlSync(checkpoint?.photoUrl) || null,
+        galleryPhotos: (checkpoint.galleryPhotos || []).map((gp) => compactMediaAuditRecordForCloudSync({
+          ...gp,
+          photoUrl: cloudAssetCacheRef.current.get(gp?.photoUrl) || stripLocalAssetUrlSync(gp?.photoUrl) || null,
+        })),
+      })),
+      crewSnapshot: (entry.crewSnapshot || []).map((crew) => ({
         ...crew,
-        photoUrl: await prepareCloudPhotoUrl(
-          crew.photoUrl,
-          ['history-crew', entry.id || entry.key, crew.id || crew.name, crew.photoUrl],
-          { skipUpload: shouldSkipAssetUpload },
-        ),
-      }))),
-    })));
+        photoUrl: cloudAssetCacheRef.current.get(crew?.photoUrl) || stripLocalAssetUrlSync(crew?.photoUrl) || null,
+      })),
+    }));
 
     return fitSharedStateToCloudBudget({
       activeShiftKey: boundedStateSnapshot.activeShiftKey,
