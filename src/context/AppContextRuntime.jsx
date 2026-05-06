@@ -2,7 +2,7 @@
 Tujuan: Menjadi pusat state, flow bisnis, dan sinkronisasi SmartPatrol.
 Caller: Root app melalui AppProvider dan seluruh hook domain aplikasi.
 Dependensi: Seed data, Firebase service (auth/cloud/access), trusted time, utilitas sanitasi, IndexedDB image store, dan adapter native Capacitor.
-Main Functions: Mengelola auth Firebase, onboarding approval, kapal, checkpoint patroli, incidents, history, SOS, dan cloud sync.
+Main Functions: Mengelola auth Firebase, onboarding approval, kapal, checkpoint patroli, incidents, history, SOS, cloud sync, dan retry sinkronisasi saat koneksi pulih.
 Side Effects: Menulis state lokal/cloud, memanggil callable security, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
 */
 
@@ -4280,6 +4280,7 @@ export function AppProvider({ children }) {
   const lastCloudSignalRevisionRef = useRef('');
   const cloudAssetCacheRef = useRef(new Map());
   const localAssetAvailabilityRef = useRef(new Map());
+  const previousOfflineStateRef = useRef(isOffline);
   const cloudSyncPriorityRef = useRef('normal');
   const cloudSyncPriorityVersionRef = useRef(0);
   const cloudSaveQueueRef = useRef(Promise.resolve());
@@ -4378,8 +4379,11 @@ export function AppProvider({ children }) {
   const hasOperationalCloudAccess = useMemo(() => {
     if (!isCloudSyncEnabled) return true;
     if (!isFirebaseAuthEnabled) return Boolean(sessionUserId);
-    return Boolean(firebaseAuthUser && authAccessEnabled);
-  }, [authAccessEnabled, firebaseAuthUser, sessionUserId]);
+    return Boolean(
+      (firebaseAuthUser && authAccessEnabled)
+      || (firebaseAuthUser && authAccessOfflineUid === firebaseAuthUser.uid && sessionUserId),
+    );
+  }, [authAccessEnabled, authAccessOfflineUid, firebaseAuthUser, sessionUserId]);
   const emitCloudSyncSignal = useCallback((options = {}) => {
     if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) {
       return Promise.resolve(null);
@@ -4844,6 +4848,75 @@ export function AppProvider({ children }) {
 
     return false;
   }, []);
+  useEffect(() => {
+    const wasOffline = previousOfflineStateRef.current;
+
+    if (isOffline) {
+      previousOfflineStateRef.current = true;
+      return () => { };
+    }
+
+    if (!wasOffline) return () => { };
+
+    if (
+      !isCloudSyncEnabled
+      || !isCloudWriteEnabled
+      || !hasOperationalCloudAccess
+      || !cloudSyncBootstrapped
+    ) {
+      return () => { };
+    }
+
+    const pendingState = createCloudSyncStateSnapshot(mergeSharedStateSnapshots(
+      latestCloudSharedStateRef.current || {},
+      createSharedStateSnapshot({
+        ...(localSharedStateRef.current || sharedState),
+        activeShiftKey: currentShiftMeta.key,
+      }),
+    ));
+    const serializedPendingState = serializeSharedStateSnapshot(pendingState);
+    const hasPendingLocalAssets = collectLocalOnlyAssetUrls(pendingState).length > 0;
+
+    if (!serializedPendingState || (serializedPendingState === lastCloudSharedStateRef.current && !hasPendingLocalAssets)) {
+      previousOfflineStateRef.current = false;
+      return () => { };
+    }
+
+    if (!hasPendingLocalAssets) {
+      previousOfflineStateRef.current = false;
+      requestCloudSync('urgent');
+      return () => { };
+    }
+
+    let cancelled = false;
+
+    // Saat reconnect, pilih sync normal bila ada aset lokal agar foto idb://
+    // di-upload ke Storage, bukan ikut ter-strip oleh fast-path urgent.
+    hasUploadableLocalAssets(pendingState)
+      .then((hasSyncableLocalAssets) => {
+        if (cancelled) return;
+        previousOfflineStateRef.current = false;
+        requestCloudSync(hasSyncableLocalAssets ? 'normal' : 'urgent');
+      })
+      .catch(() => {
+        if (!cancelled) {
+          previousOfflineStateRef.current = false;
+          requestCloudSync('normal');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cloudSyncBootstrapped,
+    currentShiftMeta.key,
+    hasOperationalCloudAccess,
+    hasUploadableLocalAssets,
+    isOffline,
+    requestCloudSync,
+    sharedState,
+  ]);
   // Batch pool: maksimal N upload gambar concurrent
   async function processConcurrentBatch(items, maxConcurrent = 3) {
     if (items.length === 0) return [];
