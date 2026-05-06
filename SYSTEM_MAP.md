@@ -375,6 +375,7 @@ SmartPatrol/
 | File | Fungsi | Peran |
 |---|---|---|
 | `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `registerPushToken`, `unregisterPushToken`, `notifyOnPatrolReportWrite`, `notifyOnSharedStateWrite`, `sendScheduledOperationalPushNotifications`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + FCM push untuk pending checkpoint, temuan, update temuan, shift started, admin wrap-up, dan SOS. Region `asia-southeast2`. |
+| `functions/telegramAI.js` | `telegramWebhook`, `sendTelegramMessage`, `onCheckpointReportCreated`, `onSharedStateUpdated` | Webhook bot Telegram + trigger Telegram untuk temuan checkpoint, SOS, insiden manual, update progress temuan dari `incidentMeta.progress`, dan notifikasi admin terfilter. |
 
 ### Data
 
@@ -536,6 +537,7 @@ registration-assets/{uid}/** -> aset onboarding publik milik pemilik registrasi
 | **Firebase Hosting** | Deploy SPA | `firebase.json` |
 | **Firebase Cloud Functions** | Server time endpoint (`/api/server-time`) + approval/binding akses operasional + upload aset + FCM trigger/scheduler | `functions/index.js` → `services/time/trustedTime.js`, `services/firebase/access.js`, `services/native/pushNotifications.js` |
 | **Firebase Cloud Messaging** | Push notification Android untuk pending checkpoint, temuan, update temuan, shift started, admin wrap-up, dan SOS data-only high priority | `functions/index.js`, `services/native/pushNotifications.js`, `android/app/google-services.json`, `SmartPatrolMessagingService` |
+| **Telegram Bot API** | Notifikasi grup Telegram untuk temuan baru, update progress temuan, SOS, dan ringkasan operasional terpilih | `functions/telegramAI.js` |
 | **Capacitor Android** | Native shell Android, kamera patroli, GPS perangkat, network status, push notification, full-screen SOS, monotonic clock, launcher icon SmartPatrol, dan splash dark navy | `capacitor.config.ts`, `android/`, `services/native/capacitorBridge.js`, `services/native/pushNotifications.js` |
 | **Open-Meteo API** | Data cuaca real-time (suhu, angin, kondisi) | `AppContextRuntime` (inline fetch di weatherEffect, ~baris 4900-an) |
 | **Google Maps** | Link ke koordinat kapal | `utils/formatters.js` (`buildMapsUrl`) |

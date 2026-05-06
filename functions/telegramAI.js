@@ -2,7 +2,7 @@
 Tujuan: Menyediakan webhook Telegram AI dan notifikasi operasional SmartPatrol ke grup Telegram.
 Caller: Firebase Cloud Functions export dari functions/index.js dan trigger Firestore patrolReports/shared-state.
 Dependensi: Firebase Functions v2, Google Generative AI, Telegram Bot API, dan user_guideline.md sebagai knowledge base.
-Main Functions: telegramWebhook, sendTelegramMessage, onCheckpointReportCreated, dan onSharedStateUpdated.
+Main Functions: telegramWebhook, sendTelegramMessage, onCheckpointReportCreated, onSharedStateUpdated, dan deteksi progress temuan.
 Side Effects: Membaca file knowledge base saat cold start, memanggil Gemini API, mengirim pesan Telegram, dan membaca snapshot Firestore trigger.
 */
 
@@ -44,6 +44,147 @@ const geminiChatModel = genAI.getGenerativeModel({
   model: GEMINI_MODEL_NAME,
   systemInstruction: TELEGRAM_BOT_SYSTEM_INSTRUCTION,
 });
+
+const SMARTPATROL_APP_URL = 'https://smartpatrol-7ff9e.web.app';
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function ensureObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function sanitizeTelegramText(value, fallback = '', maxLength = 500) {
+  if (value == null) return fallback;
+  const normalized = String(value)
+    .replace(/[\u0000-\u001f\u007f<>]/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+  return normalized || fallback;
+}
+
+function escapeTelegramMarkdown(value, fallback = '') {
+  return sanitizeTelegramText(value, fallback)
+    .replace(/([_*`\[])/g, '\\$1');
+}
+
+function normalizeSlugToken(value, fallback = '') {
+  return sanitizeTelegramText(value, fallback, 160)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || fallback;
+}
+
+function createPatrolIncidentIdFromCheckpoint(checkpoint = {}) {
+  const existingIncidentId = sanitizeTelegramText(checkpoint.incidentId || '', '', 200);
+  if (existingIncidentId) return existingIncidentId;
+
+  const checkpointToken = normalizeSlugToken(checkpoint.id || checkpoint.checkpointId || 'checkpoint', 'checkpoint');
+  const completedToken = normalizeSlugToken(checkpoint.completedAt || checkpoint.occurredAtTrustedIso || '', '');
+  return completedToken ? `p-${checkpointToken}-${completedToken}` : `p-${checkpointToken}`;
+}
+
+function getProgressItemKey(progressItem = {}, index = 0) {
+  return sanitizeTelegramText(
+    progressItem.id
+      || progressItem.createdAt
+      || progressItem.updatedAt
+      || `progress-${index}`,
+    '',
+    220,
+  );
+}
+
+function collectNewProgressItems(beforeMeta = {}, afterMeta = {}) {
+  const safeBeforeMeta = ensureObject(beforeMeta);
+  const safeAfterMeta = ensureObject(afterMeta);
+  const beforeProgressKeys = new Set(
+    ensureArray(safeBeforeMeta.progress)
+      .map((item, index) => getProgressItemKey(item, index))
+      .filter(Boolean),
+  );
+
+  return ensureArray(safeAfterMeta.progress)
+    .map((item, index) => ({ item: ensureObject(item), key: getProgressItemKey(item, index) }))
+    .filter(({ key }) => key && !beforeProgressKeys.has(key));
+}
+
+function findCheckpointIncident(state = {}, incidentId = '') {
+  const checkpointsByShip = ensureObject(state.checkpointsByShip);
+  for (const checkpoints of Object.values(checkpointsByShip)) {
+    const match = ensureArray(checkpoints).find((checkpoint) => (
+      createPatrolIncidentIdFromCheckpoint(ensureObject(checkpoint)) === incidentId
+    ));
+    if (match) return ensureObject(match);
+  }
+  return null;
+}
+
+function resolveIncidentForProgress(state = {}, incidentId = '') {
+  const incident = ensureArray(state.incidentsData).find((item) => {
+    const safeItem = ensureObject(item);
+    return sanitizeTelegramText(safeItem.id || safeItem.incidentId || '', '', 200) === incidentId;
+  });
+
+  if (incident) {
+    return {
+      label: sanitizeTelegramText(incident.location || incident.name || incident.title || 'Temuan', 'Temuan', 140),
+      shipName: sanitizeTelegramText(incident.shipName || '', '', 140),
+    };
+  }
+
+  const checkpoint = findCheckpointIncident(state, incidentId);
+  if (checkpoint) {
+    return {
+      label: sanitizeTelegramText(checkpoint.name || checkpoint.checkpointName || 'Temuan', 'Temuan', 140),
+      shipName: sanitizeTelegramText(checkpoint.shipName || '', '', 140),
+    };
+  }
+
+  return {
+    label: 'Temuan',
+    shipName: '',
+  };
+}
+
+async function sendIncidentProgressUpdatesToTelegram(chatId, beforeState = {}, afterState = {}) {
+  const beforeMetaCollection = ensureObject(beforeState.incidentMeta);
+  const afterMetaCollection = ensureObject(afterState.incidentMeta);
+
+  for (const [incidentId, afterMeta] of Object.entries(afterMetaCollection)) {
+    const safeIncidentId = sanitizeTelegramText(incidentId, '', 200);
+    if (!safeIncidentId) continue;
+
+    const newProgressItems = collectNewProgressItems(beforeMetaCollection[safeIncidentId], afterMeta);
+    if (newProgressItems.length === 0) continue;
+
+    const incidentInfo = resolveIncidentForProgress(afterState, safeIncidentId);
+    const incidentUrl = `${SMARTPATROL_APP_URL}/?incidentId=${encodeURIComponent(safeIncidentId)}`;
+
+    for (const { item: progressItem } of newProgressItems) {
+      const author = escapeTelegramMarkdown(progressItem.author || progressItem.createdBy || 'Petugas', 'Petugas');
+      const label = escapeTelegramMarkdown(incidentInfo.label || 'Temuan', 'Temuan');
+      const shipName = escapeTelegramMarkdown(incidentInfo.shipName || 'Tidak Diketahui', 'Tidak Diketahui');
+      const comment = sanitizeTelegramText(progressItem.comment || progressItem.notes || '', '', 900);
+      const commentLine = comment ? `\nUpdate: ${escapeTelegramMarkdown(comment)}` : '';
+
+      // Handler khusus progress menjaga update temuan tetap terkirim tanpa
+      // mengandalkan notifikasi foreground yang bisa dibuat oleh banyak device.
+      const message = `*UPDATE TEMUAN*
+Temuan mendapat update baru dari ${author}.
+
+Kapal: ${shipName}
+Titik: ${label}${commentLine}
+
+Buka Aplikasi:
+${incidentUrl}`;
+
+      await sendTelegramMessage(chatId, message);
+    }
+  }
+}
 
 // Send Message Helper
 export async function sendTelegramMessage(chatId, text) {
@@ -228,6 +369,8 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
         await sendTelegramMessage(chatId, message);
       }
     }
+
+    await sendIncidentProgressUpdatesToTelegram(chatId, beforeState, afterState);
 
     // Deteksi Notifikasi Sistem Lainnya (Shift, Registration, Missed, dll)
     const beforeNotifs = Array.isArray(beforeState.notifications) ? beforeState.notifications : [];

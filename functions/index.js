@@ -850,6 +850,70 @@ function countPendingCheckpoints(checkpoints = []) {
   return Math.max(0, summary.total - summary.completed);
 }
 
+function createMissedCheckpointServer(checkpoint = {}, shiftMeta = {}) {
+  return {
+    id: checkpoint.id,
+    name: checkpoint.name,
+    status: 'missed',
+    resultType: 'missed',
+    completedBy: '-',
+    time: '-',
+    shiftKey: shiftMeta.key || null,
+    shipName: checkpoint.shipName || '',
+    photoUrl: null,
+    penyebab: '',
+    kejadian: 'Titik ini tidak dipatroli pada shift dan tanggal tersebut.',
+    tindakLanjut: 'Masuk status missed pada akhir shift.',
+  };
+}
+
+function buildHistoryEntryServer({ shiftMeta = {}, checkpoints = [], ship = {} } = {}) {
+  const safeShipKey = sanitizeString(ship?.id || ship?.name || 'ship', 120);
+  const historyKey = `${safeShipKey}|${shiftMeta.key || ''}`;
+  const historyId = `history-${historyKey}`;
+  const snapshotCheckpoints = ensureArray(checkpoints).map((cp) => {
+    const safeCheckpoint = ensureObject(cp);
+    if (safeCheckpoint.status === 'completed') {
+      return { ...safeCheckpoint, readOnly: true, historyId };
+    }
+    return {
+      ...createMissedCheckpointServer(safeCheckpoint, shiftMeta),
+      readOnly: true,
+      historyId,
+      shipName: ship?.name || safeCheckpoint.shipName || '',
+    };
+  });
+  const summary = summarizeCheckpointCollection(snapshotCheckpoints);
+  const shipName = normalizeShipName(ship?.name || ship?.id || 'Belum Ada Kapal');
+  const createdAtIso = shiftMeta.endAt instanceof Date && !Number.isNaN(shiftMeta.endAt.getTime())
+    ? shiftMeta.endAt.toISOString()
+    : new Date().toISOString();
+  return {
+    id: historyId,
+    key: historyKey,
+    dateKey: shiftMeta.dateKey || '',
+    shift: shiftMeta.label || '',
+    shiftId: shiftMeta.id || '',
+    time: formatShiftTimeRange(shiftMeta),
+    ship: shipName,
+    shipSnapshot: ship && (ship.id || ship.name)
+      ? {
+          id: ship.id || null,
+          name: ship.name || '',
+          lat: ship.lat ?? null,
+          lng: ship.lng ?? null,
+        }
+      : null,
+    checkpoints: snapshotCheckpoints,
+    summary,
+    points: summary.total,
+    issue: summary.temuan,
+    missed: summary.missed,
+    createdAt: createdAtIso,
+    createdBy: 'system-cloud-function',
+  };
+}
+
 function getJakartaParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: APP_TIME_ZONE,
@@ -1014,6 +1078,63 @@ function buildAdminPendingCheckpointSummary(shipsWithPending = [], shiftMeta = {
   const totalPending = shipsWithPending.reduce((sum, item) => sum + Number(item.pendingCount || 0), 0);
   lines.push('', `Total: ${totalPending} checkpoint di ${shipsWithPending.length} kapal.`);
   return lines.join('\n');
+}
+
+async function ensureHistoryEntriesForShift(shiftMeta = {}) {
+  return await firestore.runTransaction(async (transaction) => {
+    const ref = getSharedStateRef();
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return null;
+
+    const data = snapshot.data() || {};
+    const state = getSharedStatePayload(data);
+    const ships = ensureArray(state.shipsData).filter((ship) => ship?.id || ship?.name);
+    if (!ships.length) return state;
+
+    const targetDateKey = sanitizeString(shiftMeta.dateKey || '', 120);
+    const targetShiftId = sanitizeString(shiftMeta.id || '', 80);
+
+    const haveForShipKey = new Set(
+      ensureArray(state.historyEntries)
+        .filter((entry) => (
+          sanitizeString(entry?.dateKey || '', 120) === targetDateKey
+          && sanitizeString(entry?.shiftId || '', 80) === targetShiftId
+        ))
+        .map((entry) => sanitizeString(
+          entry?.shipSnapshot?.id || entry?.shipId || entry?.ship || entry?.shipName || '',
+          200,
+        ))
+        .filter(Boolean),
+    );
+
+    const newEntries = [];
+    for (const ship of ships) {
+      const shipKey = sanitizeString(ship.id || ship.name || '', 200);
+      if (!shipKey || haveForShipKey.has(shipKey)) continue;
+      const checkpoints = buildNormalizedCheckpointsForShip(state, ship);
+      newEntries.push(buildHistoryEntryServer({ shiftMeta, checkpoints, ship }));
+    }
+    if (newEntries.length === 0) return state;
+
+    const mergedHistoryEntries = [
+      ...ensureArray(state.historyEntries),
+      ...newEntries,
+    ];
+
+    transaction.set(ref, {
+      state: {
+        ...state,
+        historyEntries: mergedHistoryEntries,
+      },
+      clientUpdatedAt: new Date().toISOString(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ...state,
+      historyEntries: mergedHistoryEntries,
+    };
+  });
 }
 
 export const registerPushToken = onCall(
@@ -1282,13 +1403,16 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
       }
 
       if (await claimPushDedupe(`admin-shift-wrap:${previousShift.key}`)) {
+        // Server-side fallback: build history entries dari live checkpoints jika
+        // client belum sempat sync (misal tidak ada user aktif saat transisi shift).
+        const refreshedState = (await ensureHistoryEntriesForShift(previousShift)) || state;
         const adminTargets = await resolveAccessTargets({
           includeAdmins: true,
           includePic: false,
           includePetugas: false,
         });
-        const shortSummary = buildAdminWrapUpSummary(state, previousShift);
-        const detailedSummary = buildAdminWrapUpDetailedSummary(state, previousShift);
+        const shortSummary = buildAdminWrapUpSummary(refreshedState, previousShift);
+        const detailedSummary = buildAdminWrapUpDetailedSummary(refreshedState, previousShift);
         await sendPushToAccessRecords(adminTargets, {
           type: 'shift_history_created',
           title: 'Summary Shift Wrap Up',
