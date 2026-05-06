@@ -761,6 +761,59 @@ function createShipCheckpointCollection(ship) {
   ));
 }
 
+function isTemporaryShiftCheckpoint(checkpoint) {
+  return Boolean(checkpoint?.isTemporaryShiftNode);
+}
+
+function getCheckpointScopedShiftKey(checkpoint) {
+  return sanitizeText(checkpoint?.shiftKey || checkpoint?.createdInShiftKey || '', 160) || null;
+}
+
+function shouldKeepTemporaryShiftCheckpoint(checkpoint, activeShiftKey = null) {
+  if (!isTemporaryShiftCheckpoint(checkpoint)) return false;
+  if (!activeShiftKey) return true;
+
+  const checkpointShiftKey = getCheckpointScopedShiftKey(checkpoint);
+  return !checkpointShiftKey || checkpointShiftKey === activeShiftKey;
+}
+
+function normalizeTemporaryShiftCheckpointForShip(checkpoint, ship, fallbackShiftKey = null) {
+  const safeCheckpoint = ensureObject(checkpoint);
+  if (!safeCheckpoint || !isTemporaryShiftCheckpoint(safeCheckpoint)) return null;
+
+  const id = sanitizeText(String(safeCheckpoint.id || ''), 180);
+  const name = sanitizeText(safeCheckpoint.name || safeCheckpoint.checkpointName || '', 80);
+  if (!id || !name) return null;
+
+  const shiftKey = getCheckpointScopedShiftKey(safeCheckpoint) || fallbackShiftKey || null;
+
+  return {
+    ...safeCheckpoint,
+    id,
+    name,
+    desc: sanitizeMultilineText(
+      safeCheckpoint.desc || 'Titik tambahan sementara untuk shift berjalan.',
+      140,
+    ),
+    status: sanitizeText(safeCheckpoint.status || 'pending', 20) || 'pending',
+    shipId: ship?.id || safeCheckpoint.shipId || null,
+    shipName: ship?.name || safeCheckpoint.shipName || '',
+    isTemporaryShiftNode: true,
+    createdInShiftKey: getCheckpointScopedShiftKey({ createdInShiftKey: safeCheckpoint.createdInShiftKey })
+      || shiftKey,
+    shiftKey,
+  };
+}
+
+function getShiftMetaForCheckpointScope(checkpoint, fallbackMeta = null) {
+  const scopedShiftKey = getCheckpointScopedShiftKey(checkpoint);
+  if (scopedShiftKey) {
+    return getCanonicalShiftMetaFromKey(scopedShiftKey) || getShiftMetaFromKey(scopedShiftKey) || fallbackMeta;
+  }
+
+  return getCanonicalShiftMetaForCheckpoint(checkpoint, fallbackMeta);
+}
+
 function resetCheckpointForShift(checkpoint, options = {}) {
   const {
     updatedAt = getTrustedDate().toISOString(),
@@ -835,7 +888,7 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey =
   const checkpointsById = new Map(safeCheckpoints.map(checkpoint => [String(checkpoint.id), checkpoint]));
   const checkpointsByName = new Map(safeCheckpoints.map(checkpoint => [createCheckpointNameKey(checkpoint.name), checkpoint]));
 
-  return baseCheckpoints.map((baseCheckpoint) => {
+  const normalizedBaseCheckpoints = baseCheckpoints.map((baseCheckpoint) => {
     const matchedCheckpoint = checkpointsById.get(String(baseCheckpoint.id))
       || checkpointsByName.get(createCheckpointNameKey(baseCheckpoint.name));
 
@@ -859,6 +912,21 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey =
       shipName: ship?.name || normalizedCheckpoint.shipName || '',
     };
   });
+
+  const baseCheckpointIds = new Set(normalizedBaseCheckpoints.map(checkpoint => String(checkpoint.id)));
+  const baseCheckpointNameKeys = new Set(normalizedBaseCheckpoints.map(checkpoint => createCheckpointNameKey(checkpoint.name)));
+  const temporaryCheckpoints = safeCheckpoints
+    .filter(checkpoint => shouldKeepTemporaryShiftCheckpoint(checkpoint, activeShiftKey))
+    .map(checkpoint => normalizeTemporaryShiftCheckpointForShip(checkpoint, ship, activeShiftKey))
+    .filter(Boolean)
+    .filter(checkpoint => (
+      !baseCheckpointIds.has(String(checkpoint.id))
+      && !baseCheckpointNameKeys.has(createCheckpointNameKey(checkpoint.name))
+    ));
+
+  // Titik tambahan shift tidak ada di definisi kapal, jadi harus disambung
+  // kembali setelah normalisasi agar tidak hilang saat submit/snapshot cloud.
+  return [...normalizedBaseCheckpoints, ...temporaryCheckpoints];
 }
 
 function createCheckpointsByShipState(ships = [], savedCheckpointsByShip = {}, legacyCheckpoints = null, activeShiftKey = null) {
@@ -1519,8 +1587,13 @@ function migrateCheckpointStateToCurrentShift({
       || checkpointsByName.get(createCheckpointNameKey(baseCheckpoint.name))
       || null
     ));
+    const temporaryCheckpoints = savedCheckpoints
+      .filter(checkpoint => isTemporaryShiftCheckpoint(checkpoint))
+      .map(checkpoint => normalizeTemporaryShiftCheckpointForShip(checkpoint, ship, null))
+      .filter(Boolean);
     const pastShiftGroups = new Map();
     const currentShiftCheckpoints = new Map();
+    const currentTemporaryCheckpoints = [];
 
     matchedCheckpoints.forEach((matchedCheckpoint, index) => {
       if (!matchedCheckpoint || matchedCheckpoint.status !== 'completed' || matchedCheckpoint.isTemporaryShiftNode) return;
@@ -1559,13 +1632,63 @@ function migrateCheckpointStateToCurrentShift({
       currentShiftCheckpoints.set(String(baseCheckpoint.id), normalizedCurrentCheckpoint);
     });
 
+    temporaryCheckpoints.forEach((temporaryCheckpoint) => {
+      const canonicalShiftMeta = getShiftMetaForCheckpointScope(temporaryCheckpoint, safeCurrentShiftMeta);
+      if (!canonicalShiftMeta) return;
+
+      const canonicalShiftStartAt = getShiftScheduleTimes(canonicalShiftMeta).startAt.getTime();
+      const normalizedTemporaryCheckpoint = normalizeTemporaryShiftCheckpointForShip(
+        {
+          ...temporaryCheckpoint,
+          shiftKey: canonicalShiftMeta.key,
+          createdInShiftKey: temporaryCheckpoint.createdInShiftKey || canonicalShiftMeta.key,
+        },
+        ship,
+        canonicalShiftMeta.key,
+      );
+
+      if (!normalizedTemporaryCheckpoint) return;
+
+      if (canonicalShiftStartAt < currentShiftStartAt) {
+        const shiftGroup = pastShiftGroups.get(canonicalShiftMeta.key) || new Map();
+        shiftGroup.set(String(normalizedTemporaryCheckpoint.id), normalizedTemporaryCheckpoint);
+        pastShiftGroups.set(canonicalShiftMeta.key, shiftGroup);
+        didMigrate = true;
+        return;
+      }
+
+      const normalizedCurrentTemporaryCheckpoint = canonicalShiftStartAt > currentShiftStartAt
+        ? {
+          ...normalizedTemporaryCheckpoint,
+          shiftKey: safeCurrentShiftMeta.key,
+          createdInShiftKey: safeCurrentShiftMeta.key,
+        }
+        : normalizedTemporaryCheckpoint;
+
+      if (
+        temporaryCheckpoint.shiftKey !== normalizedCurrentTemporaryCheckpoint.shiftKey
+        || temporaryCheckpoint.shipId !== normalizedCurrentTemporaryCheckpoint.shipId
+        || temporaryCheckpoint.shipName !== normalizedCurrentTemporaryCheckpoint.shipName
+      ) {
+        didMigrate = true;
+      }
+
+      currentTemporaryCheckpoints.push(normalizedCurrentTemporaryCheckpoint);
+    });
+
     pastShiftGroups.forEach((shiftGroup, shiftKey) => {
       const shiftMeta = getShiftMetaFromKey(shiftKey);
       if (!shiftMeta) return;
 
-      const historyCheckpoints = baseCheckpoints.map((baseCheckpoint) => (
-        shiftGroup.get(String(baseCheckpoint.id)) || { ...baseCheckpoint }
-      ));
+      const baseCheckpointIds = new Set(baseCheckpoints.map(baseCheckpoint => String(baseCheckpoint.id)));
+      const historyCheckpoints = [
+        ...baseCheckpoints.map((baseCheckpoint) => (
+          shiftGroup.get(String(baseCheckpoint.id)) || { ...baseCheckpoint }
+        )),
+        ...Array.from(shiftGroup.entries())
+          .filter(([checkpointId]) => !baseCheckpointIds.has(String(checkpointId)))
+          .map(([, checkpoint]) => checkpoint),
+      ];
 
       nextHistoryEntries = mergeHistoryEntries(nextHistoryEntries, [
         buildHistoryEntry({
@@ -1579,7 +1702,7 @@ function migrateCheckpointStateToCurrentShift({
       ]);
     });
 
-    collection[ship.id] = baseCheckpoints.map((baseCheckpoint, index) => {
+    const normalizedBaseCheckpoints = baseCheckpoints.map((baseCheckpoint, index) => {
       const currentShiftCheckpoint = currentShiftCheckpoints.get(String(baseCheckpoint.id));
       if (currentShiftCheckpoint) return currentShiftCheckpoint;
 
@@ -1601,6 +1724,8 @@ function migrateCheckpointStateToCurrentShift({
 
       return { ...baseCheckpoint };
     });
+
+    collection[ship.id] = [...normalizedBaseCheckpoints, ...currentTemporaryCheckpoints];
 
     return collection;
   }, {});
@@ -6590,6 +6715,7 @@ export function AppProvider({ children }) {
   }, [getCanonicalCheckpointRecord, selectedHistoryEntry, operationalShipName, setActiveForms, setSelectedIncident, setSelectedReportDetail]);
   const handleAddCustomPatrolNode = useCallback(() => {
     if (!canAddTemporaryPatrolNode || !operationalShip) return;
+    if (showTrustedTimeGateDialog()) return;
     if (!isCurrentShiftStatusCompleted) {
       setShowShiftStatusModal(true);
       return;
@@ -6604,13 +6730,17 @@ export function AppProvider({ children }) {
       return;
     }
 
+    const trustedTimestamp = createTrustedTimestampRecord();
     updateOperationalShipCheckpoints((previousCheckpoints) => ([
       ...previousCheckpoints,
       {
-        id: `${operationalShip.id}::temporary::${Date.now()}`,
+        id: `${operationalShip.id}::temporary::${trustedTimestamp.occurredAtTrustedMs}-${Math.random().toString(36).slice(2, 8)}`,
         name: safeName,
         desc: 'Titik tambahan sementara untuk shift berjalan.',
         status: 'pending',
+        updatedAt: trustedTimestamp.occurredAtTrustedIso,
+        createdAt: trustedTimestamp.occurredAtTrustedIso,
+        shiftKey: currentShiftMeta.key,
         shipId: operationalShip.id,
         shipName: operationalShip.name,
         isTemporaryShiftNode: true,
@@ -6618,7 +6748,8 @@ export function AppProvider({ children }) {
       },
     ]));
     setNewCustomNode('');
-  }, [canAddTemporaryPatrolNode, checkpoints, currentShiftMeta.key, isCurrentShiftStatusCompleted, newCustomNode, operationalShip, updateOperationalShipCheckpoints]);
+    requestCloudSync('urgent');
+  }, [canAddTemporaryPatrolNode, checkpoints, currentShiftMeta.key, isCurrentShiftStatusCompleted, newCustomNode, operationalShip, requestCloudSync, showTrustedTimeGateDialog, updateOperationalShipCheckpoints]);
   const closePatrolCameraCapture = useCallback(() => {
     setPendingPatrolCameraCapture(null);
   }, []);
