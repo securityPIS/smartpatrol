@@ -124,6 +124,20 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /incidents/{incidentId} {
+      allow read: if hasOperationalSharedStateAccess();
+      allow create, update: if hasOperationalSharedStateAccess()
+        && request.resource.data.keys().hasAny([
+          'id', 'location', 'deskripsi', 'penyebab', 'tindakLanjut',
+          'reportedBy', 'shipName', 'photoUrl', 'status', 'createdAt',
+          'date', 'time', 'isSOS', 'isPatrol',
+          'occurredAtTrustedMs', 'occurredAtTrustedIso',
+          'receivedAtServerMs', 'timeTrustLevel', 'clockTamperDetected'
+        ])
+        && (isAdmin() || isAssignedOperationalShip(request.resource.data.shipName));
+      allow delete: if isAdmin();
+    }
+
     match /pendingRegistrations/{uid} {
       allow create: if isOwner(uid)
         && !exists(/databases/$(database)/documents/pendingRegistrations/$(uid))

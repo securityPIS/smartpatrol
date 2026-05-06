@@ -46,6 +46,11 @@ import {
   subscribeToPatrolReports,
 } from '../services/firebase/patrolReports';
 import {
+  deleteIncidentReport,
+  saveIncidentReport,
+  subscribeToIncidents,
+} from '../services/firebase/incidentReports';
+import {
   approvePendingRegistration,
   createPendingRegistration,
   rejectPendingRegistration,
@@ -6916,8 +6921,9 @@ export function AppProvider({ children }) {
       createdAt,
     }]);
     closeIncidentModal();
+    void saveIncidentReport(newIncident, { clientUpdatedAt: trustedTimestamp.occurredAtClientMs });
     requestCloudSync('urgent');
-  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShip, operationalShipName, requestCloudSync, showTrustedTimeGateDialog]);
+  }, [appendNotifications, closeIncidentModal, currentUser, currentUserRecord, currentUserRole, getShipRecipients, incidentForm, operationalShip, operationalShipName, requestCloudSync, saveIncidentReport, showTrustedTimeGateDialog]);
 
   // Ship handlers
   const activeShip = useMemo(() => shipsData.find(s => s.id === activeShipId), [shipsData, activeShipId]);
@@ -7549,6 +7555,12 @@ export function AppProvider({ children }) {
       createdAt,
     }]);
     setNewProgress({ comment: '', photoUrl: null });
+
+    // Dual-write: simpan progress ke domain doc kecil (non-patrol, non-SOS)
+    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
+      const updatedIncident = { ...incident };
+      void saveIncidentReport(updatedIncident, { clientUpdatedAt: trustedTimestamp.occurredAtClientMs });
+    }
     requestCloudSync('urgent');
 
     // Upload foto ke Firebase Storage di background & update cache
@@ -7629,8 +7641,14 @@ export function AppProvider({ children }) {
         ],
       },
     }));
+
+    // Dual-write: simpan dokumentasi baru ke domain doc kecil
+    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
+      const updatedIncident = { ...incident };
+      void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
+    }
     requestCloudSync('urgent');
-  }, [allIncidents, canManageIncident, currentUser, requestCloudSync, selectedIncident, showTrustedTimeGateDialog]);
+  }, [allIncidents, canManageIncident, currentUser, requestCloudSync, saveIncidentReport, selectedIncident, showTrustedTimeGateDialog]);
   const handleUpdateIncidentInfo = useCallback((incidentId, updates) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!incident || !canManageIncident(incident)) return false;
@@ -7685,8 +7703,25 @@ export function AppProvider({ children }) {
         : previousIncident
     ));
 
+    // Dual-write: simpan update ke domain doc kecil sebagai referensi
+    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
+      const updatedIncident = { ...incident, ...nextIncidentInfo };
+      void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
+    }
+    setSelectedIncident((previousIncident) => (
+      previousIncident?.id === incidentId
+        ? { ...previousIncident, ...nextIncidentInfo }
+        : previousIncident
+    ));
+
+    // Dual-write: simpan update ke domain doc kecil sebagai referensi
+    if (!incident.readOnly && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident.isSOS && !incident.isPatrol) {
+      const updatedIncident = { ...incident, ...nextIncidentInfo };
+      void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
+    }
+
     return true;
-  }, [allIncidents, canManageIncident, selectedIncident]);
+  }, [allIncidents, canManageIncident, saveIncidentReport, selectedIncident]);
   const handleCloseIncident = useCallback((incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canCloseIncident(incident)) return;
@@ -7733,10 +7768,15 @@ export function AppProvider({ children }) {
           dedupeKey: incident?.isSOS ? `sos-closed:${incidentId}` : `incident-closed:${incidentId}`,
           createdAt,
         }]);
+        // Dual-write: simpan status closed ke domain doc kecil
+        if (!incident?.isSOS && typeof incidentId === 'string' && !incidentId.startsWith('p-') && !incident?.isPatrol) {
+          const updatedIncident = { ...incident, status: 'closed' };
+          void saveIncidentReport(updatedIncident, { clientUpdatedAt: Date.now() });
+        }
         requestCloudSync('urgent');
       }
     });
-  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, usersData]);
+  }, [activeSOSAlert, allIncidents, appendNotifications, canCloseIncident, currentUser, currentUserRole, getShipRecipients, incident, incidentId, operationalShipName, requestCloudSync, saveIncidentReport, selectedIncident, showTrustedTimeGateDialog, usersData]);
   const handleDeleteIncident = useCallback((incidentId) => {
     if (!isAdmin) return;
 
@@ -7804,6 +7844,8 @@ export function AppProvider({ children }) {
             delete nextMeta[incidentId];
             return nextMeta;
           });
+          // Dual-write: hapus dokumen incident dari collection domain
+          void deleteIncidentReport(incidentId);
         }
 
         setSelectedIncident((previousIncident) => (
@@ -7812,7 +7854,7 @@ export function AppProvider({ children }) {
         requestCloudSync('urgent');
       },
     });
-  }, [allIncidents, currentShiftMeta.key, isAdmin, requestCloudSync, selectedIncident]);
+  }, [allIncidents, currentShiftMeta.key, deleteIncidentReport, isAdmin, requestCloudSync, selectedIncident]);
   const handlePhotoProgress = useCallback(() => {
     setPendingPatrolCameraCapture({
       id: 'incident-progress',
@@ -8163,6 +8205,27 @@ export function AppProvider({ children }) {
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }, [applyPatrolReportDocuments, currentShiftMeta.key, hasOperationalCloudAccess, patrolReportSubscriptionTargets]);
+  useEffect(() => {
+    if (!isCloudSyncEnabled || !hasOperationalCloudAccess) return () => { };
+
+    let incidentsUnsubscribed = false;
+    const unsubIncidents = subscribeToIncidents((incidentDocuments) => {
+      if (!Array.isArray(incidentDocuments) || incidentDocuments.length === 0) return;
+
+      setIncidentsData((prevIncidents) => {
+        const mergedIncidents = mergeIncidentsCollection(prevIncidents, incidentDocuments);
+        return serializeSharedStateSnapshot(mergedIncidents) === serializeSharedStateSnapshot(prevIncidents)
+          ? prevIncidents
+          : mergedIncidents;
+      });
+    }, (error) => {
+      console.error('Gagal subscribe domain laporan temuan', error);
+    });
+
+    return () => {
+      unsubIncidents();
+    };
+  }, [hasOperationalCloudAccess]);
   useEffect(() => {
     if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return () => { };
     if (patrolReportSubscriptionTargets.length === 0) return () => { };
