@@ -575,6 +575,7 @@ function getCheckpointShiftTimestamp(checkpoint) {
     checkpoint?.completedAt,
     checkpoint?.updatedAt,
     checkpoint?.createdAt,
+    checkpoint?.occurredAtTrustedIso,
   ];
 
   for (let index = 0; index < candidates.length; index += 1) {
@@ -582,6 +583,11 @@ function getCheckpointShiftTimestamp(checkpoint) {
     if (!Number.isNaN(timestamp) && timestamp > 0) {
       return timestamp;
     }
+  }
+
+  const trustedMs = checkpoint?.occurredAtTrustedMs;
+  if (Number.isFinite(trustedMs) && trustedMs > 0) {
+    return trustedMs;
   }
 
   return null;
