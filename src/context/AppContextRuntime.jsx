@@ -774,14 +774,6 @@ function getCheckpointScopedShiftKey(checkpoint) {
   return sanitizeText(checkpoint?.shiftKey || checkpoint?.createdInShiftKey || '', 160) || null;
 }
 
-function shouldKeepTemporaryShiftCheckpoint(checkpoint, activeShiftKey = null) {
-  if (!isTemporaryShiftCheckpoint(checkpoint)) return false;
-  if (!activeShiftKey) return true;
-
-  const checkpointShiftKey = getCheckpointScopedShiftKey(checkpoint);
-  return !checkpointShiftKey || checkpointShiftKey === activeShiftKey;
-}
-
 function normalizeTemporaryShiftCheckpointForShip(checkpoint, ship, fallbackShiftKey = null) {
   const safeCheckpoint = ensureObject(checkpoint);
   if (!safeCheckpoint || !isTemporaryShiftCheckpoint(safeCheckpoint)) return null;
@@ -921,7 +913,7 @@ function normalizeShipScopedCheckpoints(ship, checkpoints = [], activeShiftKey =
   const baseCheckpointIds = new Set(normalizedBaseCheckpoints.map(checkpoint => String(checkpoint.id)));
   const baseCheckpointNameKeys = new Set(normalizedBaseCheckpoints.map(checkpoint => createCheckpointNameKey(checkpoint.name)));
   const temporaryCheckpoints = safeCheckpoints
-    .filter(checkpoint => shouldKeepTemporaryShiftCheckpoint(checkpoint, activeShiftKey))
+    .filter(checkpoint => isTemporaryShiftCheckpoint(checkpoint))
     .map(checkpoint => normalizeTemporaryShiftCheckpointForShip(checkpoint, ship, activeShiftKey))
     .filter(Boolean)
     .filter(checkpoint => (
