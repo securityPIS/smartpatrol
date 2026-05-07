@@ -3134,6 +3134,13 @@ function createCloudAssetPath(...segments) {
     .join('/');
 }
 
+function getIncidentMediaItemKey(item = {}, fallback = '') {
+  return sanitizeText(
+    item?.id || item?.createdAt || item?.comment || item?.photoUrl || fallback || '',
+    180,
+  ).trim();
+}
+
 const CLOUD_SYNC_DEBOUNCE_MS = 300;
 const URGENT_CLOUD_SYNC_DEBOUNCE_MS = 0;
 
@@ -4441,6 +4448,7 @@ export function AppProvider({ children }) {
   const patrolReportDomainWriteCacheRef = useRef(new Map());
   const patrolReportDomainUploadInFlightRef = useRef(new Set());
   const patrolReportLocalMediaRef = useRef(new Map());
+  const incidentDomainUploadInFlightRef = useRef(new Set());
   const pendingShiftStatusRecordsRef = useRef(new Map());
   const localSharedStateRef = useRef(null);
   const activeSOSAlertRef = useRef(activeSOSAlert);
@@ -6172,6 +6180,184 @@ export function AppProvider({ children }) {
         : mergedIncident;
     });
   }, [allIncidents, selectedIncident?.id]);
+  const syncIncidentDomainMediaUpload = useCallback(async ({
+    incidentId,
+    incident,
+    group,
+    item,
+    photoUrl,
+    clientUpdatedAt,
+    updatedAt,
+    updatedBy,
+  }) => {
+    const safeIncidentId = sanitizeText(incidentId || '', 180).trim();
+    const mediaGroup = group === 'documentation' ? 'documentation' : 'progress';
+    const safePhotoUrl = typeof photoUrl === 'string' ? photoUrl : '';
+    const itemKey = getIncidentMediaItemKey(item);
+
+    if (!safeIncidentId || !itemKey || !isLocalOnlyAssetUrl(safePhotoUrl)) return false;
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return false;
+
+    const uploadKey = `${safeIncidentId}|${mediaGroup}|${itemKey}|${safePhotoUrl}`;
+    if (incidentDomainUploadInFlightRef.current.has(uploadKey)) return false;
+
+    incidentDomainUploadInFlightRef.current.add(uploadKey);
+    const startedAtMs = performance.now();
+
+    try {
+      const uploadedUrl = await prepareCloudPhotoUrl(
+        safePhotoUrl,
+        [
+          mediaGroup === 'documentation' ? 'incident-documentation' : 'incident-progress',
+          safeIncidentId,
+          itemKey,
+          safePhotoUrl,
+        ],
+      );
+
+      if (!uploadedUrl || isLocalOnlyAssetUrl(uploadedUrl)) return false;
+
+      const uploadedItem = compactMediaAuditRecordForCloudSync({
+        ...item,
+        photoUrl: uploadedUrl,
+      });
+      const appendOptions = mediaGroup === 'documentation'
+        ? { appendDocumentationItems: [uploadedItem] }
+        : { appendProgressItems: [uploadedItem] };
+      const incidentForDomain = incident || {
+        id: safeIncidentId,
+        incidentId: safeIncidentId,
+        shipName: operationalShipName,
+        status: 'open',
+      };
+      const resolvedStatus = sanitizeText(incidentForDomain.status || '', 30) || 'open';
+
+      const domainSyncResult = await syncIncidentDetailToDomain(incidentForDomain, {
+        status: resolvedStatus,
+        [mediaGroup]: [uploadedItem],
+      }, {
+        incidentId: safeIncidentId,
+        clientUpdatedAt: Number.isFinite(clientUpdatedAt) ? clientUpdatedAt : Date.now(),
+        updatedAt,
+        updatedBy: updatedBy || currentUser,
+        ...appendOptions,
+      });
+
+      if (!domainSyncResult) return false;
+
+      setIncidentMeta((previousMeta) => {
+        const currentMeta = previousMeta[safeIncidentId] || {};
+        const currentItems = ensureArray(currentMeta[mediaGroup]);
+        let didChange = false;
+        const nextItems = currentItems.map((currentItem) => {
+          const currentItemKey = getIncidentMediaItemKey(currentItem);
+          if (currentItemKey !== itemKey) return currentItem;
+
+          const currentPhotoUrl = typeof currentItem?.photoUrl === 'string' ? currentItem.photoUrl : '';
+          if (currentPhotoUrl === uploadedUrl) return currentItem;
+          if (
+            currentPhotoUrl
+            && !isLocalOnlyAssetUrl(currentPhotoUrl)
+            && getAssetUrlPriority(currentPhotoUrl) >= getAssetUrlPriority(uploadedUrl)
+          ) {
+            return currentItem;
+          }
+
+          didChange = true;
+          return {
+            ...currentItem,
+            photoUrl: uploadedUrl,
+          };
+        });
+
+        if (!didChange) return previousMeta;
+        return {
+          ...previousMeta,
+          [safeIncidentId]: {
+            ...currentMeta,
+            [mediaGroup]: nextItems,
+          },
+        };
+      });
+
+      const elapsedMs = Math.round(performance.now() - startedAtMs);
+      if (elapsedMs > 4000) {
+        console.info(`Upload foto ${mediaGroup} temuan selesai dalam ${elapsedMs}ms.`);
+      }
+
+      requestCloudSync('normal');
+      return true;
+    } catch (error) {
+      console.error('Gagal sync foto temuan ke domain, akan dicoba ulang saat koneksi stabil.', error);
+      return false;
+    } finally {
+      incidentDomainUploadInFlightRef.current.delete(uploadKey);
+    }
+  }, [
+    currentUser,
+    hasOperationalCloudAccess,
+    isOffline,
+    operationalShipName,
+    prepareCloudPhotoUrl,
+    requestCloudSync,
+    syncIncidentDetailToDomain,
+  ]);
+  const flushIncidentDomainLocalMediaQueue = useCallback(async () => {
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return;
+
+    const incidentById = new Map(allIncidents.map((incident) => [incident.id, incident]));
+    const uploadTasks = [];
+
+    Object.entries(incidentMeta || {}).forEach(([incidentId, meta]) => {
+      const incident = incidentById.get(incidentId)
+        || (selectedIncident?.id === incidentId ? selectedIncident : null)
+        || {
+          id: incidentId,
+          incidentId,
+          shipName: operationalShipName,
+          status: meta?.status || 'open',
+        };
+
+      ensureArray(meta?.documentation).forEach((item) => {
+        if (!isLocalOnlyAssetUrl(item?.photoUrl)) return;
+        uploadTasks.push(() => syncIncidentDomainMediaUpload({
+          incidentId,
+          incident,
+          group: 'documentation',
+          item,
+          photoUrl: item.photoUrl,
+          clientUpdatedAt: item.occurredAtClientMs || item.createdAtClientMs,
+          updatedAt: item.createdAt,
+          updatedBy: item.author,
+        }));
+      });
+
+      ensureArray(meta?.progress).forEach((item) => {
+        if (!isLocalOnlyAssetUrl(item?.photoUrl)) return;
+        uploadTasks.push(() => syncIncidentDomainMediaUpload({
+          incidentId,
+          incident,
+          group: 'progress',
+          item,
+          photoUrl: item.photoUrl,
+          clientUpdatedAt: item.occurredAtClientMs || item.createdAtClientMs,
+          updatedAt: item.createdAt,
+          updatedBy: item.author,
+        }));
+      });
+    });
+
+    if (uploadTasks.length === 0) return;
+    await processConcurrentBatch(uploadTasks, 2);
+  }, [
+    allIncidents,
+    hasOperationalCloudAccess,
+    incidentMeta,
+    isOffline,
+    operationalShipName,
+    selectedIncident,
+    syncIncidentDomainMediaUpload,
+  ]);
   const activeShiftGuardSnapshot = useMemo(
     () => (operationalShipName ? buildGuardShiftSnapshot(usersData, operationalShipName, checkpoints, currentShiftStatusRecord) : []),
     [checkpoints, currentShiftStatusRecord, operationalShipName, usersData],
@@ -7787,49 +7973,19 @@ export function AppProvider({ children }) {
     });
     requestCloudSync('urgent');
 
-    // Upload foto ke Firebase Storage di background & update cache
-    if (localPhotoUrl && (localPhotoUrl.startsWith('idb://') || localPhotoUrl.startsWith('data:'))) {
-      const dataUrl = localPhotoUrl.startsWith('idb://')
-        ? await loadImageFromDB(localPhotoUrl)
-        : localPhotoUrl;
-      if (dataUrl) {
-        try {
-          const uploadedUrl = await uploadCloudDataUrlAsset({
-            dataUrl,
-            path: createCloudAssetPath('incident-progress', incidentId, `progress-${trustedTimestamp.occurredAtTrustedMs}`, localPhotoUrl),
-          });
-          if (uploadedUrl) {
-            cloudAssetCacheRef.current.set(localPhotoUrl, uploadedUrl);
-            const uploadedProgressRecord = {
-              ...progressRecord,
-              photoUrl: uploadedUrl,
-            };
-            // Update state dengan URL cloud agar sync berikutnya langsung pakai URL cloud
-            setIncidentMeta(prev => {
-              const currentProgress = prev[incidentId]?.progress || [];
-              const updatedProgress = currentProgress.map(p =>
-                p.id === progressId ? { ...p, photoUrl: uploadedUrl } : p
-              );
-              return { ...prev, [incidentId]: { ...prev[incidentId], progress: updatedProgress } };
-            });
-            void syncIncidentDetailToDomain(incident, {
-              ...(domainMeta || nextMeta),
-              progress: [uploadedProgressRecord],
-            }, {
-              incidentId,
-              clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
-              updatedAt: createdAt,
-              updatedBy: currentUser,
-              appendProgressItems: [uploadedProgressRecord],
-            });
-            requestCloudSync('normal');
-          }
-        } catch (uploadError) {
-          console.error('Gagal upload foto progress temuan (background), retry queue akan coba lagi.', uploadError);
-        }
-      }
+    if (isLocalOnlyAssetUrl(localPhotoUrl)) {
+      void syncIncidentDomainMediaUpload({
+        incidentId,
+        incident,
+        group: 'progress',
+        item: progressRecord,
+        photoUrl: localPhotoUrl,
+        clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+        updatedAt: createdAt,
+        updatedBy: currentUser,
+      });
     }
-  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, incidentMeta, newProgress, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, syncIncidentDetailToDomain, usersData]);
+  }, [allIncidents, appendNotifications, canManageIncident, currentUser, currentUserRole, getShipRecipients, incidentMeta, newProgress, operationalShipName, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, syncIncidentDetailToDomain, syncIncidentDomainMediaUpload, usersData]);
   const handleAddIncidentDocumentation = useCallback(async (incidentId) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!canManageIncident(incident)) return;
@@ -7890,45 +8046,17 @@ export function AppProvider({ children }) {
     });
     requestCloudSync('urgent');
 
-    try {
-      const uploadedUrl = await uploadCloudDataUrlAsset({
-        dataUrl,
-        path: createCloudAssetPath('incident-documentation', incidentId, `doc-${trustedTimestamp.occurredAtTrustedMs}`, photoUrlFromCamera),
-      });
-      if (uploadedUrl) {
-        cloudAssetCacheRef.current.set(photoUrlFromCamera, uploadedUrl);
-        const uploadedDocumentationRecord = {
-          ...documentationRecord,
-          photoUrl: uploadedUrl,
-        };
-        setIncidentMeta((previousMeta) => {
-          const documentationItems = previousMeta[incidentId]?.documentation || [];
-          return {
-            ...previousMeta,
-            [incidentId]: {
-              ...previousMeta[incidentId],
-              documentation: documentationItems.map((item) => (
-                item.id === docId ? { ...item, photoUrl: uploadedUrl } : item
-              )),
-            },
-          };
-        });
-        void syncIncidentDetailToDomain(incident, {
-          ...domainMeta,
-          documentation: [uploadedDocumentationRecord],
-        }, {
-          incidentId,
-          clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
-          updatedAt: createdAt,
-          updatedBy: currentUser,
-          appendDocumentationItems: [uploadedDocumentationRecord],
-        });
-        requestCloudSync('normal');
-      }
-    } catch (uploadError) {
-      console.error('Gagal upload foto dokumentasi temuan', uploadError);
-    }
-  }, [allIncidents, canManageIncident, currentUser, incidentMeta, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, syncIncidentDetailToDomain]);
+    void syncIncidentDomainMediaUpload({
+      incidentId,
+      incident,
+      group: 'documentation',
+      item: documentationRecord,
+      photoUrl: photoUrlFromCamera,
+      clientUpdatedAt: trustedTimestamp.occurredAtClientMs,
+      updatedAt: createdAt,
+      updatedBy: currentUser,
+    });
+  }, [allIncidents, canManageIncident, currentUser, incidentMeta, requestCloudSync, selectedIncident, showTrustedTimeGateDialog, syncIncidentDetailToDomain, syncIncidentDomainMediaUpload]);
   const handleUpdateIncidentInfo = useCallback((incidentId, updates) => {
     const incident = allIncidents.find(item => item.id === incidentId) || selectedIncident;
     if (!incident || !canManageIncident(incident)) return false;
@@ -8573,6 +8701,23 @@ export function AppProvider({ children }) {
       unsubIncidents();
     };
   }, [hasOperationalCloudAccess]);
+  useEffect(() => {
+    const hasLocalIncidentMedia = Object.values(incidentMeta || {}).some((meta) => (
+      ensureArray(meta?.documentation).some((item) => isLocalOnlyAssetUrl(item?.photoUrl))
+      || ensureArray(meta?.progress).some((item) => isLocalOnlyAssetUrl(item?.photoUrl))
+    ));
+
+    if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline || !hasLocalIncidentMedia) {
+      return () => { };
+    }
+
+    void flushIncidentDomainLocalMediaQueue();
+    const timerId = setInterval(() => {
+      void flushIncidentDomainLocalMediaQueue();
+    }, RETRY_QUEUE_INTERVAL_MS);
+
+    return () => clearInterval(timerId);
+  }, [flushIncidentDomainLocalMediaQueue, hasOperationalCloudAccess, incidentMeta, isOffline]);
   useEffect(() => {
     if (!isCloudSyncEnabled || !isCloudWriteEnabled || !hasOperationalCloudAccess || isOffline) return () => { };
     if (patrolReportSubscriptionTargets.length === 0) return () => { };
