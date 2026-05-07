@@ -78,7 +78,7 @@ const NotificationsPage = React.memo(function NotificationsPage() {
               key={notification.id}
               type="button"
               onClick={() => handleNotificationClick(notification)}
-              className={`w-full text-left rounded-2xl border p-4 transition-colors ${isUnread ? 'border-cyan-500/30 bg-cyan-500/8' : 'border-cyan-900/40 bg-[#070b19]'} hover:border-cyan-400/40`}
+              className={`notification-list-item w-full text-left rounded-2xl border p-4 transition-colors ${isUnread ? 'border-cyan-500/30 bg-cyan-500/8' : 'border-cyan-900/40 bg-[#070b19]'} hover:border-cyan-400/40`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">

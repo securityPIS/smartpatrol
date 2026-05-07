@@ -12,7 +12,7 @@
 | **Tujuan** | Aplikasi web patroli keamanan kapal/armada laut. Petugas lapangan mencatat hasil checkpoint per shift, melaporkan insiden, dan mengirim SOS darurat. Admin memantau laporan harian, mengelola user/crew, dan armada kapal. |
 | **Runtime** | Node.js 22 (cloud functions), browser (SPA), Android WebView via Capacitor |
 | **Framework** | React 19 + Vite 8 + TailwindCSS v4 |
-| **UI** | Single Page App, responsive (mobile-first + desktop sidebar), dark theme Chakra Petch font, glassmorphism style |
+| **UI** | Single Page App, responsive (mobile-first + desktop sidebar), dark theme Chakra Petch font dengan glassmorphism style + light mode Flip7-adapted (`pertamina-light`) memakai palet teal/coral/gold, surface cream, glow ringan, dan card accent operasional |
 | **Backend** | Firebase (Auth, Firestore, Storage, Cloud Functions, Hosting) |
 | **Database** | Firestore (koleksi domain `patrolReports/{shiftKey}/ships/{shipId}/checkpoints/{checkpointId}` untuk realtime laporan kecil + dokumen `smartpatrol/shared-state` sebagai fallback/cache global + `smartpatrol/shared-signal` + `pushTokens`/`pushDedupe` untuk FCM) + localStorage + IndexedDB (gambar) |
 | **Auth** | Firebase Auth (email/password) sebagai sumber utama. Approval akses operasional memakai `userAccess/{uid}` dan onboarding publik memakai `pendingRegistrations/{uid}`. |
