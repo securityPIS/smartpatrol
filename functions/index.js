@@ -2,8 +2,8 @@
 Tujuan: Menyediakan trusted server time, kontrol akses operasional, dan notifikasi operasional/admin lewat Cloud Functions.
 Caller: Client web/native untuk sinkronisasi waktu, binding akun Firebase Auth, approval onboarding, registrasi push token, dan trigger Firestore.
 Dependensi: Firebase Functions v2, Firebase Admin SDK, dan model sanitasi security lokal.
-Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, push notification, approval onboarding, trusted time, dan pruneStaleCheckpointsFromSharedState.
-Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, pushTokens, incidents, shared-state.notifications, shared-state.checkpointsByShip (cleanup blob bengkak), memperbarui custom claims Firebase Auth, mengirim FCM, dan mengembalikan trusted server time.
+Main Functions: getServerTime, resolveOperationalAccess, syncOperationalUserAccess, push notification, approval onboarding, trusted time, pending checkpoint shift aktif, dan pruneStaleCheckpointsFromSharedState.
+Side Effects: Membaca/menulis Firestore pendingRegistrations, userAccess, pushTokens, incidents, patrolReports, shared-state.notifications, shared-state.checkpointsByShip (cleanup blob bengkak), memperbarui custom claims Firebase Auth, mengirim FCM/Telegram-forwarded notification, dan mengembalikan trusted server time.
 */
 
 import { createHash } from 'node:crypto';
@@ -22,6 +22,10 @@ import {
   sanitizeEmailValue,
   sanitizePhoneValue,
 } from './accessModels.js';
+import {
+  buildCheckpointRosterForShipShift,
+  countPendingCheckpointsInRoster,
+} from './pendingCheckpoints.js';
 
 initializeApp();
 
@@ -32,6 +36,7 @@ const PENDING_REGISTRATIONS_COLLECTION = 'pendingRegistrations';
 const USER_ACCESS_COLLECTION = 'userAccess';
 const PUSH_TOKENS_COLLECTION = 'pushTokens';
 const PUSH_DEDUPE_COLLECTION = 'pushDedupe';
+const PATROL_REPORTS_COLLECTION = 'patrolReports';
 const MAX_NOTIFICATION_ITEMS = 250;
 const APP_TIME_ZONE = 'Asia/Jakarta';
 const PUSH_ALERT_CHANNEL_ID = 'smartpatrol-alerts';
@@ -788,54 +793,12 @@ function isActiveSOS(alert = {}) {
   return Boolean(alert?.id && sanitizeString(alert.status || 'active', 30) !== 'resolved');
 }
 
-function getCheckpointCollectionForShip(state = {}, ship = {}) {
-  const checkpointsByShip = ensureObject(state.checkpointsByShip);
-  const candidates = [
-    ship.id,
-    ship.name,
-    sanitizeStorageSegment(ship.name || '', ''),
-  ].map((item) => sanitizeString(item || '', 120)).filter(Boolean);
-
-  for (const candidate of candidates) {
-    if (Array.isArray(checkpointsByShip[candidate])) return checkpointsByShip[candidate];
-  }
-
-  return [];
-}
-
-function normalizeCheckpointNameKey(name) {
-  return sanitizeString(name || '', 120).trim().toLowerCase();
-}
-
-function createShipCheckpointId(ship, checkpointName, index) {
-  const slug = sanitizeString(checkpointName || '', 120)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '') || `checkpoint-${index + 1}`;
-  return `${sanitizeString(ship?.id || ship?.name || 'ship', 120)}::${slug}::${index + 1}`;
-}
-
-function buildNormalizedCheckpointsForShip(state = {}, ship = {}) {
-  const definitions = ensureArray(ship.customCheckpoints);
-  if (definitions.length === 0) return getCheckpointCollectionForShip(state, ship);
-
-  const rawCheckpoints = getCheckpointCollectionForShip(state, ship);
-  const byId = new Map(rawCheckpoints.map((cp) => [sanitizeString(cp?.id || '', 200), cp]));
-  const byName = new Map(rawCheckpoints.map((cp) => [normalizeCheckpointNameKey(cp?.name), cp]));
-
-  return definitions.map((def, index) => {
-    const expectedId = createShipCheckpointId(ship, def?.name, index);
-    const nameKey = normalizeCheckpointNameKey(def?.name);
-    const matched = byId.get(expectedId) || (nameKey ? byName.get(nameKey) : null);
-    if (matched && matched.status === 'completed') return matched;
-    return {
-      id: expectedId,
-      name: sanitizeString(def?.name || '', 80) || `Checkpoint ${index + 1}`,
-      status: matched?.status || 'pending',
-      resultType: matched?.resultType || null,
-      isTemporaryShiftNode: false,
-    };
+function buildNormalizedCheckpointsForShip(state = {}, ship = {}, shiftMeta = {}, reportDocuments = []) {
+  return buildCheckpointRosterForShipShift({
+    state,
+    ship,
+    shiftMeta,
+    reportDocuments,
   });
 }
 
@@ -849,7 +812,7 @@ function summarizeCheckpointCollection(checkpoints = [], options = {}) {
     const isMissed = isExplicitMissed || (treatIncompleteAsMissed && !isCompleted);
     const isTemporary = Boolean(checkpoint?.isTemporaryShiftNode);
 
-    if (isTemporary) return summary;
+    if (isTemporary && options.includeTemporary === false) return summary;
     summary.total += 1;
     if (isCompleted) summary.completed += 1;
     if (resultType === 'aman') summary.aman += 1;
@@ -866,8 +829,7 @@ function summarizeCheckpointCollection(checkpoints = [], options = {}) {
 }
 
 function countPendingCheckpoints(checkpoints = []) {
-  const summary = summarizeCheckpointCollection(checkpoints);
-  return Math.max(0, summary.total - summary.completed);
+  return countPendingCheckpointsInRoster(checkpoints);
 }
 
 function createMissedCheckpointServer(checkpoint = {}, shiftMeta = {}) {
@@ -884,6 +846,8 @@ function createMissedCheckpointServer(checkpoint = {}, shiftMeta = {}) {
     penyebab: '',
     kejadian: 'Titik ini tidak dipatroli pada shift dan tanggal tersebut.',
     tindakLanjut: 'Masuk status missed pada akhir shift.',
+    isTemporaryShiftNode: Boolean(checkpoint.isTemporaryShiftNode),
+    createdInShiftKey: checkpoint.createdInShiftKey || shiftMeta.key || null,
   };
 }
 
@@ -1024,6 +988,33 @@ function minutesBetween(leftDate, rightDate) {
   return Math.floor((leftDate.getTime() - rightDate.getTime()) / 60000);
 }
 
+async function fetchPatrolReportDocumentsForShipShift(shiftMeta = {}, ship = {}) {
+  const shiftKey = sanitizeString(shiftMeta.key || '', 180);
+  const shipId = sanitizeString(ship.id || '', 180);
+  if (!shiftKey || !shipId) return [];
+
+  const snapshot = await firestore
+    .collection(PATROL_REPORTS_COLLECTION)
+    .doc(shiftKey)
+    .collection('ships')
+    .doc(shipId)
+    .collection('checkpoints')
+    .get();
+
+  return snapshot.docs.map((reportDoc) => {
+    const report = reportDoc.data() || {};
+    return {
+      ...report,
+      firestoreId: reportDoc.id,
+      id: report.id || report.checkpointId || reportDoc.id,
+      checkpointId: report.checkpointId || report.id || reportDoc.id,
+      shipId: report.shipId || shipId,
+      shipName: report.shipName || ship.name || '',
+      shiftKey: report.shiftKey || shiftKey,
+    };
+  });
+}
+
 function getHistoryEntryForShift(state = {}, ship = {}, shiftMeta = {}) {
   const safeShipId = sanitizeString(ship.id || '', 120);
   const safeShipName = normalizeShipName(ship.name || '');
@@ -1131,7 +1122,7 @@ async function ensureHistoryEntriesForShift(shiftMeta = {}) {
     for (const ship of ships) {
       const shipKey = sanitizeString(ship.id || ship.name || '', 200);
       if (!shipKey || haveForShipKey.has(shipKey)) continue;
-      const checkpoints = buildNormalizedCheckpointsForShip(state, ship);
+      const checkpoints = buildNormalizedCheckpointsForShip(state, ship, shiftMeta);
       newEntries.push(buildHistoryEntryServer({ shiftMeta, checkpoints, ship }));
     }
     if (newEntries.length === 0) return state;
@@ -1502,7 +1493,17 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
     if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
       const shipsWithPending = [];
       for (const ship of ships) {
-        const checkpoints = buildNormalizedCheckpointsForShip(state, ship);
+        let reportDocuments = [];
+        try {
+          reportDocuments = await fetchPatrolReportDocumentsForShipShift(currentShift, ship);
+        } catch (error) {
+          console.warn('Gagal membaca patrolReports untuk hitung pending checkpoint.', {
+            shiftKey: currentShift.key,
+            shipId: ship?.id || null,
+            message: error?.message || String(error),
+          });
+        }
+        const checkpoints = buildNormalizedCheckpointsForShip(state, ship, currentShift, reportDocuments);
         const pendingCount = countPendingCheckpoints(checkpoints);
         if (pendingCount <= 0) continue;
 
@@ -1561,14 +1562,12 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
       }
     }
 
-    await pruneStaleCheckpointsFromSharedState(ships);
+    await pruneStaleCheckpointsFromSharedState(ships, currentShift);
   },
 );
 
-async function pruneStaleCheckpointsFromSharedState(ships = []) {
-  const eligibleShips = ships.filter(
-    (ship) => ensureArray(ship.customCheckpoints).length > 0,
-  );
+async function pruneStaleCheckpointsFromSharedState(ships = [], shiftMeta = {}) {
+  const eligibleShips = ships.filter((ship) => ship?.id || ship?.name);
   if (eligibleShips.length === 0) return;
 
   await firestore.runTransaction(async (transaction) => {
@@ -1583,14 +1582,14 @@ async function pruneStaleCheckpointsFromSharedState(ships = []) {
     const pruned = { ...checkpointsByShip };
 
     for (const ship of eligibleShips) {
-      const definitions = ensureArray(ship.customCheckpoints);
       const candidates = [ship.id, ship.name, sanitizeStorageSegment(ship.name || '', '')]
         .map((k) => sanitizeString(k || '', 120)).filter(Boolean);
 
       for (const key of candidates) {
         if (!Array.isArray(pruned[key])) continue;
-        if (pruned[key].length <= definitions.length) break;
-        pruned[key] = buildNormalizedCheckpointsForShip({ checkpointsByShip: pruned }, ship);
+        const normalized = buildNormalizedCheckpointsForShip({ checkpointsByShip: pruned }, ship, shiftMeta);
+        if (pruned[key].length <= normalized.length) break;
+        pruned[key] = normalized;
         didPrune = true;
         break;
       }

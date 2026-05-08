@@ -165,7 +165,7 @@ Scheduler:
   sendScheduledOperationalPushNotifications(every 5 minutes)
     → shift_started per kapal untuk PIC/Petugas
     → shift_wrap_up satu notifikasi admin berisi summary semua kapal
-    → checkpoint_pending menjelang akhir shift
+    → checkpoint_pending menjelang akhir shift (roster server = default + custom kapal + titik tambahan shift aktif; completed hanya dari patrolReports/shared-state shift aktif)
 ```
 
 ---
@@ -376,7 +376,8 @@ SmartPatrol/
 
 | File | Fungsi | Peran |
 |---|---|---|
-| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `registerPushToken`, `unregisterPushToken`, `notifyOnPatrolReportWrite`, `notifyOnIncidentReportWrite`, `notifyOnSharedStateWrite`, `sendScheduledOperationalPushNotifications`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + FCM push untuk pending checkpoint, temuan, update temuan dari domain kecil, shift started, admin wrap-up, dan SOS. Region `asia-southeast2`. |
+| `functions/index.js` | `getServerTime`, `resolveOperationalAccess`, `syncOperationalUserAccess`, `approvePendingRegistration`, `rejectPendingRegistration`, `revokeOperationalUserAccess`, `registerPushToken`, `unregisterPushToken`, `notifyOnPatrolReportWrite`, `notifyOnIncidentReportWrite`, `notifyOnSharedStateWrite`, `sendScheduledOperationalPushNotifications`, `notifyAdminsOnPendingRegistrationCreate` | Trusted server time + kontrol binding/approval akses operasional + FCM push untuk pending checkpoint berbasis roster shift aktif, temuan, update temuan dari domain kecil, shift started, admin wrap-up, dan SOS. Region `asia-southeast2`. |
+| `functions/pendingCheckpoints.js` | `buildCheckpointRosterForShipShift`, `countPendingCheckpointsInRoster`, `getServerCheckpointDefinitionsForShip` | Helper murni untuk menghitung roster checkpoint server per kapal/shift dari default global, custom checkpoint kapal, titik tambahan shift aktif, patrolReports shift aktif, dan fallback shared-state yang masih valid untuk shift tersebut. |
 | `functions/telegramAI.js` | `telegramWebhook`, `sendTelegramMessage`, `onCheckpointReportCreated`, `onSharedStateUpdated` | Webhook bot Telegram + trigger Telegram untuk temuan checkpoint, SOS, insiden manual, update progress temuan dari `incidentMeta.progress`, dan notifikasi admin terfilter. |
 
 ### Data
