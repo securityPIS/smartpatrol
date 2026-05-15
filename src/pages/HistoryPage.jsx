@@ -389,7 +389,7 @@ export default function HistoryPage() {
                         </span>
                       )}
                     </div>
-                    <p className={`text-sm flex items-center gap-1 mt-0.5 ${isLiveEntry ? 'text-emerald-200/80' : 'text-cyan-500/80'}`}><CalendarDays className="w-3 h-3" /> {data.date}</p>
+                    <p className={`text-sm flex items-center gap-1 mt-0.5 ${isLiveEntry ? 'text-emerald-200/80' : 'text-cyan-500/80'}`}><CalendarDays className="w-3 h-3" /> {data.date || '-'}</p>
                 </div>
               </div>
               <div className="text-right">

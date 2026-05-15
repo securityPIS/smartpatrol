@@ -506,6 +506,65 @@ function formatDateLabel(dateKey) {
   return safeDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: APP_TIME_ZONE });
 }
 
+function formatHistoryDateKeyLabel(dateKey) {
+  const match = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+
+  const [, yearToken, monthToken, dayToken] = match;
+  const year = Number(yearToken);
+  const month = Number(monthToken);
+  const day = Number(dayToken);
+  const safeDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+
+  if (
+    Number.isNaN(safeDate.getTime())
+    || safeDate.getUTCFullYear() !== year
+    || safeDate.getUTCMonth() !== month - 1
+    || safeDate.getUTCDate() !== day
+  ) {
+    return '';
+  }
+
+  return formatDateLabel(`${yearToken}-${monthToken}-${dayToken}`);
+}
+
+function resolveHistoryDateLabel(entry = {}) {
+  const explicitDate = sanitizeText(entry?.date || '', 80).trim();
+  if (explicitDate && explicitDate !== '-' && explicitDate.toLowerCase() !== 'invalid date') return explicitDate;
+
+  const dateKeyLabel = formatHistoryDateKeyLabel(entry?.dateKey);
+  if (dateKeyLabel) return dateKeyLabel;
+
+  const keyDateMatch = String(entry?.key || '').match(/(?:^|\|)(\d{4}-\d{2}-\d{2})(?=\|)/);
+  const keyDateLabel = formatHistoryDateKeyLabel(keyDateMatch?.[1]);
+  if (keyDateLabel) return keyDateLabel;
+
+  const createdAtDate = entry?.createdAt ? new Date(entry.createdAt) : null;
+  if (createdAtDate && !Number.isNaN(createdAtDate.getTime())) {
+    return createdAtDate.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: APP_TIME_ZONE,
+    });
+  }
+
+  return '-';
+}
+
+function normalizeHistoryEntryDate(entry = {}) {
+  const dateLabel = resolveHistoryDateLabel(entry);
+
+  return {
+    ...entry,
+    date: dateLabel,
+    checkpoints: ensureArray(entry.checkpoints).map((checkpoint) => ({
+      ...checkpoint,
+      date: sanitizeText(checkpoint?.date || '', 80).trim() || dateLabel,
+    })),
+  };
+}
+
 function formatAppDate(value = new Date()) {
   const safeDate = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(safeDate.getTime())) return '';
@@ -1831,6 +1890,15 @@ function mergeHistoryEntryRecord(baseEntry, nextEntry) {
   );
   const preferredEntry = shouldUseNext ? nextEntry : baseEntry;
   const fallbackEntry = shouldUseNext ? baseEntry : nextEntry;
+  const mergedDateSource = {
+    ...fallbackEntry,
+    ...preferredEntry,
+    date: preferredEntry?.date || fallbackEntry?.date || '',
+    dateKey: preferredEntry?.dateKey || fallbackEntry?.dateKey || '',
+    key: preferredEntry?.key || fallbackEntry?.key || '',
+    createdAt: preferredEntry?.createdAt || fallbackEntry?.createdAt || '',
+  };
+  const mergedDate = resolveHistoryDateLabel(mergedDateSource);
   const mergedCheckpoints = mergeCheckpointsCollection(
     baseEntry?.checkpoints || [],
     nextEntry?.checkpoints || [],
@@ -1838,7 +1906,7 @@ function mergeHistoryEntryRecord(baseEntry, nextEntry) {
     ...checkpoint,
     readOnly: true,
     historyId: preferredEntry?.id || fallbackEntry?.id || checkpoint?.historyId || null,
-    date: preferredEntry?.date || fallbackEntry?.date || checkpoint?.date || '',
+    date: sanitizeText(checkpoint?.date || '', 80).trim() || mergedDate,
   }));
   const mergedSummary = summarizePatrolCheckpoints(mergedCheckpoints);
 
@@ -1847,6 +1915,8 @@ function mergeHistoryEntryRecord(baseEntry, nextEntry) {
     ...preferredEntry,
     id: preferredEntry?.id || fallbackEntry?.id,
     key: preferredEntry?.key || fallbackEntry?.key,
+    date: mergedDate,
+    dateKey: preferredEntry?.dateKey || fallbackEntry?.dateKey || '',
     crewSnapshot: mergeCrewSnapshots(
       baseEntry?.crewSnapshot || [],
       nextEntry?.crewSnapshot || [],
@@ -4857,8 +4927,13 @@ export function AppProvider({ children }) {
   }, [checkpointsByShip, currentShiftMeta, currentUserRecord, isAdmin, shiftStatusRecords, shipsData, usersData]);
   const visibleHistoryEntries = useMemo(() => {
     if (!currentUserRecord) return [];
-    const safeHistoryEntries = ensureArray(historyEntries).filter(entry => ensureObject(entry));
-    if (isAdmin) return [...adminLiveHistoryEntries, ...safeHistoryEntries];
+    const safeHistoryEntries = ensureArray(historyEntries)
+      .filter(entry => ensureObject(entry))
+      .map(normalizeHistoryEntryDate);
+    const safeAdminLiveHistoryEntries = ensureArray(adminLiveHistoryEntries)
+      .filter(entry => ensureObject(entry))
+      .map(normalizeHistoryEntryDate);
+    if (isAdmin) return [...safeAdminLiveHistoryEntries, ...safeHistoryEntries];
     if (isPic) return safeHistoryEntries;
     if (!assignedShipForCurrentUser) return [];
     return safeHistoryEntries.filter(entry => (
