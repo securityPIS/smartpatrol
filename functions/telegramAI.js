@@ -10,6 +10,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import fs from 'fs';
+import { resolveTelegramNotificationText } from './telegramNotifications.js';
 
 // Inisialisasi Gemini sekali per cold start agar request Telegram tetap ringan.
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -382,7 +383,10 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
         (after.dedupeKey && b.dedupeKey === after.dedupeKey) || b.id === after.id
       );
       if (!before) return true; // Baru (belum ada dedupeKey/id yang cocok)
-      return before.message !== after.message; // Update konten (misal: jumlah pending berubah)
+      // Bandingkan teks yang benar-benar dikirim ke Telegram. Khusus pending
+      // checkpoint summary, angka mentah scheduler tidak dipakai agar grup
+      // Telegram selalu diarahkan ke data live di UI SmartPatrol.
+      return resolveTelegramNotificationText(before) !== resolveTelegramNotificationText(after);
     });
     
     for (const notif of newOrUpdatedNotifs) {
@@ -411,8 +415,9 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
       if (notif.type === 'registration_pending') icon = '👤';
       if (notif.type === 'checkpoint_pending') icon = '⏳';
 
+      const notificationMessage = resolveTelegramNotificationText(notif);
       const message = `${icon} *${notif.title.toUpperCase()}* ${icon}
-${notif.message}
+${notificationMessage}
 
 🔗 Buka Aplikasi:
 https://smartpatrol-7ff9e.web.app/${notif.routeParams?.incidentId ? '?incidentId=' + notif.routeParams.incidentId : ''}`;
