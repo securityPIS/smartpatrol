@@ -383,10 +383,10 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
         (after.dedupeKey && b.dedupeKey === after.dedupeKey) || b.id === after.id
       );
       if (!before) return true; // Baru (belum ada dedupeKey/id yang cocok)
-      // Bandingkan teks yang benar-benar dikirim ke Telegram. Khusus pending
-      // checkpoint summary, angka mentah scheduler tidak dipakai agar grup
-      // Telegram selalu diarahkan ke data live di UI SmartPatrol.
-      return resolveTelegramNotificationText(before) !== resolveTelegramNotificationText(after);
+      // Bandingkan teks yang benar-benar dikirim ke Telegram. Summary operasional
+      // dibangun dari model data UI supaya perubahan angka mentah scheduler tidak
+      // menjadi sumber kebenaran Telegram.
+      return resolveTelegramNotificationText(before, beforeState) !== resolveTelegramNotificationText(after, afterState);
     });
     
     for (const notif of newOrUpdatedNotifs) {
@@ -415,7 +415,7 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
       if (notif.type === 'registration_pending') icon = '👤';
       if (notif.type === 'checkpoint_pending') icon = '⏳';
 
-      const notificationMessage = resolveTelegramNotificationText(notif);
+      const notificationMessage = resolveTelegramNotificationText(notif, afterState);
       const message = `${icon} *${notif.title.toUpperCase()}* ${icon}
 ${notificationMessage}
 
