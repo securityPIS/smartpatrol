@@ -12,7 +12,7 @@ import { getTrustedTimeSnapshot, subscribeTrustedTime } from '../services/time/t
 import { summarizeTimeAudit } from '../services/time/timeAudit';
 import {
   CheckCircle2, AlertTriangle, Search, Ship, MapPin, ExternalLink, ArrowLeft, Plus,
-  CalendarDays, Thermometer, Wind, FileText, CircleOff, TimerReset,
+  CalendarDays, Thermometer, Wind, FileText, CircleOff, TimerReset, Clock,
 } from 'lucide-react';
 import AsyncImage from '../components/AsyncImage';
 import HistoryDetailView from '../components/views/HistoryDetailView';
@@ -23,18 +23,24 @@ function ensureArray(value) {
 }
 
 function getPatrolSummary(checkpoints) {
-  const summary = ensureArray(checkpoints).reduce((acc, checkpoint) => {
+  // Hitung pending vs missed secara eksplisit supaya UI bisa membedakan:
+  //  - Shift live  → kartu ketiga pakai `pending` (belum dipatroli, status === 'pending').
+  //  - History    → kartu ketiga pakai `missed`  (sudah dikunci di akhir shift).
+  return ensureArray(checkpoints).reduce((acc, checkpoint) => {
     acc.total += 1;
     if (checkpoint.status === 'completed') {
       acc.completed += 1;
       if (checkpoint.resultType === 'aman') acc.aman += 1;
       if (checkpoint.resultType === 'temuan') acc.temuan += 1;
     }
+    if (checkpoint.status === 'missed' || checkpoint.resultType === 'missed') {
+      acc.missed += 1;
+    }
+    if (checkpoint.status === 'pending') {
+      acc.pending += 1;
+    }
     return acc;
-  }, { aman: 0, temuan: 0, missed: 0, completed: 0, total: 0 });
-  // MISSED = total - (aman + temuan), berlaku untuk shift ongoing maupun history
-  summary.missed = Math.max(0, summary.total - (summary.aman + summary.temuan));
-  return summary;
+  }, { aman: 0, temuan: 0, missed: 0, pending: 0, completed: 0, total: 0 });
 }
 
 function getSummaryCardMeta(type) {
@@ -64,6 +70,20 @@ function getSummaryCardMeta(type) {
       itemTextClass: 'text-yellow-400',
       itemIcon: <AlertTriangle className="w-3 h-3 text-yellow-500" />,
       emptyLabel: 'temuan',
+    };
+  }
+  if (type === 'pending') {
+    return {
+      title: 'Pending Checkpoint',
+      cardClass: 'bg-slate-950/20 border-slate-500/30 hover:border-slate-400/60',
+      countClass: 'text-slate-200',
+      labelClass: 'text-slate-300',
+      iconWrapClass: 'bg-slate-500/10 border-slate-500/20',
+      icon: <Clock className="w-5 h-5 text-slate-400" />,
+      itemClass: 'bg-slate-950/20 border-slate-500/30',
+      itemTextClass: 'text-slate-400',
+      itemIcon: <Clock className="w-3 h-3 text-slate-500" />,
+      emptyLabel: 'checkpoint pending',
     };
   }
   return {
@@ -172,12 +192,15 @@ const PatrolPage = React.memo(function PatrolPage() {
   const summaryCards = React.useMemo(() => ([
     { type: 'aman', count: patrolSummary.aman },
     { type: 'temuan', count: patrolSummary.temuan },
-    { type: 'missed', count: patrolSummary.missed },
-  ]), [patrolSummary]);
+    isHistoryMode
+      ? { type: 'missed', count: patrolSummary.missed }
+      : { type: 'pending', count: patrolSummary.pending ?? 0 },
+  ]), [isHistoryMode, patrolSummary]);
   const summaryDetailItems = React.useMemo(() => {
     if (!summaryDetailType) return [];
     return activeCheckpoints.filter((item) => {
       if (summaryDetailType === 'missed') return item.status === 'missed' || item.resultType === 'missed';
+      if (summaryDetailType === 'pending') return item.status === 'pending';
       return item.status === 'completed' && item.resultType === summaryDetailType;
     });
   }, [activeCheckpoints, summaryDetailType]);
@@ -209,6 +232,7 @@ const PatrolPage = React.memo(function PatrolPage() {
           summary: patrolSummary,
           issue: patrolSummary.temuan,
           missed: patrolSummary.missed,
+          pending: patrolSummary.pending ?? 0,
           crewSnapshot: displayCrew,
         }
   ), [

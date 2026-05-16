@@ -9,8 +9,8 @@ Side Effects: Mengarahkan user kembali ke patroli live saat detail dibuka penuh.
 import React from 'react';
 import { ACCESS_ROLES, useHistory, usePatrol, useShips, useUI, useUsers, useWeather } from '../../context/AppContextRuntime';
 import {
-  Ship, MapPin, ExternalLink, CalendarDays, Thermometer, Wind, User, 
-  CheckCircle2, AlertTriangle, CircleOff, Check, ArrowRight
+  Ship, MapPin, ExternalLink, CalendarDays, Thermometer, Wind, User,
+  CheckCircle2, AlertTriangle, CircleOff, Check, ArrowRight, Clock
 } from 'lucide-react';
 import AsyncImage from '../AsyncImage';
 import { TimeAuditSummaryCard } from '../TimeAuditStatus';
@@ -114,10 +114,13 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
     if (entrySummary && typeof entrySummary === 'object') return entrySummary;
     const aman = checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'aman').length;
     const temuan = checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed' && checkpoint?.resultType === 'temuan').length;
+    const missed = checkpointEntries.filter((checkpoint) => checkpoint?.status === 'missed' || checkpoint?.resultType === 'missed').length;
+    const pending = checkpointEntries.filter((checkpoint) => checkpoint?.status === 'pending').length;
     return {
       aman,
       temuan,
-      missed: Math.max(0, checkpointEntries.length - (aman + temuan)),
+      missed,
+      pending,
       completed: checkpointEntries.filter((checkpoint) => checkpoint?.status === 'completed').length,
       total: checkpointEntries.length,
     };
@@ -148,7 +151,9 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
   const summaryCards = [
     { type: 'aman', count: safeSummary.aman || 0 },
     { type: 'temuan', count: safeSummary.temuan || entry.issue || 0 },
-    { type: 'missed', count: safeSummary.missed || entry.missed || 0 },
+    isLiveEntry
+      ? { type: 'pending', count: safeSummary.pending ?? entry.pending ?? 0 }
+      : { type: 'missed', count: safeSummary.missed || entry.missed || 0 },
   ];
   const completionPercentage = getCompletionPercentage(safeSummary);
   const completedAuditRecords = React.useMemo(
@@ -176,6 +181,7 @@ export default function HistoryDetailView({ isInline = false, entryData = null, 
     switch(type) {
       case 'temuan': return { title: 'Temuan / Incident', icon: <AlertTriangle className="w-5 h-5 text-yellow-500"/>, cardClass: 'bg-yellow-950/20 border-yellow-500/30 text-yellow-400', countClass: 'text-yellow-400', labelClass: 'text-yellow-100/70', iconWrapClass: 'bg-yellow-500/10 border-yellow-500/20' };
       case 'missed': return { title: 'Missed Checkpoint', icon: <CircleOff className="w-5 h-5 text-rose-500"/>, cardClass: 'bg-rose-950/20 border-rose-500/30 text-rose-400', countClass: 'text-rose-400', labelClass: 'text-rose-100/70', iconWrapClass: 'bg-rose-500/10 border-rose-500/20' };
+      case 'pending': return { title: 'Pending Checkpoint', icon: <Clock className="w-5 h-5 text-slate-400"/>, cardClass: 'bg-slate-950/20 border-slate-500/30 text-slate-400', countClass: 'text-slate-400', labelClass: 'text-slate-100/70', iconWrapClass: 'bg-slate-500/10 border-slate-500/20' };
       default: return { title: 'Kondisi Aman', icon: <CheckCircle2 className="w-5 h-5 text-emerald-500"/>, cardClass: 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400', countClass: 'text-emerald-400', labelClass: 'text-emerald-100/70', iconWrapClass: 'bg-emerald-500/10 border-emerald-500/20' };
     }
   };

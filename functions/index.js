@@ -462,6 +462,78 @@ async function appendNotificationForAdminUsers(notification = {}) {
   });
 }
 
+// Upsert notifikasi admin berdasarkan dedupeKey: update message di tempat jika sudah ada,
+// supaya listener Telegram (telegramAI.js — `before.message !== after.message`) bisa
+// meneruskan perubahan tanpa membuat entry duplikat di in-app notification.
+async function upsertAdminNotificationByDedupeKey(notification = {}) {
+  const targetUserIds = await getAdminNotificationTargets();
+  if (targetUserIds.length === 0) return;
+
+  const nextDedupeKey = sanitizeString(notification.dedupeKey || '', 240);
+  if (!nextDedupeKey) {
+    // Tanpa dedupeKey, jangan upsert (tidak ada cara identifikasi notifikasi sebelumnya).
+    return appendNotificationForAdminUsers(notification);
+  }
+
+  await firestore.runTransaction(async (transaction) => {
+    const sharedStateRef = getSharedStateRef();
+    const sharedStateSnapshot = await transaction.get(sharedStateRef);
+    if (!sharedStateSnapshot.exists) return;
+
+    const sharedStateData = sharedStateSnapshot.data() || {};
+    const state = sharedStateData.state || {};
+    const existingNotifications = Array.isArray(state.notifications) ? state.notifications : [];
+    const nextMessage = sanitizeMultilineMessage(notification.message || '', 2000);
+
+    const idx = existingNotifications.findIndex(
+      (item) => sanitizeString(item?.dedupeKey || '', 240) === nextDedupeKey,
+    );
+
+    let nextNotifications;
+    if (idx >= 0) {
+      // No-op kalau pesan tidak berubah, supaya Telegram tidak ter-trigger ulang.
+      if (existingNotifications[idx]?.message === nextMessage) return;
+      nextNotifications = [...existingNotifications];
+      nextNotifications[idx] = {
+        ...existingNotifications[idx],
+        message: nextMessage,
+        createdAt: new Date().toISOString(),
+      };
+    } else {
+      const nextNotification = {
+        id: createNotificationId('notif'),
+        type: sanitizeString(notification.type || 'general', 60) || 'general',
+        title: sanitizeString(notification.title || 'Notifikasi Sistem', 120) || 'Notifikasi Sistem',
+        message: nextMessage,
+        senderName: sanitizeString(notification.senderName || 'Sistem', 80) || 'Sistem',
+        senderRole: sanitizeString(notification.senderRole || 'SYSTEM', 40) || 'SYSTEM',
+        targetUserIds,
+        route: sanitizeString(notification.route || 'users/list', 80) || 'users/list',
+        routeParams: notification.routeParams && typeof notification.routeParams === 'object'
+          ? notification.routeParams
+          : {},
+        shipName: '',
+        shiftKey: '',
+        incidentId: '',
+        historyId: '',
+        dedupeKey: nextDedupeKey,
+        readByUserIds: [],
+        createdAt: new Date().toISOString(),
+      };
+      nextNotifications = [nextNotification, ...existingNotifications].slice(0, MAX_NOTIFICATION_ITEMS);
+    }
+
+    transaction.set(sharedStateRef, {
+      state: {
+        ...state,
+        notifications: nextNotifications,
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+      clientUpdatedAt: Date.now(),
+    }, { merge: true });
+  });
+}
+
 function hashPushToken(value) {
   return createHash('sha256')
     .update(String(value || ''))
@@ -1489,8 +1561,10 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
       }
     }
 
-    // Notifikasi per-kapal: 1 jam sebelum shift berakhir, kirim reminder ke PIC/Petugas.
-    if (minutesBeforeEnd >= 55 && minutesBeforeEnd <= 60) {
+    // Notifikasi per-kapal: di 60 menit terakhir shift, kirim reminder ke PIC/Petugas.
+    // Tiap tick (5 menit) scheduler fire: push HP per kapal & push HP admin tetap di-dedupe
+    // 1×/shift, tapi notifikasi in-app + Telegram di-upsert agar angka pending selalu update.
+    if (minutesBeforeEnd > 0 && minutesBeforeEnd <= 60) {
       const shipsWithPending = [];
       for (const ship of ships) {
         let reportDocuments = [];
@@ -1508,39 +1582,46 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
         if (pendingCount <= 0) continue;
 
         const shipName = normalizeShipName(ship.name || ship.id || '');
+
+        // Push HP per kapal: hanya 1× per shift (jangan spam petugas/PIC tiap 5 menit).
         const dedupeKey = `checkpoint-pending:${currentShift.key}:${sanitizeString(ship.id || shipName, 120)}`;
-        if (!await claimPushDedupe(dedupeKey)) continue;
-        const targets = await resolveAccessTargets({
-          shipName,
-          includeAdmins: false,
-          includePic: true,
-          includePetugas: true,
-        });
-        await sendPushToAccessRecords(targets, {
-          type: 'checkpoint_pending',
-          title: 'Pending checkpoint',
-          body: `${pendingCount} checkpoint ${shipName || 'kapal'} belum selesai sebelum shift berakhir.`,
-          route: 'patrol/live',
-          shipName,
-          shiftKey: currentShift.key,
-          tag: `checkpoint-pending-${currentShift.key}-${shipName}`,
-        });
+        if (await claimPushDedupe(dedupeKey)) {
+          const targets = await resolveAccessTargets({
+            shipName,
+            includeAdmins: false,
+            includePic: true,
+            includePetugas: true,
+          });
+          await sendPushToAccessRecords(targets, {
+            type: 'checkpoint_pending',
+            title: 'Pending checkpoint',
+            body: `${pendingCount} checkpoint ${shipName || 'kapal'} belum selesai sebelum shift berakhir.`,
+            route: 'patrol/live',
+            shipName,
+            shiftKey: currentShift.key,
+            tag: `checkpoint-pending-${currentShift.key}-${shipName}`,
+          });
+        }
+
+        // Tetap kumpulkan data agar admin summary bisa di-upsert tiap tick.
         shipsWithPending.push({ ship, pendingCount });
       }
 
       if (shipsWithPending.length > 0) {
+        const detailedPendingSummary = buildAdminPendingCheckpointSummary(shipsWithPending, currentShift);
+        const totalPending = shipsWithPending.reduce(
+          (sum, item) => sum + Number(item.pendingCount || 0),
+          0,
+        );
+        const shortPendingSummary = `${totalPending} checkpoint pending di ${shipsWithPending.length} kapal pada ${currentShift.label} yang akan segera berakhir.`;
+
+        // Push HP admin: hanya 1× per shift (FCM tidak boleh spam).
         if (await claimPushDedupe(`admin-checkpoint-pending:${currentShift.key}`)) {
           const adminTargets = await resolveAccessTargets({
             includeAdmins: true,
             includePic: false,
             includePetugas: false,
           });
-          const detailedPendingSummary = buildAdminPendingCheckpointSummary(shipsWithPending, currentShift);
-          const totalPending = shipsWithPending.reduce(
-            (sum, item) => sum + Number(item.pendingCount || 0),
-            0,
-          );
-          const shortPendingSummary = `${totalPending} checkpoint pending di ${shipsWithPending.length} kapal pada ${currentShift.label} yang akan segera berakhir.`;
           await sendPushToAccessRecords(adminTargets, {
             type: 'checkpoint_pending',
             title: 'Pending Checkpoint Summary',
@@ -1549,16 +1630,20 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
             shiftKey: currentShift.key,
             tag: `admin-pending-${currentShift.key}`,
           });
-          await appendNotificationForAdminUsers({
-            type: 'checkpoint_pending',
-            title: 'Pending Checkpoint Summary',
-            message: detailedPendingSummary,
-            senderName: 'Sistem',
-            senderRole: 'SYSTEM',
-            route: 'patrol/live',
-            dedupeKey: `admin-checkpoint-pending:${currentShift.key}`,
-          });
         }
+
+        // In-app notification + Telegram: upsert tiap tick. Helper akan no-op kalau
+        // pesan tidak berubah, sehingga Telegram hanya mengirim ulang saat angka pending
+        // benar-benar update (listener: telegramAI.js — `before.message !== after.message`).
+        await upsertAdminNotificationByDedupeKey({
+          type: 'checkpoint_pending',
+          title: 'Pending Checkpoint Summary',
+          message: detailedPendingSummary,
+          senderName: 'Sistem',
+          senderRole: 'SYSTEM',
+          route: 'patrol/live',
+          dedupeKey: `admin-checkpoint-pending:${currentShift.key}`,
+        });
       }
     }
 

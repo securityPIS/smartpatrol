@@ -1174,18 +1174,26 @@ function createMissedCheckpoint(checkpoint, shiftMeta) {
 }
 
 function summarizePatrolCheckpoints(checkpoints) {
-  const summary = ensureArray(checkpoints).reduce((acc, checkpoint) => {
+  // Hitung pending vs missed secara eksplisit:
+  //  - pending: checkpoint belum dipatroli pada shift live yang sedang berjalan.
+  //  - missed : checkpoint yang sudah dikunci sebagai missed (umumnya saat shift wrap-up).
+  // Catatan: kartu UI memilih label "Pending Checkpoint" untuk shift live dan
+  // "Missed Checkpoint" untuk history; angka dasarnya tetap dipisah di sini.
+  return ensureArray(checkpoints).reduce((acc, checkpoint) => {
     acc.total += 1;
     if (checkpoint.status === 'completed') {
       acc.completed += 1;
       if (checkpoint.resultType === 'aman') acc.aman += 1;
       if (checkpoint.resultType === 'temuan') acc.temuan += 1;
     }
+    if (checkpoint.status === 'missed' || checkpoint.resultType === 'missed') {
+      acc.missed += 1;
+    }
+    if (checkpoint.status === 'pending') {
+      acc.pending += 1;
+    }
     return acc;
-  }, { aman: 0, temuan: 0, missed: 0, completed: 0, total: 0 });
-  // MISSED = total - (aman + temuan), berlaku untuk shift ongoing maupun history
-  summary.missed = Math.max(0, summary.total - (summary.aman + summary.temuan));
-  return summary;
+  }, { aman: 0, temuan: 0, missed: 0, pending: 0, completed: 0, total: 0 });
 }
 
 function createGuardNameKey(name) {
@@ -1599,6 +1607,7 @@ function buildLiveHistoryEntry({ shiftMeta, checkpoints, ship, users, shiftStatu
     points: summary.total,
     issue: summary.temuan,
     missed: summary.missed,
+    pending: summary.pending,
     createdAt: getTrustedDate().toISOString(),
     isLive: true,
     readOnly: true,
