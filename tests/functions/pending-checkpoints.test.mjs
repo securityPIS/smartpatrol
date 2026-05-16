@@ -23,7 +23,7 @@ function readClientDefaultCheckpointNames() {
 }
 
 const shiftMeta = {
-  key: '2026-05-08-shift-1-active',
+  key: '2026-05-08|shift-1-active',
   startAt: new Date('2026-05-07T23:00:00.000Z'),
   endAt: new Date('2026-05-08T05:00:00.000Z'),
 };
@@ -61,7 +61,7 @@ test('ignores stale completed checkpoints from previous shifts', () => {
     name,
     status: 'completed',
     resultType: 'aman',
-    shiftKey: '2026-05-07-shift-3-active',
+    shiftKey: '2026-05-07|shift-3-active',
     updatedAt: '2026-05-07T18:30:00.000Z',
   }));
   const roster = buildRoster({
@@ -119,11 +119,11 @@ test('includes temporary checkpoints created for the active shift', () => {
       id: 's2::temporary::old',
       name: 'Titik Shift Lama',
       status: 'pending',
-      shiftKey: '2026-05-07-shift-3-active',
+      shiftKey: '2026-05-07|shift-3-active',
       shipId: ship.id,
       shipName: ship.name,
       isTemporaryShiftNode: true,
-      createdInShiftKey: '2026-05-07-shift-3-active',
+      createdInShiftKey: '2026-05-07|shift-3-active',
     },
   ];
   const roster = buildRoster({

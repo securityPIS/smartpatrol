@@ -1023,7 +1023,7 @@ function createShiftMeta(dateKey, shift) {
   return {
     ...shift,
     dateKey,
-    key: `${dateKey}-${shift.id}`,
+    key: `${dateKey}|${shift.id}`,
     startAt: schedule.startAt,
     endAt: schedule.endAt,
   };

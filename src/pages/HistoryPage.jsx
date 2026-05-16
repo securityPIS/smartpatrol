@@ -355,7 +355,9 @@ export default function HistoryPage() {
           const totalCount = summary.total || 0;
           const amanCount = summary.aman || 0;
           const temuanCount = summary.temuan ?? data.issue ?? 0;
-          const missedCount = summary.missed ?? data.missed ?? 0;
+          const statusCount = isLiveEntry
+            ? (summary.pending ?? data.pending ?? 0)
+            : (summary.missed ?? data.missed ?? 0);
           const completionCount = amanCount + temuanCount;
           const completionBoxClassName = isLiveEntry
             ? (isSelectedEntry
@@ -422,8 +424,8 @@ export default function HistoryPage() {
                   {temuanCount > 0 ? <p className="text-xs text-yellow-400 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> {temuanCount} Temuan</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
               </div>
               <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
-                  <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Missed</p>
-                  {missedCount > 0 ? <p className="text-xs text-rose-400 font-medium flex items-center gap-1"><CircleOff className="w-3 h-3"/> {missedCount} Titik</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
+                  <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">{isLiveEntry ? 'Pending' : 'Missed'}</p>
+                  {statusCount > 0 ? <p className={`text-xs font-medium flex items-center gap-1 ${isLiveEntry ? 'text-slate-300' : 'text-rose-400'}`}>{isLiveEntry ? <Clock className="w-3 h-3"/> : <CircleOff className="w-3 h-3"/>} {statusCount} Titik</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
               </div>
             </div>
           </div>
