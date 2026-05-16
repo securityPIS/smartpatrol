@@ -10,6 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isPendingCheckpointSummaryNotification,
+  isShiftWrapUpSummaryNotification,
   resolveTelegramNotificationText,
 } from '../../functions/telegramNotifications.js';
 
@@ -34,11 +35,32 @@ test('Telegram pending checkpoint summary directs users to SmartPatrol UI instea
   );
 });
 
-test('Telegram non-pending system notifications keep their original message', () => {
-  const notification = {
+test('Telegram shift wrap-up summary directs users to SmartPatrol UI instead of raw backend recap', () => {
+  const before = {
     type: 'shift_history_created',
     title: 'Summary Shift Wrap Up',
     message: 'Aman: 18 | Temuan: 1 | Missed: 0',
+  };
+  const after = {
+    ...before,
+    message: 'Aman: 14 | Temuan: 2 | Missed: 3',
+  };
+
+  assert.equal(isShiftWrapUpSummaryNotification(after), true);
+  assert.match(resolveTelegramNotificationText(after), /UI SmartPatrol/);
+  assert.doesNotMatch(resolveTelegramNotificationText(after), /Missed: 3/);
+  assert.equal(
+    resolveTelegramNotificationText(before),
+    resolveTelegramNotificationText(after),
+    'perubahan angka rekap mentah tidak boleh memicu konten Telegram berbeda',
+  );
+});
+
+test('Telegram other system notifications keep their original message', () => {
+  const notification = {
+    type: 'registration_pending',
+    title: 'Registrasi Menunggu Approval',
+    message: 'User baru menunggu approval admin.',
   };
 
   assert.equal(resolveTelegramNotificationText(notification), notification.message);
