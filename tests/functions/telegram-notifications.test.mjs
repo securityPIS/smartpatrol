@@ -49,9 +49,10 @@ test('Telegram pending checkpoint summary renders UI-equivalent ON GOING data, n
   const message = resolveTelegramNotificationText(notification, uiState);
 
   assert.equal(isPendingCheckpointSummaryNotification(notification), true);
-  assert.match(message, /MT Alpha: 1 pending/);
-  assert.match(message, /MT Beta: 2 pending/);
-  assert.match(message, /Total: 3 checkpoint pending di 2 kapal/);
+  assert.match(message, /Sebelum Shift 2 \(12:00 - 18:00\) berakhir, masih ada checkpoint pending:/);
+  assert.match(message, /MT Alpha: 1 belum dipatroli/);
+  assert.match(message, /MT Beta: 2 belum dipatroli/);
+  assert.match(message, /Total: 3 checkpoint di 2 kapal/);
   assert.doesNotMatch(message, /99 checkpoint/);
   assert.equal(
     resolveTelegramNotificationText(notification, uiState),
@@ -65,12 +66,12 @@ test('Telegram shift wrap-up summary renders UI history data, not raw backend re
     type: 'shift_history_created',
     title: 'Summary Shift Wrap Up',
     message: 'Aman: 99 | Temuan: 99 | Missed: 99',
-    dedupeKey: 'shift-summary:2026-05-16|shift-1-active',
+    dedupeKey: 'shift-summary:2026-05-16-shift-1-active',
   };
   const uiState = {
     historyEntries: [
       {
-        key: 'ship-a|2026-05-16|shift-1-active',
+        key: 'history-ship-a|2026-05-16|shift-1-active',
         dateKey: '2026-05-16',
         shiftId: 'shift-1-active',
         shift: 'Shift 1',
@@ -79,7 +80,7 @@ test('Telegram shift wrap-up summary renders UI history data, not raw backend re
         summary: { aman: 18, temuan: 1, missed: 0, total: 19 },
       },
       {
-        key: 'ship-b|2026-05-16|shift-1-active',
+        key: 'history-ship-b|2026-05-16|shift-1-active',
         dateKey: '2026-05-16',
         shiftId: 'shift-1-active',
         shift: 'Shift 1',

@@ -8,6 +8,19 @@ Side Effects: Tidak ada.
 
 const PENDING_CHECKPOINT_SUMMARY_TITLE = 'Pending Checkpoint Summary';
 const SHIFT_WRAP_UP_SUMMARY_TITLE = 'Summary Shift Wrap Up';
+const SHIFT_DEFINITIONS = Object.freeze({
+  'shift-1-active': { label: 'Shift 1', timeRange: '06:00 - 12:00' },
+  'shift-2-active': { label: 'Shift 2', timeRange: '12:00 - 18:00' },
+  'shift-3-active': { label: 'Shift 3', timeRange: '18:00 - 06:00' },
+  'shift-pagi': { label: 'Shift Pagi', timeRange: '06:00 - 10:00' },
+  'shift-siang': { label: 'Shift Siang', timeRange: '10:00 - 14:00' },
+  'shift-sore': { label: 'Shift Sore', timeRange: '14:00 - 18:00' },
+  'shift-malam': { label: 'Shift Malam', timeRange: '18:00 - 06:00' },
+  'shift-1': { label: 'Shift 1', timeRange: '06:00 - 12:00' },
+  'shift-2': { label: 'Shift 2', timeRange: '12:00 - 18:00' },
+  'shift-3': { label: 'Shift 3', timeRange: '18:00 - 00:00' },
+  'shift-4': { label: 'Shift 4', timeRange: '00:00 - 06:00' },
+});
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -29,15 +42,35 @@ function normalizeStatus(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function extractCanonicalShiftKey(value) {
+  const text = normalizeText(value);
+  const match = text.match(/(\d{4}-\d{2}-\d{2})(?:\||-)(shift-[a-z0-9-]+)/i);
+  if (!match) return '';
+  return `${match[1]}|${match[2]}`;
+}
+
+function getShiftIdFromKey(shiftKey = '') {
+  return extractCanonicalShiftKey(shiftKey).split('|')[1] || '';
+}
+
+function getShiftDefinitionFromKey(shiftKey = '') {
+  const shiftId = getShiftIdFromKey(shiftKey);
+  return SHIFT_DEFINITIONS[shiftId] || {
+    label: normalizeText(shiftId || 'Shift'),
+    timeRange: '',
+  };
+}
+
 function getNotificationShiftKey(notification = {}, state = {}) {
-  const directShiftKey = normalizeText(notification.shiftKey);
+  const directShiftKey = extractCanonicalShiftKey(notification.shiftKey);
   if (directShiftKey) return directShiftKey;
 
   const dedupeKey = normalizeText(notification.dedupeKey);
   const dedupeMatch = dedupeKey.match(/^(?:admin-checkpoint-pending|shift-summary):(.+)$/);
-  if (dedupeMatch?.[1]) return dedupeMatch[1];
+  const dedupeShiftKey = extractCanonicalShiftKey(dedupeMatch?.[1]);
+  if (dedupeShiftKey) return dedupeShiftKey;
 
-  return normalizeText(state.activeShiftKey);
+  return extractCanonicalShiftKey(state.activeShiftKey);
 }
 
 function countCheckpointSummary(checkpoints = []) {
@@ -127,22 +160,23 @@ function buildPendingCheckpointSummaryFromUiState(notification = {}, state = {})
   }
 
   const totalPending = rows.reduce((sum, row) => sum + row.pending, 0);
+  const shiftDefinition = getShiftDefinitionFromKey(shiftKey);
+  const shiftLabel = normalizeText(shiftDefinition.label || 'Shift');
+  const timeRange = normalizeText(shiftDefinition.timeRange);
   return [
-    'PENDING CHECKPOINT SUMMARY',
+    `Sebelum ${shiftLabel}${timeRange ? ` (${timeRange})` : ''} berakhir, masih ada checkpoint pending:`,
     '',
-    'Berdasarkan UI Riwayat ON GOING SmartPatrol:',
+    ...rows.map((row) => `🚢 ${row.shipName}: ${row.pending} belum dipatroli`),
     '',
-    ...rows.map((row) => `${row.shipName}: ${row.pending} pending`),
-    '',
-    `Total: ${totalPending} checkpoint pending di ${rows.length} kapal.`,
+    `Total: ${totalPending} checkpoint di ${rows.length} kapal.`,
   ].join('\n');
 }
 
 function isHistoryEntryForShift(entry = {}, shiftKey = '') {
-  const safeShiftKey = normalizeText(shiftKey);
+  const safeShiftKey = extractCanonicalShiftKey(shiftKey);
   if (!safeShiftKey) return false;
 
-  const entryShiftKey = normalizeText(entry.shiftKey);
+  const entryShiftKey = extractCanonicalShiftKey(entry.shiftKey);
   if (entryShiftKey === safeShiftKey) return true;
 
   const dateShiftKey = normalizeText(entry.dateKey) && normalizeText(entry.shiftId)
@@ -150,8 +184,8 @@ function isHistoryEntryForShift(entry = {}, shiftKey = '') {
     : '';
   if (dateShiftKey === safeShiftKey) return true;
 
-  return normalizeText(entry.key).includes(safeShiftKey)
-    || normalizeText(entry.id).includes(safeShiftKey);
+  return extractCanonicalShiftKey(entry.key) === safeShiftKey
+    || extractCanonicalShiftKey(entry.id) === safeShiftKey;
 }
 
 function buildShiftWrapUpSummaryFromUiState(notification = {}, state = {}) {
@@ -167,14 +201,14 @@ function buildShiftWrapUpSummaryFromUiState(notification = {}, state = {}) {
   const firstEntry = entries[0] || {};
   const shiftLabel = normalizeText(firstEntry.shift || 'Shift').toUpperCase();
   const timeRange = normalizeText(firstEntry.time);
-  const header = `SUMMARY LAPORAN ${shiftLabel}${timeRange ? ` (${timeRange})` : ''}`;
+  const header = `📊 SUMMARY LAPORAN ${shiftLabel}${timeRange ? ` (${timeRange})` : ''} 📊`;
   const blocks = entries.map((entry) => {
     const summary = ensureObject(entry.summary);
     return [
-      `Kapal: ${normalizeText(entry.ship || entry.shipName || 'Kapal')}`,
-      `Aman: ${Number(summary.aman || 0)}`,
-      `Temuan: ${Number(summary.temuan || entry.issue || 0)}`,
-      `Missed: ${Number(summary.missed || entry.missed || 0)}`,
+      `🚢 Kapal: ${normalizeText(entry.ship || entry.shipName || 'Kapal')}`,
+      `✅ Aman: ${Number(summary.aman || 0)}`,
+      `⚠️ Temuan: ${Number(summary.temuan || entry.issue || 0)}`,
+      `❌ Missed: ${Number(summary.missed || entry.missed || 0)}`,
     ].join('\n');
   });
 
