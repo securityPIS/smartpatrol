@@ -222,7 +222,7 @@ SmartPatrol/
 │   │   ├── LoginPage.jsx         # Form login/register dengan onboarding publik terisolasi
 │   │   ├── DailyReportPage.jsx   # Dashboard Admin: laporan harian per kapal per shift
 │   │   ├── ShipsPage.jsx         # Manajemen armada kapal (CRUD kapal, dokumen, crew assignment)
-│   │   ├── UsersPage.jsx         # Daftar user (Admin-only)
+│   │   ├── UsersPage.jsx         # Daftar user (Admin-only) dengan filter collapsible
 │   │   └── NotificationsPage.jsx # Notifikasi shift, checkpoint pending, dll.
 │   │
 │   ├── components/
@@ -295,6 +295,8 @@ SmartPatrol/
 
 ---
 
+Catatan dokumentasi: `docs/guides/` berisi deck panduan petugas SmartPatrol, script pembuat deck, preview PNG, layout export, dan QA report render.
+
 ## Module Map (The Chapters)
 
 ### Context (Otak Aplikasi)
@@ -330,7 +332,7 @@ SmartPatrol/
 | `pages/IncidentsPage.jsx` | `IncidentsPage` | Manajemen insiden: list, filter, buat baru, progress tracking, dokumentasi. |
 | `pages/DailyReportPage.jsx` | `DailyReportPage` | Dashboard Admin/PIC: laporan harian per kapal + shift, statistik, detail report. |
 | `pages/ShipsPage.jsx` | `ShipsPage` | CRUD armada kapal, dokumen, checkpoint definition, assign/transfer crew. |
-| `pages/UsersPage.jsx` | `UsersPage` | List user (Admin only), klik untuk detail. |
+| `pages/UsersPage.jsx` | `UsersPage` | List user (Admin only), filter collapsible berdasarkan teks, kapal, instansi, role, dan klik untuk detail. |
 | `pages/NotificationsPage.jsx` | `NotificationsPage` | Notifikasi sistem: shift change, checkpoint pending, dll. |
 
 ### Components
@@ -365,6 +367,8 @@ SmartPatrol/
 | File | Fungsi Publik | Peran |
 |---|---|---|
 | `utils/sanitize.js` | `sanitizeText`, `sanitizeEmail`, `sanitizePhone`, `sanitizeUrl`, `sanitizeCoordinate`, `sanitizeMultilineText`, `makeId` | Sanitasi input pengguna, strip control chars & angle brackets, generate UUID. |
+| `utils/userFilters.js` | `filterUsers`, `getUserFilterOptions`, `hasActiveUserFilters` | Helper pure function untuk filter daftar user admin berdasarkan pencarian teks, kapal, instansi, dan role. |
+| `utils/userManagement.js` | `assignUserToExclusiveShip`, `removeUserFromShipAssignment`, `resolveExplicitOverride` | Helper pure function untuk menjaga assignment user tetap eksklusif lintas kapal dan memastikan override unassign tidak jatuh balik ke data lama. |
 | `utils/images.js` | `readImageFileAsDataUrl`, `readFileAsDataUrl` | Baca file gambar, resize + kompres ke WebP via canvas. |
 | `utils/imageStore.js` | `saveImageToDB`, `loadImageFromDB`, `deleteOldImagesFromDB` | IndexedDB wrapper (`smartpatrol-images/photos`): simpan foto offline, cleanup otomatis >7 hari. |
 | `utils/persistence.js` | `loadAppState`, `saveAppState`, `loadWeatherCache`, `saveWeatherCache` | localStorage wrapper untuk state utama + weather cache (TTL 30 menit). |

@@ -1,7 +1,7 @@
 /*
 Tujuan: Menjadi pusat state, flow bisnis, dan sinkronisasi SmartPatrol.
 Caller: Root app melalui AppProvider dan seluruh hook domain aplikasi.
-Dependensi: Seed data, Firebase service (auth/cloud/access), trusted time, utilitas sanitasi, IndexedDB image store, dan adapter native Capacitor.
+Dependensi: Seed data, Firebase service (auth/cloud/access), trusted time, helper user management, utilitas sanitasi, IndexedDB image store, dan adapter native Capacitor.
 Main Functions: Mengelola auth Firebase, onboarding approval, kapal, checkpoint patroli, incidents, history, SOS, cloud sync, dan retry sinkronisasi saat koneksi pulih.
 Side Effects: Menulis state lokal/cloud, memanggil callable security, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
 */
@@ -15,6 +15,7 @@ import { readFileAsDataUrl, readImageFileAsDataUrl } from '../utils/images';
 import { sanitizeEmail, sanitizeMultilineText, sanitizePhone, sanitizeText, sanitizeUrl } from '../utils/sanitize';
 import { loadImageFromDB, saveImageToDB } from '../utils/imageStore';
 import { checkStorageQuota } from '../utils/storageQuota';
+import { assignUserToExclusiveShip, removeUserFromShipAssignment, resolveExplicitOverride } from '../utils/userManagement';
 import {
   addNativeNetworkStatusListener,
   getNativeGeolocationPosition,
@@ -3137,6 +3138,9 @@ function createPersistedUserSnapshot(user, sessionUserId = null) {
     photoUrl: sanitizeUrl(user?.photoUrl || '') || '',
     authProvider: sanitizeText(user?.authProvider || 'none', 20).toLowerCase(),
     firebaseUid: sanitizeText(user?.firebaseUid || '', 160) || null,
+    updatedAt: sanitizeText(user?.updatedAt || '', 80) || null,
+    updatedAtClientMs: Number.isFinite(user?.updatedAtClientMs) ? user.updatedAtClientMs : null,
+    updatedAtTrustedMs: Number.isFinite(user?.updatedAtTrustedMs) ? user.updatedAtTrustedMs : null,
     ...(isSessionUser
       ? {
         dob: sanitizeText(user?.dob || '', 20),
@@ -7402,15 +7406,15 @@ export function AppProvider({ children }) {
       await syncOperationalUserAccess({
         uid: firebaseUid,
         email: safeEmail,
-        name: sanitizeText(overrides.name || userRecord?.name || '', 80) || safeEmail.split('@')[0] || 'Personil',
-        role: ACCESS_ROLE_VALUES.includes(overrides.role || userRecord?.role)
-          ? (overrides.role || userRecord?.role)
+        name: sanitizeText(resolveExplicitOverride(overrides, userRecord, 'name', ''), 80) || safeEmail.split('@')[0] || 'Personil',
+        role: ACCESS_ROLE_VALUES.includes(resolveExplicitOverride(overrides, userRecord, 'role', ACCESS_ROLES.PETUGAS))
+          ? resolveExplicitOverride(overrides, userRecord, 'role', ACCESS_ROLES.PETUGAS)
           : ACCESS_ROLES.PETUGAS,
-        status: sanitizeText(overrides.status || userRecord?.status || '', 20).toLowerCase() || 'off-duty',
-        shipAssigned: sanitizeText(overrides.shipAssigned || userRecord?.shipAssigned || '', 80),
-        type: sanitizeText(overrides.type || userRecord?.type || 'BUJP', 20) || 'BUJP',
-        workerNumber: sanitizeText(overrides.workerNumber || userRecord?.workerNumber || '', 40),
-        legacyUserId: sanitizeText(overrides.legacyUserId || userRecord?.id || '', 160) || null,
+        status: sanitizeText(resolveExplicitOverride(overrides, userRecord, 'status', ''), 20).toLowerCase() || 'off-duty',
+        shipAssigned: sanitizeText(resolveExplicitOverride(overrides, userRecord, 'shipAssigned', ''), 80),
+        type: sanitizeText(resolveExplicitOverride(overrides, userRecord, 'type', 'BUJP'), 20) || 'BUJP',
+        workerNumber: sanitizeText(resolveExplicitOverride(overrides, userRecord, 'workerNumber', ''), 40),
+        legacyUserId: sanitizeText(resolveExplicitOverride(overrides, userRecord, 'legacyUserId', userRecord?.id || ''), 160) || null,
       });
       return true;
     } catch (error) {
@@ -7438,16 +7442,24 @@ export function AppProvider({ children }) {
     const isAssigned = targetArray.includes(userId);
     const targetUser = usersData.find(u => u.id === userId) || null;
     if (isAssigned) {
-      updateActiveShip({ [scheduleMonth === 'current' ? 'personnel' : 'personnelNextMonth']: targetArray.filter(id => id !== userId) });
+      const mutationMeta = createLocalEntityUpdateMeta();
+      const removalResult = removeUserFromShipAssignment(shipsData, {
+        userId,
+        targetShipId: activeShip.id,
+        scheduleType: scheduleMonth === 'current' ? 'current' : 'next',
+        mutationMeta,
+      });
+      setShipsData(removalResult.ships);
       if (scheduleMonth === 'current') {
+        const remainingShipName = removalResult.remainingCurrentAssignment?.shipName || '';
         updateUserRecordLocally(userId, {
-          shipAssigned: null,
-          status: 'off-duty',
+          shipAssigned: remainingShipName || null,
+          status: remainingShipName ? 'active' : 'off-duty',
         });
         requestCloudSync('urgent');
         await syncManagedUserOperationalAccess(targetUser, {
-          shipAssigned: '',
-          status: 'off-duty',
+          shipAssigned: remainingShipName,
+          status: remainingShipName ? 'active' : 'off-duty',
         });
       } else {
         requestCloudSync('urgent');
@@ -7456,7 +7468,7 @@ export function AppProvider({ children }) {
       setAssignPopupData({ userId, name: targetUser?.name, role: targetUser?.role, scheduleType: scheduleMonth });
       setShowAssignPopup(true);
     }
-  }, [activeShip, isAdmin, requestCloudSync, scheduleMonth, syncManagedUserOperationalAccess, updateActiveShip, updateUserRecordLocally, usersData]);
+  }, [activeShip, isAdmin, requestCloudSync, scheduleMonth, shipsData, syncManagedUserOperationalAccess, updateUserRecordLocally, usersData]);
 
   const handleConfirmAssign = useCallback(async (userId, startDate, endDate, isTBC) => {
     if (!isAdmin || !activeShip || !assignPopupData) return;
@@ -7475,28 +7487,18 @@ export function AppProvider({ children }) {
       finalScheduleType = 'current';
     }
 
-    let newPersonnel = activeShip.personnel.filter(id => id !== userId);
-    let newNextMonth = activeShip.personnelNextMonth.filter(id => id !== userId);
-
-    if (finalScheduleType === 'current') {
-      newPersonnel.push(userId);
-    } else {
-      newNextMonth.push(userId);
-    }
-
-    updateActiveShip({
-      personnel: newPersonnel,
-      personnelNextMonth: newNextMonth,
-      personnelSchedules: {
-        ...(activeShip.personnelSchedules || {}),
-        [userId]: {
-          ...(activeShip.personnelSchedules?.[userId] || {}),
-          startDate: startDate,
-          endDate: endDate,
-          isTBC: isTBC
-        }
-      }
-    });
+    const mutationMeta = createLocalEntityUpdateMeta();
+    setShipsData(assignUserToExclusiveShip(shipsData, {
+      userId,
+      targetShipId: activeShip.id,
+      scheduleType: finalScheduleType === 'current' ? 'current' : 'next',
+      schedule: {
+        startDate,
+        endDate,
+        isTBC,
+      },
+      mutationMeta,
+    }));
 
     if (finalScheduleType === 'current') {
       updateUserRecordLocally(userId, {
@@ -7520,7 +7522,7 @@ export function AppProvider({ children }) {
 
     setShowAssignPopup(false);
     setAssignPopupData(null);
-  }, [activeShip, assignPopupData, isAdmin, requestCloudSync, syncManagedUserOperationalAccess, updateActiveShip, updateUserRecordLocally, usersData]);
+  }, [activeShip, assignPopupData, isAdmin, requestCloudSync, shipsData, syncManagedUserOperationalAccess, updateUserRecordLocally, usersData]);
   const handleAddShipCp = useCallback(() => {
     if (!isAdmin || !activeShip) return;
     const safeName = sanitizeText(newShipCp.name, 80);
@@ -7699,6 +7701,7 @@ export function AppProvider({ children }) {
     }
 
     const role = ACCESS_ROLE_VALUES.includes(userFormData.role) ? userFormData.role : ACCESS_ROLES.PETUGAS;
+    const userMutationMeta = createLocalEntityUpdateMeta();
     const newUser = {
       id: `u${Date.now()}`,
       ...userFormData,
@@ -7717,6 +7720,7 @@ export function AppProvider({ children }) {
       photoUrl: userFormData.photoUrl || createUserAvatar(safeName, usersData.length),
       status: role === ACCESS_ROLES.PETUGAS ? 'off-duty' : 'active',
       shipAssigned: null,
+      ...userMutationMeta,
     };
     const nextUserRecord = normalizeUserRecord(newUser, usersData.length);
     if (nextUserRecord.firebaseUid) {
@@ -7822,6 +7826,7 @@ export function AppProvider({ children }) {
     const nextOperationalStatus = nextRole === ACCESS_ROLES.PETUGAS
       ? (wantsInactive ? 'disabled' : (nextShipAssigned ? 'active' : 'off-duty'))
       : (wantsInactive ? 'disabled' : 'active');
+    const userMutationMeta = createLocalEntityUpdateMeta();
     const previewUser = normalizeUserRecord({
       ...(currentRecord || {}),
       ...selectedUser,
@@ -7844,6 +7849,7 @@ export function AppProvider({ children }) {
       emergencyRelation: sanitizeText(selectedUser.emergencyRelation || '', 40),
       officeAddress: sanitizeMultilineText(selectedUser.officeAddress || '', 180),
       photoUrl: selectedUser.photoUrl || currentRecord?.photoUrl || createUserAvatar(safeName, selectedUserIndex),
+      ...userMutationMeta,
     }, selectedUserIndex);
 
     if (previewUser.firebaseUid) {
