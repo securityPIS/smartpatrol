@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   assignUserToExclusiveShip,
+  reconcileUserShipAssignments,
   removeUserFromShipAssignment,
   resolveExplicitOverride,
 } from '../../src/utils/userManagement.js';
@@ -98,4 +99,42 @@ test('resolveExplicitOverride falls back to seed only when key is absent', () =>
     resolveExplicitOverride({}, { shipAssigned: 'MT MENGGALA' }, 'shipAssigned', ''),
     'MT MENGGALA',
   );
+});
+
+test('reconcileUserShipAssignments clears stale shipAssigned for PETUGAS not in any ship personnel', () => {
+  // Regresi: filter DATA USER memunculkan 8 petugas di MT MENGGALA padahal ARMADA hanya menampilkan 3.
+  const ships = [
+    { id: 's1', name: 'MT MENGGALA', personnel: ['u3'] },
+    { id: 's2', name: 'MT SRIWIJAYA', personnel: [] },
+  ];
+  const users = [
+    { id: 'u1', role: 'ADMIN', shipAssigned: 'MT MENGGALA', status: 'active' },
+    { id: 'u3', role: 'PETUGAS', shipAssigned: 'MT MENGGALA', status: 'active' },
+    { id: 'u10', role: 'PETUGAS', shipAssigned: 'MT MENGGALA', status: 'active' },
+    { id: 'u11', role: 'PETUGAS', shipAssigned: 'MT MENGGALA', status: 'active' },
+  ];
+  const result = reconcileUserShipAssignments(users, ships);
+  const byId = (id) => result.find((u) => u.id === id);
+
+  assert.equal(byId('u1').shipAssigned, 'MT MENGGALA', 'admin shipAssigned dipertahankan');
+  assert.equal(byId('u3').shipAssigned, 'MT MENGGALA', 'petugas yang masih di personnel dipertahankan');
+  assert.equal(byId('u3').status, 'active');
+  assert.equal(byId('u10').shipAssigned, null, 'petugas stale dibersihkan');
+  assert.equal(byId('u10').status, 'off-duty');
+  assert.equal(byId('u11').shipAssigned, null);
+});
+
+test('reconcileUserShipAssignments returns same reference when no changes are needed', () => {
+  const ships = [{ id: 's1', name: 'MT MENGGALA', personnel: ['u3'] }];
+  const users = [{ id: 'u3', role: 'PETUGAS', shipAssigned: 'MT MENGGALA', status: 'active' }];
+  const result = reconcileUserShipAssignments(users, ships);
+  assert.equal(result, users, 'reference equality untuk mencegah loop di useEffect');
+});
+
+test('reconcileUserShipAssignments respects disabled status', () => {
+  const ships = [{ id: 's1', name: 'MT MENGGALA', personnel: [] }];
+  const users = [{ id: 'u10', role: 'PETUGAS', shipAssigned: 'MT MENGGALA', status: 'disabled' }];
+  const result = reconcileUserShipAssignments(users, ships);
+  assert.equal(result[0].shipAssigned, null);
+  assert.equal(result[0].status, 'disabled', 'jangan reaktifkan user yang disabled');
 });

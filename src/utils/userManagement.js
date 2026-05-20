@@ -154,3 +154,47 @@ export function removeUserFromShipAssignment(ships = [], options = {}) {
       : null,
   };
 }
+
+// PETUGAS role marker — duplikat string (bukan import dari AppContextRuntime untuk hindari siklus).
+const PETUGAS_ROLE = 'PETUGAS';
+
+/*
+Rekonsiliasi user.shipAssigned untuk PETUGAS terhadap ship.personnel sebagai source of truth.
+Dipanggil saat data masuk dari cloud/persisted state agar nama petugas yang sudah dipindah
+tidak nyangkut di kapal lama saat di-filter pada DATA USER.
+Admin/PIC dilewati karena shipAssigned mereka bisa di-set tanpa masuk personnel kapal.
+*/
+export function reconcileUserShipAssignments(users = [], ships = []) {
+  const safeUsers = Array.isArray(users) ? users : [];
+  const safeShips = Array.isArray(ships) ? ships : [];
+  if (safeUsers.length === 0) return safeUsers;
+
+  const personnelOwnershipByUserId = new Map();
+  safeShips.forEach((ship) => {
+    toUserIdList(ship?.personnel).forEach((uId) => {
+      if (!personnelOwnershipByUserId.has(uId)) {
+        personnelOwnershipByUserId.set(uId, { shipId: ship?.id || '', shipName: ship?.name || '' });
+      }
+    });
+  });
+
+  let changed = false;
+  const next = safeUsers.map((u) => {
+    if (!u || typeof u !== 'object') return u;
+    if (String(u.role || '').toUpperCase() !== PETUGAS_ROLE) return u;
+
+    const ownership = personnelOwnershipByUserId.get(u.id) || null;
+    const expectedShipName = ownership?.shipName || null;
+    const currentShipAssigned = String(u.shipAssigned || '').trim() || null;
+    if (currentShipAssigned === expectedShipName) return u;
+
+    changed = true;
+    return {
+      ...u,
+      shipAssigned: expectedShipName,
+      status: expectedShipName ? 'active' : (u.status === 'disabled' ? 'disabled' : 'off-duty'),
+    };
+  });
+
+  return changed ? next : safeUsers;
+}

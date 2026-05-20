@@ -15,7 +15,7 @@ import { readFileAsDataUrl, readImageFileAsDataUrl } from '../utils/images';
 import { sanitizeEmail, sanitizeMultilineText, sanitizePhone, sanitizeText, sanitizeUrl } from '../utils/sanitize';
 import { loadImageFromDB, saveImageToDB } from '../utils/imageStore';
 import { checkStorageQuota } from '../utils/storageQuota';
-import { assignUserToExclusiveShip, removeUserFromShipAssignment, resolveExplicitOverride } from '../utils/userManagement';
+import { assignUserToExclusiveShip, reconcileUserShipAssignments, removeUserFromShipAssignment, resolveExplicitOverride } from '../utils/userManagement';
 import {
   addNativeNetworkStatusListener,
   getNativeGeolocationPosition,
@@ -2719,7 +2719,7 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const resolvedActiveShiftKey = nextState.activeShiftKey || baseState.activeShiftKey || null;
   const baseUsers = normalizeUsersCollection(baseState.usersData || []);
   const nextUsers = normalizeUsersCollection(nextState.usersData || []);
-  const mergedUsers = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers, {
+  const mergedUsersRaw = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers, {
     merge: (baseUser, nextUser) => mergeVersionedEntity(baseUser, nextUser),
   }), deletedRecords.users);
   const baseShips = normalizeShipsCollection(baseState.shipsData || []);
@@ -2728,8 +2728,10 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
     omitDeletedEntities(mergeEntitiesById(baseShips, nextShips, {
       merge: (baseShip, nextShip) => mergeVersionedEntity(baseShip, nextShip),
     }), deletedRecords.ships),
-    mergedUsers,
+    mergedUsersRaw,
   );
+  // Source of truth: ship.personnel. PETUGAS yang sudah dipindah tapi shipAssigned stale dibereskan di sini.
+  const mergedUsers = reconcileUserShipAssignments(mergedUsersRaw, mergedShips);
   const shipIds = Array.from(new Set([
     ...Object.keys(baseState.checkpointsByShip || {}),
     ...Object.keys(nextState.checkpointsByShip || {}),
@@ -4313,7 +4315,10 @@ export { ACCESS_ROLES, defaultLocationOptions, SHIP_STATUS_OPTIONS };
 export function AppProvider({ children }) {
   const initialCurrentShiftMeta = getShiftMeta(getTrustedDate());
   const initialShipsCollection = normalizeShipsCollection(persistedState?.shipsData || getInitialShipsData());
-  const initialUsersCollection = normalizeUsersCollection(persistedState?.usersData || getMockUsersList());
+  const initialUsersCollection = reconcileUserShipAssignments(
+    normalizeUsersCollection(persistedState?.usersData || getMockUsersList()),
+    initialShipsCollection,
+  );
   const initialRawCheckpointsByShip = createCheckpointsByShipState(
     initialShipsCollection,
     persistedState?.checkpointsByShip,
@@ -4461,45 +4466,25 @@ export function AppProvider({ children }) {
       if (shipModified) return { ...ship, personnel: newPersonnel, personnelNextMonth: newNextMonth, personnelSchedules: newSchedules };
       return ship;
     });
-
-    // Rekonsiliasi user.shipAssigned terhadap kepemilikan kapal saat ini (ship.personnel = source of truth).
-    // Mencegah stale assignment seperti petugas yang sudah dipindah tapi nama masih terlihat di kapal lama saat di-filter.
-    const personnelOwnershipByUserId = new Map();
-    updatedShips.forEach((ship) => {
-      ensureArray(ship?.personnel).forEach((uId) => {
-        if (!personnelOwnershipByUserId.has(uId)) {
-          personnelOwnershipByUserId.set(uId, { shipId: ship.id, shipName: ship.name });
-        }
-      });
-    });
-    const reconciledUserAssignments = [];
-    usersData.forEach((u) => {
-      if (!u?.id) return;
-      // PETUGAS = source of truth ship.personnel. Admin/PIC bisa punya shipAssigned tanpa masuk personnel.
-      if (u.role !== ACCESS_ROLES.PETUGAS) return;
-      const ownership = personnelOwnershipByUserId.get(u.id) || null;
-      const expectedShipName = ownership?.shipName || null;
-      const currentShipAssigned = sanitizeText(u.shipAssigned || '', 80) || null;
-      if (currentShipAssigned === expectedShipName) return;
-      reconciledUserAssignments.push({
-        userId: u.id,
-        shipAssigned: expectedShipName,
-        status: expectedShipName ? 'active' : 'off-duty',
-      });
-    });
-
     if (shipsChanged) {
       setShipsData(updatedShips);
-    }
-    if (shipsChanged || reconciledUserAssignments.length > 0) {
       setUsersData(prev => prev.map(u => {
-        const update = usersToUpdate.find(x => x.userId === u.id)
-          || reconciledUserAssignments.find(x => x.userId === u.id);
+        const update = usersToUpdate.find(x => x.userId === u.id);
         if (update) return { ...u, shipAssigned: update.shipAssigned, status: update.status };
         return u;
       }));
     }
   }, []);
+
+  // Reconciliation guard untuk data cloud yang nyangkut: petugas dengan shipAssigned ke kapal yang
+  // tidak lagi memuat mereka di personnel. mergeSharedStateSnapshots sudah membersihkan, tapi
+  // effect ini berjaga untuk path mutasi lokal lain (mis. setShipsData via handler langsung).
+  useEffect(() => {
+    if (shipsData.length === 0 || usersData.length === 0) return;
+    const reconciled = reconcileUserShipAssignments(usersData, shipsData);
+    if (reconciled === usersData) return;
+    setUsersData(reconciled);
+  }, [shipsData, usersData]);
 
   // UI states
   const [activeForms, setActiveForms] = useState({});
