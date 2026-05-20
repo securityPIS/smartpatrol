@@ -6191,6 +6191,45 @@ export function AppProvider({ children }) {
     });
   }, [appendNotifications, currentUser, currentUserRole, getUsersByRole, historyEntries, isAdmin, selectedHistoryId]);
 
+  const handleDeleteHistoryEntriesBulk = useCallback((historyIds = [], options = {}) => {
+    if (!isAdmin) return;
+    const requestedIds = Array.from(new Set(ensureArray(historyIds).map(id => String(id || '')).filter(Boolean)));
+    if (requestedIds.length === 0) return;
+    // Hanya riwayat tersimpan (bukan live ON GOING) yang boleh dihapus massal.
+    const eligibleEntries = historyEntries.filter(entry => requestedIds.includes(entry.id) && !entry.isLive);
+    if (eligibleEntries.length === 0) return;
+    const eligibleIds = eligibleEntries.map(entry => entry.id);
+    const onAfterDelete = typeof options.onAfterDelete === 'function' ? options.onAfterDelete : null;
+    setConfirmDialog({
+      title: 'Hapus Riwayat Patroli Massal',
+      message: `Anda yakin ingin menghapus ${eligibleEntries.length} riwayat patroli yang ditandai? Tindakan ini tidak dapat dibatalkan.`,
+      confirmText: 'YA, HAPUS',
+      cancelText: 'BATAL',
+      onConfirm: () => {
+        const deletedAt = new Date().toISOString();
+        setDeletedRecords(previousDeletedRecords => (
+          eligibleIds.reduce((acc, id) => markDeletedRecord(acc, 'historyEntries', id, deletedAt), previousDeletedRecords)
+        ));
+        setHistoryEntries(previousEntries => previousEntries.filter(entry => !eligibleIds.includes(entry.id)));
+        appendNotifications([{
+          type: 'history_deleted',
+          title: 'Riwayat patroli dihapus (massal)',
+          message: `${eligibleEntries.length} riwayat patroli dihapus oleh ${currentUser || 'Admin'}.`,
+          senderName: currentUser || 'Admin',
+          senderRole: currentUserRole,
+          targetUserIds: getUsersByRole([ACCESS_ROLES.ADMIN]),
+          route: 'history/list',
+        }]);
+        if (selectedHistoryId && eligibleIds.includes(selectedHistoryId)) {
+          setSelectedHistoryId(null);
+          setCurrentPage('history');
+          setPatrolTab('checkpoint');
+        }
+        if (onAfterDelete) onAfterDelete(eligibleIds);
+      }
+    });
+  }, [appendNotifications, currentUser, currentUserRole, getUsersByRole, historyEntries, isAdmin, selectedHistoryId]);
+
   // Computed incident lists
   const patrolIncidents = useMemo(() => (
     Object.values(checkpointsByShip)
@@ -9729,10 +9768,12 @@ export function AppProvider({ children }) {
     openHistoryEntry,
     closeHistoryEntry,
     handleDeleteHistoryEntry,
+    handleDeleteHistoryEntriesBulk,
     handleOpenPatrolResult,
   }), [
     closeHistoryEntry,
     handleDeleteHistoryEntry,
+    handleDeleteHistoryEntriesBulk,
     handleOpenPatrolResult,
     openHistoryEntry,
     selectedHistoryEntry,

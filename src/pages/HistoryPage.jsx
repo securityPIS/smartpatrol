@@ -8,14 +8,14 @@ Side Effects: Mengubah selected history, membuka detail laporan/temuan, dan meng
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useHistory, useIncidents, useReports, useRole } from '../context/AppContextRuntime';
-import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX } from 'lucide-react';
+import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX, CheckSquare, Square } from 'lucide-react';
 import HistoryDetailView from '../components/views/HistoryDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
 import AsyncImage from '../components/AsyncImage';
 
 export default function HistoryPage() {
-  const { historyEntries, closeHistoryEntry, handleDeleteHistoryEntry, selectedHistoryEntry, setSelectedHistoryId, handleOpenPatrolResult } = useHistory();
+  const { historyEntries, closeHistoryEntry, handleDeleteHistoryEntry, handleDeleteHistoryEntriesBulk, selectedHistoryEntry, setSelectedHistoryId, handleOpenPatrolResult } = useHistory();
   const { isAdmin } = useRole();
   const { selectedReportDetail, setSelectedReportDetail, setPreviewPhoto } = useReports();
   const { selectedIncident, setSelectedIncident } = useIncidents();
@@ -25,6 +25,8 @@ export default function HistoryPage() {
   const [shiftFilter, setShiftFilter] = useState('');
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIdsForBulk, setSelectedIdsForBulk] = useState(() => new Set());
 
   const shipOptions = useMemo(() => (
     Array.from(new Set(historyEntries.map(entry => entry.ship).filter(Boolean))).sort((left, right) => left.localeCompare(right))
@@ -49,11 +51,83 @@ export default function HistoryPage() {
   }), [endDateFilter, historyEntries, shipFilter, shiftFilter, startDateFilter]);
 
   const hasActiveFilter = Boolean(shipFilter || shiftFilter || startDateFilter || endDateFilter);
-  const showMobileDetail = Boolean(selectedHistoryEntry);
+  const showMobileDetail = Boolean(selectedHistoryEntry) && !selectMode;
+
+  const selectableHistoryEntries = useMemo(() => (
+    filteredHistoryEntries.filter(entry => !entry.isLive)
+  ), [filteredHistoryEntries]);
+
+  const allSelectableSelected = selectableHistoryEntries.length > 0
+    && selectableHistoryEntries.every(entry => selectedIdsForBulk.has(entry.id));
+  const selectedBulkCount = selectedIdsForBulk.size;
+
+  const clearBulkSelection = () => {
+    setSelectedIdsForBulk(new Set());
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIdsForBulk(new Set());
+  };
+
+  const toggleEntrySelected = (id) => {
+    setSelectedIdsForBulk((previousSet) => {
+      const nextSet = new Set(previousSet);
+      if (nextSet.has(id)) nextSet.delete(id);
+      else nextSet.add(id);
+      return nextSet;
+    });
+  };
+
+  const handleToggleSelectAllBulk = () => {
+    setSelectedIdsForBulk((previousSet) => {
+      const everySelected = selectableHistoryEntries.length > 0
+        && selectableHistoryEntries.every(entry => previousSet.has(entry.id));
+      if (everySelected) return new Set();
+      return new Set(selectableHistoryEntries.map(entry => entry.id));
+    });
+  };
+
+  const handleConfirmBulkDelete = () => {
+    if (selectedBulkCount === 0) return;
+    handleDeleteHistoryEntriesBulk(Array.from(selectedIdsForBulk), {
+      onAfterDelete: () => {
+        setSelectedIdsForBulk(new Set());
+        setSelectMode(false);
+      },
+    });
+  };
 
   const handleEntryClick = (id) => {
+    if (selectMode) {
+      const target = filteredHistoryEntries.find(entry => entry.id === id);
+      if (target?.isLive) return; // Riwayat live tidak boleh dipilih untuk dihapus.
+      toggleEntrySelected(id);
+      return;
+    }
     setSelectedHistoryId(id);
   };
+
+  // Exit select mode otomatis bila user bukan admin lagi (mis. logout).
+  useEffect(() => {
+    if (isAdmin) return;
+    if (!selectMode && selectedIdsForBulk.size === 0) return;
+    exitSelectMode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  // Bersihkan id yang sudah tidak ada di daftar tersaring (mis. terhapus atau filter berubah).
+  useEffect(() => {
+    if (selectedIdsForBulk.size === 0) return;
+    const visibleIds = new Set(filteredHistoryEntries.map(entry => entry.id));
+    let changed = false;
+    const nextSet = new Set();
+    selectedIdsForBulk.forEach((id) => {
+      if (visibleIds.has(id)) nextSet.add(id);
+      else changed = true;
+    });
+    if (changed) setSelectedIdsForBulk(nextSet);
+  }, [filteredHistoryEntries, selectedIdsForBulk]);
 
   useEffect(() => {
     setSummaryDetailType(null);
@@ -314,7 +388,7 @@ export default function HistoryPage() {
                 <label className="text-[10px] text-cyan-500 font-bold uppercase tracking-widest mb-1.5 block">Sampai Tanggal</label>
                 <input type="date" value={endDateFilter} onChange={(event) => setEndDateFilter(event.target.value)} className="w-full bg-[#070b19] border border-cyan-800/50 rounded-xl p-3 text-sm text-cyan-50 focus:border-cyan-400 outline-none" />
               </div>
-              <div className="flex items-end lg:col-span-2">
+              <div className="flex flex-wrap items-end gap-2 lg:col-span-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -322,14 +396,65 @@ export default function HistoryPage() {
                     setShiftFilter('');
                     setStartDateFilter('');
                     setEndDateFilter('');
+                    // Reset juga membersihkan penanda riwayat dan keluar dari select mode.
+                    exitSelectMode();
                   }}
-                  className="w-full lg:w-auto px-4 py-3 rounded-xl border border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/30 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
+                  className="w-full sm:w-auto px-4 py-3 rounded-xl border border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/30 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
                 >
                   <FilterX className="w-4 h-4" />
                   Reset
                 </button>
+                {isAdmin && (
+                  selectMode ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleToggleSelectAllBulk}
+                        disabled={selectableHistoryEntries.length === 0}
+                        className="w-full sm:w-auto px-4 py-3 rounded-xl border border-cyan-700/60 text-cyan-200 hover:bg-cyan-900/30 disabled:opacity-50 disabled:hover:bg-transparent transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
+                      >
+                        {allSelectableSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                        {allSelectableSelected ? 'Unselect All' : 'Select All'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmBulkDelete}
+                        disabled={selectedBulkCount === 0}
+                        className="w-full sm:w-auto px-4 py-3 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20 disabled:opacity-50 disabled:hover:bg-rose-500/10 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete{selectedBulkCount > 0 ? ` (${selectedBulkCount})` : ''}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={exitSelectMode}
+                        className="w-full sm:w-auto px-4 py-3 rounded-xl border border-cyan-800/60 text-cyan-400 hover:bg-cyan-900/30 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
+                      >
+                        Batal
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectMode(true);
+                        setSelectedHistoryId(null);
+                      }}
+                      className="w-full sm:w-auto px-4 py-3 rounded-xl border border-amber-400/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
+                    >
+                      <CheckSquare className="w-4 h-4" />
+                      Select
+                    </button>
+                  )
+                )}
               </div>
             </div>
+          </div>
+        )}
+        {selectMode && (
+          <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-2.5 text-[11px] font-bold uppercase tracking-widest text-amber-200 flex flex-wrap items-center justify-between gap-2">
+            <span>Mode Pilih Aktif — Klik kartu untuk menandai</span>
+            <span className="text-amber-100">{selectedBulkCount} ditandai</span>
           </div>
         )}
         {filteredHistoryEntries.length === 0 && (
@@ -344,13 +469,17 @@ export default function HistoryPage() {
         {filteredHistoryEntries.map((data) => {
           const isLiveEntry = Boolean(data.isLive);
           const isSelectedEntry = selectedHistoryEntry?.id === data.id;
-          const cardClassName = isLiveEntry
-            ? (isSelectedEntry
-              ? 'border-emerald-400 ring-1 ring-emerald-400/30 shadow-[0_0_18px_rgba(16,185,129,0.18)] bg-emerald-500/10'
-              : 'border-emerald-700/60 bg-emerald-950/20 hover:border-emerald-500/60 hover:shadow-[0_0_22px_rgba(16,185,129,0.14)]')
-            : (isSelectedEntry
-              ? 'border-cyan-400 ring-1 ring-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.15)] bg-[#0f1734]'
-              : 'border-cyan-800/50 hover:border-cyan-500/50 hover:shadow-[0_0_20px_rgba(6,182,212,0.1)]');
+          const isMarkedForBulk = selectMode && selectedIdsForBulk.has(data.id);
+          const bulkSelectableLive = selectMode && isLiveEntry;
+          const cardClassName = isMarkedForBulk
+            ? 'border-amber-400 ring-2 ring-amber-300/40 shadow-[0_0_18px_rgba(251,191,36,0.25)] bg-amber-500/10'
+            : isLiveEntry
+              ? (isSelectedEntry && !selectMode
+                ? 'border-emerald-400 ring-1 ring-emerald-400/30 shadow-[0_0_18px_rgba(16,185,129,0.18)] bg-emerald-500/10'
+                : `border-emerald-700/60 bg-emerald-950/20 ${bulkSelectableLive ? 'opacity-50 cursor-not-allowed' : 'hover:border-emerald-500/60 hover:shadow-[0_0_22px_rgba(16,185,129,0.14)]'}`)
+              : (isSelectedEntry && !selectMode
+                ? 'border-cyan-400 ring-1 ring-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.15)] bg-[#0f1734]'
+                : 'border-cyan-800/50 hover:border-amber-400/60 hover:shadow-[0_0_20px_rgba(251,191,36,0.12)]');
           const summary = data.summary || {};
           const totalCount = summary.total || 0;
           const amanCount = summary.aman || 0;
@@ -397,18 +526,29 @@ export default function HistoryPage() {
               <div className="text-right">
                 <div className="flex items-center justify-end gap-2">
                   <span className={`inline-block px-2 py-1 rounded text-xs font-bold ${badgeClassName}`}>{data.shift}</span>
-                  {isAdmin && !isLiveEntry && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleDeleteHistoryEntry(data.id);
-                      }}
-                      className="p-2 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors"
-                      aria-label="Hapus riwayat patroli"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  {selectMode ? (
+                    !isLiveEntry && (
+                      <span
+                        className={`w-9 h-9 rounded-lg border flex items-center justify-center ${isMarkedForBulk ? 'border-amber-300 bg-amber-300 text-[#3a2a04]' : 'border-amber-400/40 bg-amber-500/10 text-amber-200'}`}
+                        aria-hidden="true"
+                      >
+                        {isMarkedForBulk ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                      </span>
+                    )
+                  ) : (
+                    isAdmin && !isLiveEntry && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleDeleteHistoryEntry(data.id);
+                        }}
+                        className="p-2 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors"
+                        aria-label="Hapus riwayat patroli"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )
                   )}
                 </div>
                 <p className="text-[10px] text-cyan-600 mt-1 flex items-center justify-end gap-1"><Clock className="w-3 h-3"/> {data.time}</p>
