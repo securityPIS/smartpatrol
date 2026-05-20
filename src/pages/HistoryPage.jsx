@@ -8,11 +8,67 @@ Side Effects: Mengubah selected history, membuka detail laporan/temuan, dan meng
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useHistory, useIncidents, useReports, useRole } from '../context/AppContextRuntime';
-import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX, CheckSquare, Square } from 'lucide-react';
+import { FileText, CalendarDays, Clock, CheckCircle2, AlertTriangle, CircleOff, Check, Trash2, ArrowLeft, Ship, Filter, FilterX, CheckSquare, Square, ChevronRight, ChevronDown } from 'lucide-react';
 import HistoryDetailView from '../components/views/HistoryDetailView';
 import ReportDetailView from '../components/views/ReportDetailView';
 import IncidentDetailView from '../components/views/IncidentDetailView';
 import AsyncImage from '../components/AsyncImage';
+
+// Helper murni: jumlahkan agregat stats (aman/temuan/missed) lintas history entries.
+function sumSummaries(entries) {
+  return (entries || []).reduce(
+    (acc, entry) => {
+      const s = entry?.summary || {};
+      acc.aman += Number(s.aman) || 0;
+      acc.temuan += Number(s.temuan) || Number(entry?.issue) || 0;
+      acc.missed += Number(s.missed) || Number(entry?.missed) || 0;
+      return acc;
+    },
+    { aman: 0, temuan: 0, missed: 0 },
+  );
+}
+
+// Fallback label tanggal: pakai `entry.date` yang sudah ter-format Indo, atau parse `dateKey`.
+function deriveDateLabel(dateKey, sampleEntry) {
+  if (sampleEntry?.date) return sampleEntry.date;
+  if (!dateKey || dateKey === '__unknown__') return 'Tanggal Tidak Diketahui';
+  try {
+    const parsed = new Date(`${dateKey}T00:00:00`);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+    }
+  } catch {
+    /* fallthrough */
+  }
+  return dateKey;
+}
+
+const UNKNOWN_DATE_KEY = '__unknown__';
+const UNKNOWN_SHIP_NAME = 'Tanpa Kapal';
+
+// Strip status sejajar: 3 sel fixed-width (ikon + angka tabular-nums) supaya kolom rapi lintas baris.
+function StatStrip({ summary, compact = false }) {
+  const aman = summary?.aman || 0;
+  const temuan = summary?.temuan || 0;
+  const missed = summary?.missed || 0;
+  const cellClass = compact
+    ? 'w-9 flex items-center justify-end gap-1 tabular-nums text-[11px]'
+    : 'w-12 flex items-center justify-end gap-1 tabular-nums text-xs';
+  const iconSize = compact ? 'w-3 h-3' : 'w-3.5 h-3.5';
+  return (
+    <div className="flex items-center gap-2 shrink-0">
+      <span className={`${cellClass} text-emerald-300`} title={`${aman} aman`}>
+        <CheckCircle2 className={`${iconSize} text-emerald-400`} />{aman}
+      </span>
+      <span className={`${cellClass} ${temuan > 0 ? 'text-yellow-300' : 'text-cyan-700'}`} title={`${temuan} temuan`}>
+        <AlertTriangle className={`${iconSize} ${temuan > 0 ? 'text-yellow-400' : 'text-cyan-700'}`} />{temuan}
+      </span>
+      <span className={`${cellClass} ${missed > 0 ? 'text-rose-300' : 'text-cyan-700'}`} title={`${missed} missed`}>
+        <CircleOff className={`${iconSize} ${missed > 0 ? 'text-rose-400' : 'text-cyan-700'}`} />{missed}
+      </span>
+    </div>
+  );
+}
 
 export default function HistoryPage() {
   const { historyEntries, closeHistoryEntry, handleDeleteHistoryEntry, handleDeleteHistoryEntriesBulk, selectedHistoryEntry, setSelectedHistoryId, handleOpenPatrolResult } = useHistory();
@@ -27,6 +83,8 @@ export default function HistoryPage() {
   const [endDateFilter, setEndDateFilter] = useState('');
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIdsForBulk, setSelectedIdsForBulk] = useState(() => new Set());
+  const [expandedDateKeys, setExpandedDateKeys] = useState(() => new Set());
+  const [expandedShipKeys, setExpandedShipKeys] = useState(() => new Set());
 
   const shipOptions = useMemo(() => (
     Array.from(new Set(historyEntries.map(entry => entry.ship).filter(Boolean))).sort((left, right) => left.localeCompare(right))
@@ -56,6 +114,52 @@ export default function HistoryPage() {
   const selectableHistoryEntries = useMemo(() => (
     filteredHistoryEntries.filter(entry => !entry.isLive)
   ), [filteredHistoryEntries]);
+
+  // Pisahkan entry ON GOING (tidak di-grouping) dan build struktur date -> ship -> entries[] untuk arsip.
+  const { liveEntries, dateGroups } = useMemo(() => {
+    const live = [];
+    const buckets = new Map(); // dateKey -> Map<ship, Entry[]>
+    for (const entry of filteredHistoryEntries) {
+      if (entry?.isLive) { live.push(entry); continue; }
+      const dk = entry?.dateKey || UNKNOWN_DATE_KEY;
+      if (!buckets.has(dk)) buckets.set(dk, new Map());
+      const shipsMap = buckets.get(dk);
+      const shipName = entry?.ship || UNKNOWN_SHIP_NAME;
+      if (!shipsMap.has(shipName)) shipsMap.set(shipName, []);
+      shipsMap.get(shipName).push(entry);
+    }
+    const groups = Array.from(buckets.entries())
+      .sort(([a], [b]) => {
+        if (a === UNKNOWN_DATE_KEY) return 1;
+        if (b === UNKNOWN_DATE_KEY) return -1;
+        return b.localeCompare(a); // descending by YYYY-MM-DD
+      })
+      .map(([dateKey, shipsMap]) => {
+        const ships = Array.from(shipsMap.entries())
+          .sort(([a], [b]) => a.localeCompare(b)) // ship ascending
+          .map(([shipName, rows]) => {
+            const sortedRows = rows.slice().sort((x, y) => (
+              (x.time || '').localeCompare(y.time || '')
+              || new Date(y.createdAt || 0).getTime() - new Date(x.createdAt || 0).getTime()
+            ));
+            return {
+              ship: shipName,
+              dateKey,
+              shipKey: `${dateKey}::${shipName}`,
+              dateLabel: deriveDateLabel(dateKey, sortedRows[0]),
+              rows: sortedRows,
+              summary: sumSummaries(sortedRows),
+            };
+          });
+        return {
+          dateKey,
+          dateLabel: deriveDateLabel(dateKey, ships[0]?.rows[0]),
+          ships,
+          summary: sumSummaries(ships.flatMap(s => s.rows)),
+        };
+      });
+    return { liveEntries: live, dateGroups: groups };
+  }, [filteredHistoryEntries]);
 
   const allSelectableSelected = selectableHistoryEntries.length > 0
     && selectableHistoryEntries.every(entry => selectedIdsForBulk.has(entry.id));
@@ -107,6 +211,55 @@ export default function HistoryPage() {
     }
     setSelectedHistoryId(id);
   };
+
+  const toggleDateExpanded = (dateKey) => {
+    setExpandedDateKeys((previousSet) => {
+      const nextSet = new Set(previousSet);
+      if (nextSet.has(dateKey)) nextSet.delete(dateKey);
+      else nextSet.add(dateKey);
+      return nextSet;
+    });
+  };
+
+  const toggleShipExpanded = (shipKey) => {
+    setExpandedShipKeys((previousSet) => {
+      const nextSet = new Set(previousSet);
+      if (nextSet.has(shipKey)) nextSet.delete(shipKey);
+      else nextSet.add(shipKey);
+      return nextSet;
+    });
+  };
+
+  // Auto-expand: saat ada filter aktif atau selectMode aktif, buka semua grup yang terlihat
+  // supaya admin tidak perlu klik manual setiap kali memperketat filter atau memilih banyak.
+  useEffect(() => {
+    if (!hasActiveFilter && !selectMode) return;
+    const dateKeys = new Set();
+    const shipKeys = new Set();
+    dateGroups.forEach((group) => {
+      dateKeys.add(group.dateKey);
+      group.ships.forEach((ship) => shipKeys.add(ship.shipKey));
+    });
+    setExpandedDateKeys((previous) => {
+      let changed = previous.size !== dateKeys.size;
+      if (!changed) { for (const k of dateKeys) if (!previous.has(k)) { changed = true; break; } }
+      return changed ? new Set([...previous, ...dateKeys]) : previous;
+    });
+    setExpandedShipKeys((previous) => {
+      let changed = false;
+      for (const k of shipKeys) if (!previous.has(k)) { changed = true; break; }
+      return changed ? new Set([...previous, ...shipKeys]) : previous;
+    });
+  }, [dateGroups, hasActiveFilter, selectMode]);
+
+  // Auto-expand path saat ada selectedHistoryEntry (mis. user buka detail dari notifikasi).
+  useEffect(() => {
+    if (!selectedHistoryEntry || selectedHistoryEntry.isLive) return;
+    const dk = selectedHistoryEntry.dateKey || UNKNOWN_DATE_KEY;
+    const sk = `${dk}::${selectedHistoryEntry.ship || UNKNOWN_SHIP_NAME}`;
+    setExpandedDateKeys((previous) => (previous.has(dk) ? previous : new Set([...previous, dk])));
+    setExpandedShipKeys((previous) => (previous.has(sk) ? previous : new Set([...previous, sk])));
+  }, [selectedHistoryEntry]);
 
   // Exit select mode otomatis bila user bukan admin lagi (mis. logout).
   useEffect(() => {
@@ -396,8 +549,10 @@ export default function HistoryPage() {
                     setShiftFilter('');
                     setStartDateFilter('');
                     setEndDateFilter('');
-                    // Reset juga membersihkan penanda riwayat dan keluar dari select mode.
+                    // Reset juga membersihkan penanda riwayat, keluar dari select mode, dan collapse semua grup.
                     exitSelectMode();
+                    setExpandedDateKeys(new Set());
+                    setExpandedShipKeys(new Set());
                   }}
                   className="w-full sm:w-auto px-4 py-3 rounded-xl border border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/30 transition-colors flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest"
                 >
@@ -466,110 +621,172 @@ export default function HistoryPage() {
             )}
           </div>
         )}
-        {filteredHistoryEntries.map((data) => {
-          const isLiveEntry = Boolean(data.isLive);
+        {/* ON GOING entries: tetap kartu besar, tidak di-grouping. */}
+        {liveEntries.map((data) => {
           const isSelectedEntry = selectedHistoryEntry?.id === data.id;
-          const isMarkedForBulk = selectMode && selectedIdsForBulk.has(data.id);
-          const bulkSelectableLive = selectMode && isLiveEntry;
-          const cardClassName = isMarkedForBulk
-            ? 'border-amber-400 ring-2 ring-amber-300/40 shadow-[0_0_18px_rgba(251,191,36,0.25)] bg-amber-500/10'
-            : isLiveEntry
-              ? (isSelectedEntry && !selectMode
-                ? 'border-emerald-400 ring-1 ring-emerald-400/30 shadow-[0_0_18px_rgba(16,185,129,0.18)] bg-emerald-500/10'
-                : `border-emerald-700/60 bg-emerald-950/20 ${bulkSelectableLive ? 'opacity-50 cursor-not-allowed' : 'hover:border-emerald-500/60 hover:shadow-[0_0_22px_rgba(16,185,129,0.14)]'}`)
-              : (isSelectedEntry && !selectMode
-                ? 'border-cyan-400 ring-1 ring-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.15)] bg-[#0f1734]'
-                : 'border-cyan-800/50 hover:border-amber-400/60 hover:shadow-[0_0_20px_rgba(251,191,36,0.12)]');
+          const bulkSelectableLive = selectMode;
+          const cardClassName = (isSelectedEntry && !selectMode)
+            ? 'border-emerald-400 ring-1 ring-emerald-400/30 shadow-[0_0_18px_rgba(16,185,129,0.18)] bg-emerald-500/10'
+            : `border-emerald-700/60 bg-emerald-950/20 ${bulkSelectableLive ? 'opacity-50 cursor-not-allowed' : 'hover:border-emerald-500/60 hover:shadow-[0_0_22px_rgba(16,185,129,0.14)]'}`;
           const summary = data.summary || {};
           const totalCount = summary.total || 0;
           const amanCount = summary.aman || 0;
           const temuanCount = summary.temuan ?? data.issue ?? 0;
-          const statusCount = isLiveEntry
-            ? (summary.pending ?? data.pending ?? 0)
-            : (summary.missed ?? data.missed ?? 0);
+          const pendingCount = summary.pending ?? data.pending ?? 0;
           const completionCount = amanCount + temuanCount;
-          const completionBoxClassName = isLiveEntry
-            ? (isSelectedEntry
-              ? 'bg-emerald-400 text-[#052e1d] border-emerald-300'
-              : 'bg-emerald-500/10 text-emerald-200 border-emerald-700/60')
-            : (isSelectedEntry
-              ? 'bg-cyan-500 text-[#070b19] border-cyan-400'
-              : 'bg-[#070b19] text-cyan-300 border-cyan-800');
-          const badgeClassName = isLiveEntry
-            ? 'bg-emerald-500/10 text-emerald-200 border border-emerald-400/40'
-            : 'bg-[#070b19] text-cyan-400 border border-cyan-800';
+          const completionBoxClassName = isSelectedEntry
+            ? 'bg-emerald-400 text-[#052e1d] border-emerald-300'
+            : 'bg-emerald-500/10 text-emerald-200 border-emerald-700/60';
 
           return (
-          <div 
-            key={data.id} 
-            onClick={() => handleEntryClick(data.id)} 
-            className={`border rounded-xl p-4 cursor-pointer transition-all ${cardClassName}`}
-          >
-            <div className="flex justify-between items-start mb-3">
-              <div className="flex gap-3 min-w-0">
-                <div className={`w-16 aspect-square rounded-lg flex items-center justify-center border transition-colors shrink-0 ${completionBoxClassName}`}>
-                  <p className="text-sm font-black leading-none tabular-nums">{completionCount}/{totalCount}</p>
-                </div>
-                <div className="min-w-0">
+            <div
+              key={data.id}
+              onClick={() => handleEntryClick(data.id)}
+              className={`border rounded-xl p-4 cursor-pointer transition-all ${cardClassName}`}
+            >
+              <div className="flex justify-between items-start mb-3">
+                <div className="flex gap-3 min-w-0">
+                  <div className={`w-16 aspect-square rounded-lg flex items-center justify-center border transition-colors shrink-0 ${completionBoxClassName}`}>
+                    <p className="text-sm font-black leading-none tabular-nums">{completionCount}/{totalCount}</p>
+                  </div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-bold text-cyan-50">{data.ship}</h3>
-                      {isLiveEntry && (
-                        <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] bg-emerald-400/15 text-emerald-200 border border-emerald-400/30">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
-                          ON GOING
-                        </span>
-                      )}
-                    </div>
-                    <p className={`text-sm flex items-center gap-1 mt-0.5 ${isLiveEntry ? 'text-emerald-200/80' : 'text-cyan-500/80'}`}><CalendarDays className="w-3 h-3" /> {data.date || '-'}</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="flex items-center justify-end gap-2">
-                  <span className={`inline-block px-2 py-1 rounded text-xs font-bold ${badgeClassName}`}>{data.shift}</span>
-                  {selectMode ? (
-                    !isLiveEntry && (
-                      <span
-                        className={`w-9 h-9 rounded-lg border flex items-center justify-center ${isMarkedForBulk ? 'border-amber-300 bg-amber-300 text-[#3a2a04]' : 'border-amber-400/40 bg-amber-500/10 text-amber-200'}`}
-                        aria-hidden="true"
-                      >
-                        {isMarkedForBulk ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                      <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] bg-emerald-400/15 text-emerald-200 border border-emerald-400/30">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
+                        ON GOING
                       </span>
-                    )
-                  ) : (
-                    isAdmin && !isLiveEntry && (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleDeleteHistoryEntry(data.id);
-                        }}
-                        className="p-2 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors"
-                        aria-label="Hapus riwayat patroli"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )
-                  )}
+                    </div>
+                    <p className="text-sm flex items-center gap-1 mt-0.5 text-emerald-200/80"><CalendarDays className="w-3 h-3" /> {data.date || '-'}</p>
+                  </div>
                 </div>
-                <p className="text-[10px] text-cyan-600 mt-1 flex items-center justify-end gap-1"><Clock className="w-3 h-3"/> {data.time}</p>
+                <div className="text-right">
+                  <span className="inline-block px-2 py-1 rounded text-xs font-bold bg-emerald-500/10 text-emerald-200 border border-emerald-400/40">{data.shift}</span>
+                  <p className="text-[10px] text-cyan-600 mt-1 flex items-center justify-end gap-1"><Clock className="w-3 h-3"/> {data.time}</p>
+                </div>
               </div>
-            </div>
-            <div className={`grid grid-cols-3 gap-2 pt-3 opacity-80 group-hover:opacity-100 ${isLiveEntry ? 'border-t border-emerald-900/40' : 'border-t border-cyan-900/50'}`}>
-              <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
+              <div className="grid grid-cols-3 gap-2 pt-3 border-t border-emerald-900/40">
+                <div className="flex-1 p-2 rounded-lg border bg-emerald-950/20 border-emerald-800/30">
                   <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Aman</p>
                   <p className="text-xs text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> {amanCount} Aman</p>
-              </div>
-              <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
+                </div>
+                <div className="flex-1 p-2 rounded-lg border bg-emerald-950/20 border-emerald-800/30">
                   <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Temuan</p>
                   {temuanCount > 0 ? <p className="text-xs text-yellow-400 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> {temuanCount} Temuan</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
-              </div>
-              <div className={`flex-1 p-2 rounded-lg border ${isLiveEntry ? 'bg-emerald-950/20 border-emerald-800/30' : 'bg-[#070b19] border-cyan-900/30'}`}>
-                  <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">{isLiveEntry ? 'Pending' : 'Missed'}</p>
-                  {statusCount > 0 ? <p className={`text-xs font-medium flex items-center gap-1 ${isLiveEntry ? 'text-slate-300' : 'text-rose-400'}`}>{isLiveEntry ? <Clock className="w-3 h-3"/> : <CircleOff className="w-3 h-3"/>} {statusCount} Titik</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
+                </div>
+                <div className="flex-1 p-2 rounded-lg border bg-emerald-950/20 border-emerald-800/30">
+                  <p className="text-[10px] text-cyan-600 uppercase font-bold mb-0.5">Pending</p>
+                  {pendingCount > 0 ? <p className="text-xs text-slate-300 font-medium flex items-center gap-1"><Clock className="w-3 h-3"/> {pendingCount} Titik</p> : <p className="text-xs text-cyan-400 font-medium flex items-center gap-1"><Check className="w-3 h-3"/> Nihil</p>}
+                </div>
               </div>
             </div>
+          );
+        })}
+
+        {/* Riwayat arsip: progressive disclosure — Tanggal → Kapal → Shift entries. */}
+        {dateGroups.length > 0 && (
+          <div className="rounded-xl border border-cyan-900/40 bg-[#080d1f] divide-y divide-cyan-900/40 overflow-hidden">
+            {dateGroups.map((dateGroup) => {
+              const isDateExpanded = expandedDateKeys.has(dateGroup.dateKey);
+              const totalShifts = dateGroup.ships.reduce((acc, s) => acc + s.rows.length, 0);
+              return (
+                <div key={dateGroup.dateKey}>
+                  {/* Level 1: Tanggal row */}
+                  <button
+                    type="button"
+                    onClick={() => toggleDateExpanded(dateGroup.dateKey)}
+                    className={`w-full flex items-center gap-3 pl-3 pr-3 py-3 text-left transition-colors ${isDateExpanded ? 'bg-cyan-900/15' : 'hover:bg-cyan-900/10'}`}
+                    aria-expanded={isDateExpanded}
+                  >
+                    {isDateExpanded ? <ChevronDown className="w-4 h-4 text-cyan-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-cyan-500 shrink-0" />}
+                    <CalendarDays className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-cyan-50 truncate">{dateGroup.dateLabel}</p>
+                      <p className="text-[10px] text-cyan-600 uppercase tracking-widest font-bold">{totalShifts} shift · {dateGroup.ships.length} kapal</p>
+                    </div>
+                    <StatStrip summary={dateGroup.summary} />
+                  </button>
+
+                  {/* Level 2: Kapal rows (di dalam tanggal yang expanded) */}
+                  {isDateExpanded && dateGroup.ships.map((shipGroup) => {
+                    const isShipExpanded = expandedShipKeys.has(shipGroup.shipKey);
+                    const shipMarkedCount = selectMode
+                      ? shipGroup.rows.reduce((acc, r) => acc + (selectedIdsForBulk.has(r.id) ? 1 : 0), 0)
+                      : 0;
+                    return (
+                      <div key={shipGroup.shipKey} className="border-t border-cyan-900/30 bg-[#070b1a]">
+                        <button
+                          type="button"
+                          onClick={() => toggleShipExpanded(shipGroup.shipKey)}
+                          className={`w-full flex items-center gap-3 pl-7 pr-3 py-2.5 text-left transition-colors ${isShipExpanded ? 'bg-cyan-900/10' : 'hover:bg-cyan-900/10'}`}
+                          aria-expanded={isShipExpanded}
+                        >
+                          {isShipExpanded ? <ChevronDown className="w-3.5 h-3.5 text-cyan-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-cyan-500 shrink-0" />}
+                          <Ship className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-cyan-100 truncate">{shipGroup.ship}</p>
+                            <p className="text-[10px] text-cyan-600 truncate">{shipGroup.dateLabel} · {shipGroup.rows.length} shift{selectMode && shipMarkedCount > 0 ? ` · ${shipMarkedCount} ditandai` : ''}</p>
+                          </div>
+                          <StatStrip summary={shipGroup.summary} compact />
+                        </button>
+
+                        {/* Level 3: History entry rows (shift detail) */}
+                        {isShipExpanded && shipGroup.rows.map((entry) => {
+                          const isSelectedEntry = selectedHistoryEntry?.id === entry.id;
+                          const isMarkedForBulk = selectMode && selectedIdsForBulk.has(entry.id);
+                          const rowClassName = isMarkedForBulk
+                            ? 'border-l-2 border-l-amber-400 bg-amber-500/10'
+                            : (isSelectedEntry && !selectMode)
+                              ? 'border-l-2 border-l-cyan-400 bg-[#0f1734]'
+                              : 'border-l-2 border-l-transparent hover:bg-cyan-900/15';
+                          const entrySummary = entry.summary || {};
+                          const amanCount = entrySummary.aman || 0;
+                          const temuanCount = entrySummary.temuan ?? entry.issue ?? 0;
+                          const missedCount = entrySummary.missed ?? entry.missed ?? 0;
+                          return (
+                            <div
+                              key={entry.id}
+                              onClick={() => handleEntryClick(entry.id)}
+                              className={`flex items-center gap-3 pl-12 pr-3 py-2.5 cursor-pointer transition-colors border-t border-cyan-900/30 ${rowClassName}`}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold text-cyan-100 truncate">{entry.shift || 'Shift'}</p>
+                                <p className="text-[10px] text-cyan-600 truncate flex items-center gap-1"><Clock className="w-3 h-3"/> {entry.time || '-'}</p>
+                              </div>
+                              <StatStrip summary={{ aman: amanCount, temuan: temuanCount, missed: missedCount }} compact />
+                              {selectMode ? (
+                                <span
+                                  className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${isMarkedForBulk ? 'border-amber-300 bg-amber-300 text-[#3a2a04]' : 'border-amber-400/40 bg-amber-500/10 text-amber-200'}`}
+                                  aria-hidden="true"
+                                >
+                                  {isMarkedForBulk ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                                </span>
+                              ) : isAdmin ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleDeleteHistoryEntry(entry.id);
+                                  }}
+                                  className="w-7 h-7 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors flex items-center justify-center shrink-0"
+                                  aria-label="Hapus riwayat patroli"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <ChevronRight className="w-4 h-4 text-cyan-600 shrink-0" />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
-        )})}
+        )}
       </div>
 
       {/* Right Pane: Detail View */}
