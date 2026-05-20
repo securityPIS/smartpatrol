@@ -83,3 +83,19 @@ test('resolveExplicitOverride preserves an explicit empty string override', () =
     '',
   );
 });
+
+test('resolveExplicitOverride preserves an explicit null override (unassign vs seed fallback)', () => {
+  // Regresi: petugas dengan seed shipAssigned masih nempel di kapal lama saat di-filter
+  // karena normalizeUserRecord fallback ke seed ketika user.shipAssigned = null.
+  assert.equal(
+    resolveExplicitOverride({ shipAssigned: null }, { shipAssigned: 'MT MENGGALA' }, 'shipAssigned', ''),
+    null,
+  );
+});
+
+test('resolveExplicitOverride falls back to seed only when key is absent', () => {
+  assert.equal(
+    resolveExplicitOverride({}, { shipAssigned: 'MT MENGGALA' }, 'shipAssigned', ''),
+    'MT MENGGALA',
+  );
+});

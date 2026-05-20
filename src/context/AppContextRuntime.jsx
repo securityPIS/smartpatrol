@@ -2896,13 +2896,16 @@ function normalizeUserRecord(user, index = 0) {
   const safeEmail = sanitizeEmail(user?.email || '') || sanitizeEmail(seedUsersById[user?.id]?.email || seedUsersByEmail[sanitizeEmail(user?.email || '')]?.email || createFallbackEmail(safeName, index));
   const seedUser = seedUsersById[user?.id] || seedUsersByEmail[safeEmail];
   const role = normalizeUserRole({ ...seedUser, ...user, name: safeName });
-  const shipAssigned = sanitizeText(user?.shipAssigned || seedUser?.shipAssigned || '', 80) || null;
+  // Hormati nilai shipAssigned/status yang sengaja dikosongkan admin (unassign) — jangan fallback ke seed.
+  const shipAssignedSource = resolveExplicitOverride(user, seedUser, 'shipAssigned', '');
+  const shipAssigned = sanitizeText(shipAssignedSource || '', 80) || null;
   const firebaseUid = sanitizeText(user?.firebaseUid || seedUser?.firebaseUid || '', 160) || '';
   const authProvider = firebaseUid
     ? 'firebase'
     : sanitizeText(user?.authProvider || seedUser?.authProvider || 'none', 20).toLowerCase();
   const fallbackStatus = role === ACCESS_ROLES.PETUGAS ? (shipAssigned ? 'active' : 'off-duty') : 'active';
-  const status = sanitizeText(user?.status || seedUser?.status || fallbackStatus, 20).toLowerCase() || fallbackStatus;
+  const statusSource = resolveExplicitOverride(user, seedUser, 'status', '');
+  const status = sanitizeText(statusSource || fallbackStatus, 20).toLowerCase() || fallbackStatus;
   return {
     ...seedUser,
     ...user,
@@ -4458,10 +4461,40 @@ export function AppProvider({ children }) {
       if (shipModified) return { ...ship, personnel: newPersonnel, personnelNextMonth: newNextMonth, personnelSchedules: newSchedules };
       return ship;
     });
+
+    // Rekonsiliasi user.shipAssigned terhadap kepemilikan kapal saat ini (ship.personnel = source of truth).
+    // Mencegah stale assignment seperti petugas yang sudah dipindah tapi nama masih terlihat di kapal lama saat di-filter.
+    const personnelOwnershipByUserId = new Map();
+    updatedShips.forEach((ship) => {
+      ensureArray(ship?.personnel).forEach((uId) => {
+        if (!personnelOwnershipByUserId.has(uId)) {
+          personnelOwnershipByUserId.set(uId, { shipId: ship.id, shipName: ship.name });
+        }
+      });
+    });
+    const reconciledUserAssignments = [];
+    usersData.forEach((u) => {
+      if (!u?.id) return;
+      // PETUGAS = source of truth ship.personnel. Admin/PIC bisa punya shipAssigned tanpa masuk personnel.
+      if (u.role !== ACCESS_ROLES.PETUGAS) return;
+      const ownership = personnelOwnershipByUserId.get(u.id) || null;
+      const expectedShipName = ownership?.shipName || null;
+      const currentShipAssigned = sanitizeText(u.shipAssigned || '', 80) || null;
+      if (currentShipAssigned === expectedShipName) return;
+      reconciledUserAssignments.push({
+        userId: u.id,
+        shipAssigned: expectedShipName,
+        status: expectedShipName ? 'active' : 'off-duty',
+      });
+    });
+
     if (shipsChanged) {
       setShipsData(updatedShips);
+    }
+    if (shipsChanged || reconciledUserAssignments.length > 0) {
       setUsersData(prev => prev.map(u => {
-        const update = usersToUpdate.find(x => x.userId === u.id);
+        const update = usersToUpdate.find(x => x.userId === u.id)
+          || reconciledUserAssignments.find(x => x.userId === u.id);
         if (update) return { ...u, shipAssigned: update.shipAssigned, status: update.status };
         return u;
       }));
