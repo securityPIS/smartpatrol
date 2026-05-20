@@ -52,11 +52,11 @@ function StatStrip({ summary, compact = false }) {
   const temuan = summary?.temuan || 0;
   const missed = summary?.missed || 0;
   const cellClass = compact
-    ? 'w-9 flex items-center justify-end gap-1 tabular-nums text-[11px]'
-    : 'w-12 flex items-center justify-end gap-1 tabular-nums text-xs';
-  const iconSize = compact ? 'w-3 h-3' : 'w-3.5 h-3.5';
+    ? 'w-12 flex items-center justify-end gap-1.5 tabular-nums text-sm font-semibold'
+    : 'w-14 flex items-center justify-end gap-1.5 tabular-nums text-base font-bold';
+  const iconSize = compact ? 'w-4 h-4' : 'w-5 h-5';
   return (
-    <div className="flex items-center gap-2 shrink-0">
+    <div className="flex items-center gap-3 shrink-0">
       <span className={`${cellClass} text-emerald-300`} title={`${aman} aman`}>
         <CheckCircle2 className={`${iconSize} text-emerald-400`} />{aman}
       </span>
@@ -695,14 +695,14 @@ export default function HistoryPage() {
                   <button
                     type="button"
                     onClick={() => toggleDateExpanded(dateGroup.dateKey)}
-                    className={`w-full flex items-center gap-3 pl-3 pr-3 py-3 text-left transition-colors ${isDateExpanded ? 'bg-cyan-900/15' : 'hover:bg-cyan-900/10'}`}
+                    className={`w-full flex items-center gap-3 pl-4 pr-4 py-4 text-left transition-colors ${isDateExpanded ? 'bg-cyan-900/15' : 'hover:bg-cyan-900/10'}`}
                     aria-expanded={isDateExpanded}
                   >
-                    {isDateExpanded ? <ChevronDown className="w-4 h-4 text-cyan-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-cyan-500 shrink-0" />}
-                    <CalendarDays className="w-4 h-4 text-cyan-400 shrink-0" />
+                    {isDateExpanded ? <ChevronDown className="w-5 h-5 text-cyan-400 shrink-0" /> : <ChevronRight className="w-5 h-5 text-cyan-500 shrink-0" />}
+                    <CalendarDays className="w-5 h-5 text-cyan-400 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-cyan-50 truncate">{dateGroup.dateLabel}</p>
-                      <p className="text-[10px] text-cyan-600 uppercase tracking-widest font-bold">{totalShifts} shift · {dateGroup.ships.length} kapal</p>
+                      <p className="text-base font-bold text-cyan-50 truncate">{dateGroup.dateLabel}</p>
+                      <p className="text-xs text-cyan-500 uppercase tracking-wider font-bold mt-0.5">{totalShifts} shift · {dateGroup.ships.length} kapal</p>
                     </div>
                     <StatStrip summary={dateGroup.summary} />
                   </button>
@@ -718,14 +718,14 @@ export default function HistoryPage() {
                         <button
                           type="button"
                           onClick={() => toggleShipExpanded(shipGroup.shipKey)}
-                          className={`w-full flex items-center gap-3 pl-7 pr-3 py-2.5 text-left transition-colors ${isShipExpanded ? 'bg-cyan-900/10' : 'hover:bg-cyan-900/10'}`}
+                          className={`w-full flex items-center gap-3 pl-8 pr-4 py-3 text-left transition-colors ${isShipExpanded ? 'bg-cyan-900/10' : 'hover:bg-cyan-900/10'}`}
                           aria-expanded={isShipExpanded}
                         >
-                          {isShipExpanded ? <ChevronDown className="w-3.5 h-3.5 text-cyan-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-cyan-500 shrink-0" />}
-                          <Ship className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                          {isShipExpanded ? <ChevronDown className="w-4 h-4 text-cyan-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-cyan-500 shrink-0" />}
+                          <Ship className="w-4 h-4 text-cyan-400 shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-cyan-100 truncate">{shipGroup.ship}</p>
-                            <p className="text-[10px] text-cyan-600 truncate">{shipGroup.dateLabel} · {shipGroup.rows.length} shift{selectMode && shipMarkedCount > 0 ? ` · ${shipMarkedCount} ditandai` : ''}</p>
+                            <p className="text-sm font-bold text-cyan-100 truncate">{shipGroup.ship}</p>
+                            <p className="text-xs text-cyan-500 truncate mt-0.5">{shipGroup.dateLabel} · {shipGroup.rows.length} shift{selectMode && shipMarkedCount > 0 ? ` · ${shipMarkedCount} ditandai` : ''}</p>
                           </div>
                           <StatStrip summary={shipGroup.summary} compact />
                         </button>
@@ -747,19 +747,19 @@ export default function HistoryPage() {
                             <div
                               key={entry.id}
                               onClick={() => handleEntryClick(entry.id)}
-                              className={`flex items-center gap-3 pl-12 pr-3 py-2.5 cursor-pointer transition-colors border-t border-cyan-900/30 ${rowClassName}`}
+                              className={`flex items-center gap-3 pl-14 pr-4 py-3 cursor-pointer transition-colors border-t border-cyan-900/30 ${rowClassName}`}
                             >
                               <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-cyan-100 truncate">{entry.shift || 'Shift'}</p>
-                                <p className="text-[10px] text-cyan-600 truncate flex items-center gap-1"><Clock className="w-3 h-3"/> {entry.time || '-'}</p>
+                                <p className="text-sm font-bold text-cyan-100 truncate">{entry.shift || 'Shift'}</p>
+                                <p className="text-xs text-cyan-500 truncate flex items-center gap-1 mt-0.5"><Clock className="w-3.5 h-3.5"/> {entry.time || '-'}</p>
                               </div>
                               <StatStrip summary={{ aman: amanCount, temuan: temuanCount, missed: missedCount }} compact />
                               {selectMode ? (
                                 <span
-                                  className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${isMarkedForBulk ? 'border-amber-300 bg-amber-300 text-[#3a2a04]' : 'border-amber-400/40 bg-amber-500/10 text-amber-200'}`}
+                                  className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${isMarkedForBulk ? 'border-amber-300 bg-amber-300 text-[#3a2a04]' : 'border-amber-400/40 bg-amber-500/10 text-amber-200'}`}
                                   aria-hidden="true"
                                 >
-                                  {isMarkedForBulk ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                                  {isMarkedForBulk ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                                 </span>
                               ) : isAdmin ? (
                                 <button
@@ -768,13 +768,13 @@ export default function HistoryPage() {
                                     event.stopPropagation();
                                     handleDeleteHistoryEntry(entry.id);
                                   }}
-                                  className="w-7 h-7 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors flex items-center justify-center shrink-0"
+                                  className="w-9 h-9 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors flex items-center justify-center shrink-0"
                                   aria-label="Hapus riwayat patroli"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
                               ) : (
-                                <ChevronRight className="w-4 h-4 text-cyan-600 shrink-0" />
+                                <ChevronRight className="w-5 h-5 text-cyan-600 shrink-0" />
                               )}
                             </div>
                           );
