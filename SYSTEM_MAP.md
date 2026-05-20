@@ -163,8 +163,9 @@ Firestore trigger:
 
 Scheduler:
   sendScheduledOperationalPushNotifications(every 5 minutes)
+    -> Pending Checkpoint Summary Telegram hanya diteruskan saat entry admin baru dibuat pada jendela H-1 shift; perubahan UI setelah submit laporan tidak mengirim ulang summary lama
     → shift_started per kapal untuk PIC/Petugas
-    → shift_wrap_up satu notifikasi admin berisi summary semua kapal
+    → shift_wrap_up satu notifikasi admin berisi summary semua kapal; Telegram hanya meneruskan setelah data Riwayat UI untuk shift tersebut tersedia agar placeholder tidak terkirim
     → checkpoint_pending menjelang akhir shift (roster server = default + custom kapal + titik tambahan shift aktif; completed hanya dari patrolReports/shared-state shift aktif)
 ```
 

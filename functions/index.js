@@ -41,6 +41,8 @@ const MAX_NOTIFICATION_ITEMS = 250;
 const APP_TIME_ZONE = 'Asia/Jakarta';
 const PUSH_ALERT_CHANNEL_ID = 'smartpatrol-alerts';
 const PUSH_SOS_CHANNEL_ID = 'smartpatrol-sos';
+const PENDING_SUMMARY_MIN_MINUTES_BEFORE_SHIFT_END = 55;
+const PENDING_SUMMARY_MAX_MINUTES_BEFORE_SHIFT_END = 60;
 const SHIFT_SEQUENCE = Object.freeze([
   { id: 'shift-1-active', label: 'Shift 1', startHour: 6, startMinute: 0, endHour: 12, endMinute: 0 },
   { id: 'shift-2-active', label: 'Shift 2', startHour: 12, startMinute: 0, endHour: 18, endMinute: 0 },
@@ -440,7 +442,7 @@ async function appendNotificationForAdminUsers(notification = {}) {
         ? notification.routeParams
         : {},
       shipName: '',
-      shiftKey: '',
+      shiftKey: sanitizeString(notification.shiftKey || '', 180),
       incidentId: '',
       historyId: '',
       dedupeKey: nextDedupeKey,
@@ -497,7 +499,7 @@ async function upsertAdminNotificationByDedupeKey(notification = {}) {
       nextNotifications[idx] = {
         ...existingNotifications[idx],
         message: nextMessage,
-        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
     } else {
       const nextNotification = {
@@ -513,7 +515,7 @@ async function upsertAdminNotificationByDedupeKey(notification = {}) {
           ? notification.routeParams
           : {},
         shipName: '',
-        shiftKey: '',
+        shiftKey: sanitizeString(notification.shiftKey || '', 180),
         incidentId: '',
         historyId: '',
         dedupeKey: nextDedupeKey,
@@ -1507,6 +1509,8 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
     const ships = ensureArray(state.shipsData).filter((ship) => ship?.id || ship?.name);
     const minutesAfterStart = minutesBetween(now, currentShift.startAt);
     const minutesBeforeEnd = minutesBetween(currentShift.endAt, now);
+    const isPendingSummaryDispatchWindow = minutesBeforeEnd >= PENDING_SUMMARY_MIN_MINUTES_BEFORE_SHIFT_END
+      && minutesBeforeEnd <= PENDING_SUMMARY_MAX_MINUTES_BEFORE_SHIFT_END;
 
     if (minutesAfterStart >= 0 && minutesAfterStart <= 7) {
       for (const ship of ships) {
@@ -1556,14 +1560,14 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           senderName: 'Sistem',
           senderRole: 'SYSTEM',
           route: 'history/list',
+          shiftKey: previousShift.key,
           dedupeKey: `shift-summary:${previousShift.key}`,
         });
       }
     }
 
     // Notifikasi per-kapal: di 60 menit terakhir shift, kirim reminder ke PIC/Petugas.
-    // Tiap tick (5 menit) scheduler fire: push HP per kapal & push HP admin tetap di-dedupe
-    // 1×/shift, tapi notifikasi in-app + Telegram di-upsert agar angka pending selalu update.
+    // Admin summary hanya dibuat pada jendela H-1 shift agar Telegram tidak spam.
     if (minutesBeforeEnd > 0 && minutesBeforeEnd <= 60) {
       const shipsWithPending = [];
       for (const ship of ships) {
@@ -1603,11 +1607,11 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           });
         }
 
-        // Tetap kumpulkan data agar admin summary bisa di-upsert tiap tick.
+        // Tetap kumpulkan data agar admin summary bisa dibuat tepat pada jendela H-1 shift.
         shipsWithPending.push({ ship, pendingCount });
       }
 
-      if (shipsWithPending.length > 0) {
+      if (shipsWithPending.length > 0 && isPendingSummaryDispatchWindow) {
         const detailedPendingSummary = buildAdminPendingCheckpointSummary(shipsWithPending, currentShift);
         const totalPending = shipsWithPending.reduce(
           (sum, item) => sum + Number(item.pendingCount || 0),
@@ -1632,9 +1636,7 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           });
         }
 
-        // In-app notification + Telegram: upsert tiap tick. Helper akan no-op kalau
-        // pesan tidak berubah, sehingga Telegram hanya mengirim ulang saat angka pending
-        // benar-benar update (listener: telegramAI.js — `before.message !== after.message`).
+        // In-app notification + Telegram: entry baru ini akan diteruskan sekali oleh listener Telegram.
         await upsertAdminNotificationByDedupeKey({
           type: 'checkpoint_pending',
           title: 'Pending Checkpoint Summary',
@@ -1642,6 +1644,7 @@ export const sendScheduledOperationalPushNotifications = onSchedule(
           senderName: 'Sistem',
           senderRole: 'SYSTEM',
           route: 'patrol/live',
+          shiftKey: currentShift.key,
           dedupeKey: `admin-checkpoint-pending:${currentShift.key}`,
         });
       }

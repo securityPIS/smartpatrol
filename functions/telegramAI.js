@@ -10,7 +10,10 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import fs from 'fs';
-import { resolveTelegramNotificationText } from './telegramNotifications.js';
+import {
+  getForwardableTelegramSystemNotifications,
+  resolveTelegramNotificationText,
+} from './telegramNotifications.js';
 
 // Inisialisasi Gemini sekali per cold start agar request Telegram tetap ringan.
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -377,16 +380,15 @@ https://smartpatrol-7ff9e.web.app/?incidentId=${incident.id}`;
     const beforeNotifs = Array.isArray(beforeState.notifications) ? beforeState.notifications : [];
     const afterNotifs = Array.isArray(afterState.notifications) ? afterState.notifications : [];
     
-    // Deteksi notifikasi baru atau yang pesannya berubah (untuk pending/wrap-up yang terupdate)
-    const newOrUpdatedNotifs = afterNotifs.filter(after => {
-      const before = beforeNotifs.find(b => 
-        (after.dedupeKey && b.dedupeKey === after.dedupeKey) || b.id === after.id
-      );
-      if (!before) return true; // Baru (belum ada dedupeKey/id yang cocok)
-      // Bandingkan teks yang benar-benar dikirim ke Telegram. Summary operasional
-      // dibangun dari model data UI supaya perubahan angka mentah scheduler tidak
-      // menjadi sumber kebenaran Telegram.
-      return resolveTelegramNotificationText(before, beforeState) !== resolveTelegramNotificationText(after, afterState);
+    // Deteksi notifikasi baru atau yang memang perlu diteruskan. Pending Checkpoint
+    // Summary sengaja hanya forward saat entry baru di jendela H-1 shift, supaya
+    // submit laporan tidak mengirim ulang Telegram dari notifikasi lama.
+    const newOrUpdatedNotifs = getForwardableTelegramSystemNotifications({
+      beforeNotifications: beforeNotifs,
+      afterNotifications: afterNotifs,
+      beforeState,
+      afterState,
+      dispatchedAt: event.time || new Date().toISOString(),
     });
     
     for (const notif of newOrUpdatedNotifs) {
