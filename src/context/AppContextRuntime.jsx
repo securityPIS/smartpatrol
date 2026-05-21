@@ -15,7 +15,7 @@ import { readFileAsDataUrl, readImageFileAsDataUrl } from '../utils/images';
 import { sanitizeEmail, sanitizeMultilineText, sanitizePhone, sanitizeText, sanitizeUrl } from '../utils/sanitize';
 import { loadImageFromDB, saveImageToDB } from '../utils/imageStore';
 import { checkStorageQuota } from '../utils/storageQuota';
-import { assignUserToExclusiveShip, reconcileUserShipAssignments, removeUserFromShipAssignment, resolveExplicitOverride } from '../utils/userManagement';
+import { assignUserToExclusiveShip, reconcileUserShipAssignments, removeUserFromShipAssignment, resolveExplicitOverride, shouldDeferPetugasFleetValidation } from '../utils/userManagement';
 import {
   addNativeNetworkStatusListener,
   getNativeGeolocationPosition,
@@ -3060,7 +3060,21 @@ function buildOperationalUserRecordFromAccess({
     || 'Personil Operasional',
     80,
   ) || 'Personil Operasional';
-  const nextUserId = existingUser?.id || profile.id || access.legacyUserId || `u${Date.now()}`;
+  const nextUserId = existingUser?.id || profile.id || access.legacyUserId || access.uid || authUser?.uid || `u${Date.now()}`;
+  const resolvedUpdatedAtMs = Math.max(
+    ...[
+      resolveExternalTimestampMs(existingUser?.updatedAtTrustedMs),
+      resolveExternalTimestampMs(existingUser?.updatedAtClientMs),
+      resolveExternalTimestampMs(existingUser?.updatedAt),
+      resolveExternalTimestampMs(access.updatedAt),
+      resolveExternalTimestampMs(access.reviewedAt),
+      resolveExternalTimestampMs(access.approvedAt),
+      resolveExternalTimestampMs(profile.updatedAt),
+    ].filter(Number.isFinite),
+  );
+  const resolvedUpdatedAtIso = Number.isFinite(resolvedUpdatedAtMs)
+    ? new Date(resolvedUpdatedAtMs).toISOString()
+    : (existingUser?.updatedAt || null);
 
   return normalizeUserRecord({
     ...(existingUser || {}),
@@ -3076,6 +3090,13 @@ function buildOperationalUserRecordFromAccess({
     photoUrl: sanitizeUrl(profile.photoUrl || authUser?.photoURL || existingUser?.photoUrl || '') || createUserAvatar(safeName, users.length),
     authProvider: 'firebase',
     firebaseUid: authUser?.uid || access.uid || existingUser?.firebaseUid || null,
+    updatedAt: resolvedUpdatedAtIso || existingUser?.updatedAt || null,
+    updatedAtClientMs: Number.isFinite(resolvedUpdatedAtMs)
+      ? resolvedUpdatedAtMs
+      : (Number.isFinite(existingUser?.updatedAtClientMs) ? existingUser.updatedAtClientMs : null),
+    updatedAtTrustedMs: Number.isFinite(resolvedUpdatedAtMs)
+      ? resolvedUpdatedAtMs
+      : (Number.isFinite(existingUser?.updatedAtTrustedMs) ? existingUser.updatedAtTrustedMs : null),
     hasCredential: false,
     passwordSalt: '',
     passwordHash: '',
@@ -4592,18 +4613,28 @@ export function AppProvider({ children }) {
         return null;
       }
 
-      return resolvePreferredUserRecord(usersData, {
+      const matchedUser = resolvePreferredUserRecord(usersData, {
         sessionUserId,
         firebaseAuthEmail,
         firebaseAuthUid,
       }) || sessionUserRecord || null;
+
+      if (!authAccessState?.access) return matchedUser;
+
+      return buildOperationalUserRecordFromAccess({
+        access: authAccessState.access,
+        profile: authAccessState.profile,
+        authUser: firebaseAuthUser,
+        existingUser: matchedUser,
+        users: usersData,
+      });
     }
     return resolvePreferredUserRecord(usersData, {
       sessionUserId,
       firebaseAuthUid: sessionUserRecord?.firebaseUid || '',
       firebaseAuthEmail: sessionUserRecord?.email || '',
     }) || sessionUserRecord;
-  }, [authAccessEnabled, firebaseAuthEmail, firebaseAuthReady, firebaseAuthUid, firebaseAuthUser, sessionUserId, sessionUserRecord, usersData]);
+  }, [authAccessEnabled, authAccessState, firebaseAuthEmail, firebaseAuthReady, firebaseAuthUid, firebaseAuthUser, sessionUserId, sessionUserRecord, usersData]);
   const effectiveSessionUser = isFirebaseAuthEnabled
     ? currentUserRecord
     : (currentUserRecord || sessionUserRecord || null);
@@ -4885,6 +4916,13 @@ export function AppProvider({ children }) {
   const assignedShipForCurrentUser = useMemo(() => {
     return resolveAssignedShipForUser(currentUserRecord, shipsData);
   }, [currentUserRecord, shipsData]);
+  const isWaitingForAssignedFleetSync = useMemo(() => shouldDeferPetugasFleetValidation({
+    isCloudSyncEnabled,
+    cloudSyncBootstrapped,
+    isOffline,
+    user: currentUserRecord,
+    assignedShip: assignedShipForCurrentUser,
+  }), [assignedShipForCurrentUser, cloudSyncBootstrapped, currentUserRecord, isOffline]);
   const operationalShip = useMemo(() => {
     if (currentUserRecord?.role === ACCESS_ROLES.ADMIN) return null;
     if (shipsData.length === 0) return null;
@@ -9320,10 +9358,13 @@ export function AppProvider({ children }) {
       handleLogout('Petugas off-duty atau tanpa penugasan kapal tidak bisa tetap login.');
       return;
     }
+    if (isWaitingForAssignedFleetSync) {
+      return;
+    }
     if (activeUser.role === ACCESS_ROLES.PETUGAS && !assignedShipForCurrentUser) {
       handleLogout('Petugas yang tidak lagi terdaftar di armada aktif tidak bisa tetap login.');
     }
-  }, [assignedShipForCurrentUser, authAccessBusy, authAccessEnabled, authAccessStatus, authBusy, currentUserRecord, firebaseAuthReady, firebaseAuthUser, handleLogout, resetAuthSession, sessionUserId, usersData]);
+  }, [assignedShipForCurrentUser, authAccessBusy, authAccessEnabled, authAccessStatus, authBusy, currentUserRecord, firebaseAuthReady, firebaseAuthUser, handleLogout, isWaitingForAssignedFleetSync, resetAuthSession, sessionUserId, usersData]);
   useEffect(() => { if (!currentUserRecord) return; if (!isAdmin && (currentPage === 'users' || currentPage === 'ships' || currentPage === 'daily-report')) { setCurrentPage('home'); setActiveShipId(null); setShowShipForm(false); setShowShipDocForm(false); setShowUserForm(false); setSelectedUser(null); } }, [currentPage, currentUserRecord, isAdmin]);
   useEffect(() => { if (activeShipId) return; setShowShipDocForm(false); }, [activeShipId]);
   useEffect(() => {
@@ -9449,10 +9490,11 @@ export function AppProvider({ children }) {
     if (!isFirebaseAuthEnabled) return false;
     if (!firebaseAuthReady) return true;
     if (authBusy || authAccessBusy) return true;
+    if (isWaitingForAssignedFleetSync) return true;
     const currentUid = sanitizeText(firebaseAuthUser?.uid || '', 160);
     if (currentUid && authAccessResolvedUid !== currentUid && authAccessOfflineUid !== currentUid) return true;
     return false;
-  }, [sessionUserId, firebaseAuthReady, firebaseAuthUser, authBusy, authAccessBusy, authAccessResolvedUid, authAccessOfflineUid]);
+  }, [sessionUserId, firebaseAuthReady, firebaseAuthUser, authBusy, authAccessBusy, authAccessResolvedUid, authAccessOfflineUid, isWaitingForAssignedFleetSync]);
 
   const authValue = useMemo(() => ({
     sessionUserId,

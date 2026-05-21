@@ -2,7 +2,7 @@
 Tujuan: Menjaga integritas state user saat admin mengubah penugasan kapal dan akses operasional.
 Caller: Node test runner untuk regresi manajemen user.
 Dependensi: src/utils/userManagement.js.
-Main Functions: Menguji assignment eksklusif lintas kapal dan override kosong untuk unassign.
+Main Functions: Menguji assignment eksklusif lintas kapal, override kosong untuk unassign, dan guard bootstrap armada.
 Side Effects: Tidak ada; test memakai data dummy in-memory.
 */
 
@@ -14,6 +14,7 @@ import {
   reconcileUserShipAssignments,
   removeUserFromShipAssignment,
   resolveExplicitOverride,
+  shouldDeferPetugasFleetValidation,
 } from '../../src/utils/userManagement.js';
 
 const baseShips = [
@@ -137,4 +138,34 @@ test('reconcileUserShipAssignments respects disabled status', () => {
   const result = reconcileUserShipAssignments(users, ships);
   assert.equal(result[0].shipAssigned, null);
   assert.equal(result[0].status, 'disabled', 'jangan reaktifkan user yang disabled');
+});
+
+test('shouldDeferPetugasFleetValidation waits for cloud fleet bootstrap before logout', () => {
+  const result = shouldDeferPetugasFleetValidation({
+    isCloudSyncEnabled: true,
+    cloudSyncBootstrapped: false,
+    isOffline: false,
+    user: { id: 'u20', role: 'PETUGAS', shipAssigned: 'MT BARU', status: 'active' },
+    assignedShip: null,
+  });
+
+  assert.equal(result, true, 'petugas approved jangan dilogout saat cache kapal belum bootstrap');
+});
+
+test('shouldDeferPetugasFleetValidation stops deferring after bootstrap or off-duty state', () => {
+  assert.equal(shouldDeferPetugasFleetValidation({
+    isCloudSyncEnabled: true,
+    cloudSyncBootstrapped: true,
+    isOffline: false,
+    user: { id: 'u20', role: 'PETUGAS', shipAssigned: 'MT BARU', status: 'active' },
+    assignedShip: null,
+  }), false);
+
+  assert.equal(shouldDeferPetugasFleetValidation({
+    isCloudSyncEnabled: true,
+    cloudSyncBootstrapped: false,
+    isOffline: false,
+    user: { id: 'u21', role: 'PETUGAS', shipAssigned: '', status: 'off-duty' },
+    assignedShip: null,
+  }), false);
 });

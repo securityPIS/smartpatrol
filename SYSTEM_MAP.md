@@ -31,6 +31,7 @@ LoginPage[handleLogin] → AppContextRuntime[handleLogin]
   → firebase/auth[loginWithFirebaseEmail] → Firebase Auth
   → firebase/access[resolveOperationalAccess] → Cloud Function[resolveOperationalAccess]
   → userAccess/{uid}.enabled === true
+  → userAccess menjadi profil otoritatif sesi Firebase; guard armada aktif menunggu bootstrap shared-state bila cache kapal lokal belum sinkron
   → saveAuthSession(localStorage) → setSessionUserId → render AppShell
 
 LoginPage[handleRegister] → Firebase Auth[registerWithFirebaseEmail]

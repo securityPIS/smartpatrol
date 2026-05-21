@@ -2,7 +2,7 @@
 Tujuan: Menjaga integritas state user dan penugasan kapal pada modul admin.
 Caller: AppContextRuntime dan test regresi manajemen user.
 Dependensi: Tidak ada dependensi eksternal.
-Main Functions: Assignment eksklusif user lintas kapal, unassign terarah, dan pembacaan override eksplisit.
+Main Functions: Assignment eksklusif user lintas kapal, unassign terarah, pembacaan override eksplisit, dan guard bootstrap armada.
 Side Effects: Tidak ada; semua helper bersifat pure function.
 */
 
@@ -157,6 +157,28 @@ export function removeUserFromShipAssignment(ships = [], options = {}) {
 
 // PETUGAS role marker — duplikat string (bukan import dari AppContextRuntime untuk hindari siklus).
 const PETUGAS_ROLE = 'PETUGAS';
+
+export function shouldDeferPetugasFleetValidation({
+  isCloudSyncEnabled = false,
+  cloudSyncBootstrapped = true,
+  isOffline = false,
+  user = null,
+  assignedShip = null,
+} = {}) {
+  const role = String(user?.role || '').toUpperCase();
+  const status = String(user?.status || '').toLowerCase();
+  const shipAssigned = String(user?.shipAssigned || '').trim();
+
+  return Boolean(
+    isCloudSyncEnabled
+    && !cloudSyncBootstrapped
+    && !isOffline
+    && role === PETUGAS_ROLE
+    && status === 'active'
+    && shipAssigned
+    && !assignedShip
+  );
+}
 
 /*
 Rekonsiliasi user.shipAssigned untuk PETUGAS terhadap ship.personnel sebagai source of truth.
