@@ -1,6 +1,6 @@
 # SYSTEM_MAP — SmartPatrol
 
-> Peta sistem otomatis. Terakhir diperbarui: 2026-05-07.
+> Peta sistem otomatis. Terakhir diperbarui: 2026-05-21.
 > Bahasa pemrograman: **JavaScript (React 19 + Vite 8)**.
 
 ---
@@ -63,7 +63,7 @@ PatrolPage[handleActionClick(checkpointId, type)]
     → tidak → buka ShiftStatusModal + blok checklist
     → ya → lanjut
   → usePatrol hook → pendingPatrolCameraCapture
-  → PatrolCameraModal[capture foto kamera-only: Capacitor Camera native Android atau Web getUserMedia fallback]
+  → PatrolCameraModal[capture foto kamera-only terkompresi: Capacitor Camera native Android atau Web getUserMedia/input capture fallback]
   → imageStore[saveImageToDB(IndexedDB)]
   → PatrolFormView[submit]
   → AppContextRuntime[handleSubmitCheckpoint]
@@ -72,7 +72,7 @@ PatrolPage[handleActionClick(checkpointId, type)]
     → normalizeTimeAuditRecord()
     → setCheckpointsByShip(updated)
     → savePatrolReport(Firestore domain doc kecil, mediaStatus uploading/ready; foto lokal dipertahankan di device pengirim)
-    → uploadCloudDataUrlAsset(Storage) → update patrolReports photoUrl
+    → uploadCloudDataUrlAsset(Storage; in-flight dedupe per foto lokal) → update patrolReports photoUrl
     → scheduleCloudSync → saveCloudAppState(Firestore) via mergeSharedStateSnapshots
 ```
 
@@ -126,7 +126,7 @@ scheduleCloudSync (debounced write):
   → createCloudSyncStateSnapshot(localState)
   → prepareSharedStateForCloudSync
     → urgent sync: kirim state inti dulu, aset lokal disisihkan lalu dijadwalkan sync lanjutan
-    → normal sync: uploadCloudDataUrlAsset (gambar → Firebase Storage)
+    → normal sync: uploadCloudDataUrlAsset (gambar → Firebase Storage; satu foto lokal tidak di-upload ganda oleh domain report dan shared-state)
     → fitSharedStateToCloudBudget (trim history/notifikasi/SOS agar dokumen Firestore tetap ringan)
   → saveCloudAppState(state, { mergeState: fn })
     → Firestore runTransaction → merge → setDoc
@@ -349,7 +349,7 @@ Catatan dokumentasi: `docs/guides/` berisi deck panduan petugas SmartPatrol, scr
 | `components/cards.jsx` | Various card components | Komponen card reusable untuk item list. |
 | `components/ui.jsx` | UI primitives | Komponen UI dasar reusable. |
 | `components/modals/SOSAlertModal.jsx` | `SOSAlertModal` | Modal fullscreen SOS: alarm buzzer audio, info GPS, nama kapal, tombol "Terima & Mengerti". |
-| `components/modals/PatrolCameraModal.jsx` | `PatrolCameraModal` | Modal camera-only untuk laporan patroli: native Android Camera source=Camera dengan pilihan depan/belakang, plus fallback Web Camera. |
+| `components/modals/PatrolCameraModal.jsx` | `PatrolCameraModal` | Modal camera-only untuk laporan patroli: native Android Camera source=Camera dengan pilihan depan/belakang, foto diperkecil/di-WebP-kan untuk sync cepat, plus fallback Web Camera. |
 | `components/modals/ShiftStatusModal.jsx` | `ShiftStatusModal` | Modal status petugas shift yang mengunci checklist sampai snapshot patroli/istirahat tersimpan. |
 | `components/modals/ConfirmModal.jsx` | `ConfirmModal` | Dialog konfirmasi generik (ya/tidak). |
 | `components/modals/AssignDueDatePopup.jsx` | `AssignDueDatePopup` | Popup untuk assign crew ke kapal dengan tanggal mulai / TBC. |
@@ -460,6 +460,7 @@ incidents/{incidentId}
         photoUrl, credentialUpdatedAt,
         dutyEndDate, dutyStatus,    // crew rotation
       }
+      // merge runtime men-dedupe record dengan firebaseUid/email sama dan remap personnel kapal
     ],
     checkpointsByShip: {            // State checkpoint per kapal per shift
       [shipId]: [
@@ -570,7 +571,7 @@ registration-assets/{uid}/** -> aset onboarding publik milik pemilik registrasi
 | **Single document Firestore** | Seluruh state disimpan dalam satu dokumen Firestore (`smartpatrol/shared-state`). Ada limit 1MB per dokumen Firestore — bisa tercapai jika data banyak (foto base64, history panjang). |
 | **Single document Firestore** | `smartpatrol/shared-state` masih jadi blast radius besar. Rules kini sudah dibatasi ke `userAccess.enabled`, tetapi konflik merge lintas-domain masih menjadi risiko arsitektur. |
 | **Storage operasional shared** | `state-assets/**` sekarang hanya bisa diakses user operasional yang enabled, tetapi aset operasional masih belum dipecah per-domain. |
-| **Offline image sync** | Gambar disimpan di IndexedDB lokal, di-upload ke Firebase Storage saat sync. Race condition saat multiple device sync bersamaan bisa menyebabkan gambar hilang/terganti (bugs sebelumnya terdokumentasi). |
+| **Offline image sync** | Gambar disimpan di IndexedDB lokal, di-upload ke Firebase Storage saat sync. In-flight upload per URL lokal kini di-dedupe agar domain report dan shared-state tidak menggandakan upload, tetapi race lintas-device tetap perlu dipantau pada refactor berikutnya. |
 | **Weather API inline** | Panggilan ke Open-Meteo API di-embed langsung di `AppContextRuntime` tanpa abstraksi service terpisah. |
 | **Legacy hash cleanup belum tuntas** | Flow login/register aktif sudah dipindahkan ke Firebase Auth + sidecar approval. Namun helper legacy di mega-file masih perlu dibersihkan tuntas pada refactor berikutnya. |
 | **Coverage test masih minimum** | Sudah ada smoke test `tests/security/*`, tetapi belum ada integration test emulator untuk rules/callable dan belum ada e2e UI. |

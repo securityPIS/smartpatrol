@@ -2,7 +2,7 @@
 Tujuan: Menyediakan kamera khusus laporan patroli tanpa jalur impor galeri.
 Caller: App shell melalui pendingPatrolCameraCapture dari AppContextRuntime.
 Dependensi: React, lucide-react, AppContextRuntime, adapter native Capacitor, dan utilitas kompresi gambar.
-Main Functions: Menampilkan preview kamera web/Android WebView, mengambil foto dengan kualitas terbaik (native camera di Android, input capture di web mobile), mengganti kamera depan/belakang, fallback ke kamera native Android, dan memilih galeri hanya untuk update temuan.
+Main Functions: Menampilkan preview kamera web/Android WebView, mengambil foto terkompresi untuk sync cepat (native camera di Android, input capture di web mobile), mengganti kamera depan/belakang, fallback ke kamera native Android, dan memilih galeri hanya untuk update temuan.
 Side Effects: Memicu permission kamera/galeri, membuka stream kamera perangkat atau UI native fallback, membaca file lokal, dan menghentikan stream saat modal ditutup.
 */
 
@@ -11,6 +11,10 @@ import { Camera, CameraOff, Images, RefreshCcw, X } from 'lucide-react';
 import { usePatrol } from '../../context/AppContextRuntime';
 import { captureNativeCameraPhoto, isNativeRuntime } from '../../services/native/capacitorBridge';
 import { readImageFileAsDataUrl } from '../../utils/images';
+
+const PATROL_CAMERA_MAX_EDGE = 1200;
+const PATROL_CAMERA_IMAGE_QUALITY = 0.74;
+const PATROL_CAMERA_ASPECT_RATIO = 4 / 5;
 
 function pickGalleryImageDataUrl() {
   const input = document.createElement('input');
@@ -44,7 +48,11 @@ function pickGalleryImageDataUrl() {
       }
 
       try {
-        const dataUrl = await readImageFileAsDataUrl(file);
+        const dataUrl = await readImageFileAsDataUrl(
+          file,
+          PATROL_CAMERA_MAX_EDGE,
+          PATROL_CAMERA_IMAGE_QUALITY,
+        );
         cleanup();
         resolve(dataUrl);
       } catch (error) {
@@ -102,8 +110,12 @@ function pickWebCameraDataUrl(cameraDirection = 'environment') {
       }
 
       try {
-        // Kompresi tetap jalan agar ukuran foto terkontrol untuk sync
-        const dataUrl = await readImageFileAsDataUrl(file);
+        // Kompresi tetap jalan agar ukuran foto terkontrol untuk sync lintas-device.
+        const dataUrl = await readImageFileAsDataUrl(
+          file,
+          PATROL_CAMERA_MAX_EDGE,
+          PATROL_CAMERA_IMAGE_QUALITY,
+        );
         cleanup();
         resolve(dataUrl);
       } catch (error) {
@@ -168,9 +180,9 @@ export default function PatrolCameraModal() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: cameraFacingMode },
-          aspectRatio: { ideal: 4 / 5 },
-          width: { min: 720, ideal: 1280 },
-          height: { min: 960, ideal: 1600 },
+          aspectRatio: { ideal: PATROL_CAMERA_ASPECT_RATIO },
+          width: { ideal: 960 },
+          height: { ideal: 1200 },
         },
         audio: false,
       });
@@ -252,7 +264,7 @@ export default function PatrolCameraModal() {
 
     const width = video.videoWidth || 1280;
     const height = video.videoHeight || 720;
-    const targetAspectRatio = 4 / 5;
+    const targetAspectRatio = PATROL_CAMERA_ASPECT_RATIO;
     let sourceWidth = width;
     let sourceHeight = height;
     let offsetX = 0;
@@ -266,9 +278,12 @@ export default function PatrolCameraModal() {
       offsetY = Math.round((height - sourceHeight) / 2);
     }
 
+    const scale = Math.min(1, PATROL_CAMERA_MAX_EDGE / Math.max(sourceWidth, sourceHeight, 1));
+    const outputWidth = Math.max(1, Math.round(sourceWidth * scale));
+    const outputHeight = Math.max(1, Math.round(sourceHeight * scale));
     const canvas = document.createElement('canvas');
-    canvas.width = sourceWidth;
-    canvas.height = sourceHeight;
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
 
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) {
@@ -276,9 +291,8 @@ export default function PatrolCameraModal() {
       return;
     }
 
-    context.drawImage(video, offsetX, offsetY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
-    // Naikkan quality untuk capture dari stream agar detail lebih terjaga
-    const dataUrl = canvas.toDataURL('image/webp', 0.92);
+    context.drawImage(video, offsetX, offsetY, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
+    const dataUrl = canvas.toDataURL('image/webp', PATROL_CAMERA_IMAGE_QUALITY);
     await handlePatrolCameraCapture(dataUrl);
     stopCameraStream();
   }, [handlePatrolCameraCapture, stopCameraStream]);

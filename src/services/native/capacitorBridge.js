@@ -9,6 +9,7 @@ Side Effects: Memicu permission prompt Android untuk kamera/lokasi dan memasang 
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
 const SmartPatrolTime = registerPlugin('SmartPatrolTime');
+let cameraModulePromise = null;
 
 export function isNativeRuntime() {
   return Boolean(Capacitor?.isNativePlatform?.());
@@ -22,13 +23,18 @@ function isUserCancelledCamera(error) {
 export async function captureNativeCameraPhoto(options = {}) {
   if (!isNativeRuntime()) return null;
 
-  const { direction = 'rear' } = options;
+  const {
+    direction = 'rear',
+    height = 1200,
+    quality = 72,
+    width = 960,
+  } = options;
   const {
     Camera,
     CameraDirection,
     CameraResultType,
     CameraSource,
-  } = await import('@capacitor/camera');
+  } = await getCameraModule();
 
   const cameraDirection = direction === 'front'
     ? CameraDirection.Front
@@ -36,7 +42,7 @@ export async function captureNativeCameraPhoto(options = {}) {
 
   try {
     const photo = await Camera.getPhoto({
-      quality: 82,
+      quality,
       allowEditing: false,
       correctOrientation: true,
       resultType: CameraResultType.DataUrl,
@@ -44,8 +50,8 @@ export async function captureNativeCameraPhoto(options = {}) {
       direction: cameraDirection,
       cameraDirection,
       saveToGallery: false,
-      width: 1280,
-      height: 1600,
+      width,
+      height,
     });
 
     return typeof photo?.dataUrl === 'string' && photo.dataUrl.startsWith('data:image/')
@@ -55,6 +61,13 @@ export async function captureNativeCameraPhoto(options = {}) {
     if (isUserCancelledCamera(error)) return null;
     throw error;
   }
+}
+
+function getCameraModule() {
+  if (!cameraModulePromise) {
+    cameraModulePromise = import('@capacitor/camera');
+  }
+  return cameraModulePromise;
 }
 
 export async function getNativeGeolocationPosition(options = {}) {

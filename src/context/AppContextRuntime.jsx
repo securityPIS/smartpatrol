@@ -2,8 +2,8 @@
 Tujuan: Menjadi pusat state, flow bisnis, dan sinkronisasi SmartPatrol.
 Caller: Root app melalui AppProvider dan seluruh hook domain aplikasi.
 Dependensi: Seed data, Firebase service (auth/cloud/access), trusted time, helper user management, utilitas sanitasi, IndexedDB image store, dan adapter native Capacitor.
-Main Functions: Mengelola auth Firebase, onboarding approval, kapal, checkpoint patroli, incidents, history, SOS, cloud sync, dan retry sinkronisasi saat koneksi pulih.
-Side Effects: Menulis state lokal/cloud, memanggil callable security, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
+Main Functions: Mengelola auth Firebase, onboarding approval, kapal, checkpoint patroli, incidents, history, SOS, cloud sync, dedupe user operasional, dan retry sinkronisasi saat koneksi pulih.
+Side Effects: Menulis state lokal/cloud, memanggil callable security/upload aset, menginisialisasi checklist kapal, dan memigrasikan data shift aktif.
 */
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
@@ -2630,16 +2630,77 @@ function omitDeletedEntities(items = [], deletedRecords = {}) {
   return items.filter((item) => !deletedRecords[item?.id]);
 }
 
+function remapUserIdFromMap(userId, userIdMap = new Map()) {
+  const safeUserId = String(userId || '').trim();
+  if (!safeUserId) return '';
+  return userIdMap.get(safeUserId) || safeUserId;
+}
+
+function remapUserIdListFromMap(userIds = [], userIdMap = new Map()) {
+  return Array.from(new Set(
+    ensureArray(userIds)
+      .map(userId => remapUserIdFromMap(userId, userIdMap))
+      .filter(Boolean),
+  ));
+}
+
+function remapPersonnelSchedulesFromMap(schedules = {}, userIdMap = new Map()) {
+  const nextSchedules = {};
+  Object.entries(schedules || {}).forEach(([userId, schedule]) => {
+    const mappedUserId = remapUserIdFromMap(userId, userIdMap);
+    if (!mappedUserId) return;
+    nextSchedules[mappedUserId] = {
+      ...(nextSchedules[mappedUserId] || {}),
+      ...(schedule && typeof schedule === 'object' ? schedule : {}),
+    };
+  });
+  return nextSchedules;
+}
+
+function remapShipPersonnelUserIds(ships = [], userIdMap = new Map()) {
+  if (!(userIdMap instanceof Map) || userIdMap.size === 0) return ships;
+  const hasChangedMapping = Array.from(userIdMap.entries()).some(([fromUserId, toUserId]) => (
+    String(fromUserId) !== String(toUserId)
+  ));
+  if (!hasChangedMapping) return ships;
+
+  let changed = false;
+  const remappedShips = ensureArray(ships).map((ship) => {
+    if (!ship || typeof ship !== 'object') return ship;
+    const personnel = remapUserIdListFromMap(ship.personnel, userIdMap);
+    const personnelNextMonth = remapUserIdListFromMap(ship.personnelNextMonth, userIdMap);
+    const personnelSchedules = remapPersonnelSchedulesFromMap(ship.personnelSchedules, userIdMap);
+    const nextShip = {
+      ...ship,
+      personnel,
+      personnelNextMonth,
+      personnelSchedules,
+    };
+
+    if (serializeSharedStateSnapshot(nextShip) !== serializeSharedStateSnapshot(ship)) {
+      changed = true;
+    }
+
+    return nextShip;
+  });
+
+  return changed ? remappedShips : ships;
+}
+
 function pruneShipPersonnelAssignments(ships = [], users = []) {
   const activeUserIds = new Set(users.map(user => user.id).filter(Boolean));
   return ships.map((ship) => ({
     ...ship,
     personnel: Array.isArray(ship?.personnel)
-      ? ship.personnel.filter(userId => activeUserIds.has(userId))
+      ? Array.from(new Set(ship.personnel.filter(userId => activeUserIds.has(userId))))
       : [],
     personnelNextMonth: Array.isArray(ship?.personnelNextMonth)
-      ? ship.personnelNextMonth.filter(userId => activeUserIds.has(userId))
+      ? Array.from(new Set(ship.personnelNextMonth.filter(userId => activeUserIds.has(userId))))
       : [],
+    personnelSchedules: Object.fromEntries(
+      Object.entries(ship?.personnelSchedules || {})
+        .filter(([userId]) => activeUserIds.has(userId)),
+    ),
   }));
 }
 
@@ -2719,19 +2780,27 @@ function mergeSharedStateSnapshots(baseState = {}, nextState = {}) {
   const resolvedActiveShiftKey = nextState.activeShiftKey || baseState.activeShiftKey || null;
   const baseUsers = normalizeUsersCollection(baseState.usersData || []);
   const nextUsers = normalizeUsersCollection(nextState.usersData || []);
-  const mergedUsersRaw = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers, {
+  const mergedUsersByIdRaw = omitDeletedEntities(mergeEntitiesById(baseUsers, nextUsers, {
     merge: (baseUser, nextUser) => mergeVersionedEntity(baseUser, nextUser),
   }), deletedRecords.users);
   const baseShips = normalizeShipsCollection(baseState.shipsData || []);
   const nextShips = normalizeShipsCollection(nextState.shipsData || []);
+  const mergedShipsRaw = omitDeletedEntities(mergeEntitiesById(baseShips, nextShips, {
+    merge: (baseShip, nextShip) => mergeVersionedEntity(baseShip, nextShip),
+  }), deletedRecords.ships);
+  const dedupedUserState = deduplicateUsersByOperationalIdentity(mergedUsersByIdRaw, {
+    ships: mergedShipsRaw,
+  });
+  const remappedShipsRaw = remapShipPersonnelUserIds(
+    mergedShipsRaw,
+    dedupedUserState.userIdMap,
+  );
   const mergedShips = pruneShipPersonnelAssignments(
-    omitDeletedEntities(mergeEntitiesById(baseShips, nextShips, {
-      merge: (baseShip, nextShip) => mergeVersionedEntity(baseShip, nextShip),
-    }), deletedRecords.ships),
-    mergedUsersRaw,
+    remappedShipsRaw,
+    dedupedUserState.users,
   );
   // Source of truth: ship.personnel. PETUGAS yang sudah dipindah tapi shipAssigned stale dibereskan di sini.
-  const mergedUsers = reconcileUserShipAssignments(mergedUsersRaw, mergedShips);
+  const mergedUsers = reconcileUserShipAssignments(dedupedUserState.users, mergedShips);
   const shipIds = Array.from(new Set([
     ...Object.keys(baseState.checkpointsByShip || {}),
     ...Object.keys(nextState.checkpointsByShip || {}),
@@ -2942,6 +3011,142 @@ function normalizeUsersCollection(users) {
   const adminSeed = getMockUsersList().find(u => u.id === 'u1');
   if (adminSeed && !normalized.some(u => u.id === 'u1')) normalized.unshift(normalizeUserRecord(adminSeed, 0));
   return normalized;
+}
+
+function getUserOperationalIdentityKeys(user = {}) {
+  const firebaseUid = getUserIdentityFirebaseUid(user);
+  const email = getUserIdentityEmail(user);
+  return [
+    firebaseUid ? `firebase:${firebaseUid}` : '',
+    email ? `email:${email}` : '',
+  ].filter(Boolean);
+}
+
+function getShipReferencedUserIds(ships = []) {
+  const referencedUserIds = new Set();
+  ensureArray(ships).forEach((ship) => {
+    ensureArray(ship?.personnel).forEach((userId) => {
+      if (userId) referencedUserIds.add(String(userId));
+    });
+    ensureArray(ship?.personnelNextMonth).forEach((userId) => {
+      if (userId) referencedUserIds.add(String(userId));
+    });
+    Object.keys(ship?.personnelSchedules || {}).forEach((userId) => {
+      if (userId) referencedUserIds.add(String(userId));
+    });
+  });
+  return referencedUserIds;
+}
+
+function getUserDedupeScore(user = {}, referencedUserIds = new Set()) {
+  const id = String(user?.id || '');
+  let score = 0;
+
+  if (referencedUserIds.has(id)) score += 1000;
+  if (/^u\d+$/i.test(id)) score += 120;
+  if (id && id !== getUserIdentityFirebaseUid(user)) score += 40;
+  if (user?.status === 'active') score += 30;
+  if (user?.shipAssigned) score += 25;
+  if (getUserIdentityFirebaseUid(user)) score += 20;
+  if (getUserIdentityEmail(user)) score += 10;
+  if (getEntityMergeTimestamp(user) > 0) score += 5;
+
+  return score;
+}
+
+function mergeDuplicateUserRecords(baseUser, nextUser, referencedUserIds = new Set(), index = 0) {
+  const baseScore = getUserDedupeScore(baseUser, referencedUserIds);
+  const nextScore = getUserDedupeScore(nextUser, referencedUserIds);
+  const canonicalUser = nextScore > baseScore ? nextUser : baseUser;
+  const fallbackUser = canonicalUser === nextUser ? baseUser : nextUser;
+  const versionedUser = mergeVersionedEntity(baseUser, nextUser);
+
+  return normalizeUserRecord({
+    ...versionedUser,
+    id: canonicalUser?.id || fallbackUser?.id || versionedUser?.id,
+    email: getUserIdentityEmail(versionedUser)
+      || getUserIdentityEmail(canonicalUser)
+      || getUserIdentityEmail(fallbackUser),
+    firebaseUid: getUserIdentityFirebaseUid(versionedUser)
+      || getUserIdentityFirebaseUid(canonicalUser)
+      || getUserIdentityFirebaseUid(fallbackUser)
+      || null,
+    authProvider: (
+      getUserIdentityFirebaseUid(versionedUser)
+      || getUserIdentityFirebaseUid(canonicalUser)
+      || getUserIdentityFirebaseUid(fallbackUser)
+    )
+      ? 'firebase'
+      : (versionedUser?.authProvider || canonicalUser?.authProvider || fallbackUser?.authProvider || 'none'),
+    photoUrl: resolveMergedAssetUrl(
+      versionedUser?.photoUrl,
+      resolveMergedAssetUrl(canonicalUser?.photoUrl, fallbackUser?.photoUrl),
+    ),
+  }, index);
+}
+
+function deduplicateUsersByOperationalIdentity(users = [], options = {}) {
+  const referencedUserIds = getShipReferencedUserIds(options.ships || []);
+  const sourceUsers = Array.isArray(users) ? users : [];
+  const normalizedUsers = sourceUsers.filter(user => user && typeof user === 'object');
+  const usersByCanonicalIndex = [];
+  const identityIndex = new Map();
+  const idIndex = new Map();
+  const userIdMap = new Map();
+  let changed = normalizedUsers.length !== sourceUsers.length;
+
+  normalizedUsers.forEach((user, sourceIndex) => {
+    const keys = getUserOperationalIdentityKeys(user);
+    const matchingIndexes = [
+      idIndex.get(String(user.id || '')),
+      ...keys.map(key => identityIndex.get(key)),
+    ].filter(Number.isInteger);
+    const canonicalIndex = matchingIndexes.length > 0 ? matchingIndexes[0] : -1;
+
+    if (canonicalIndex < 0) {
+      usersByCanonicalIndex.push(user);
+      const nextIndex = usersByCanonicalIndex.length - 1;
+      if (user.id) idIndex.set(String(user.id), nextIndex);
+      keys.forEach(key => identityIndex.set(key, nextIndex));
+      return;
+    }
+
+    changed = true;
+    const previousUser = usersByCanonicalIndex[canonicalIndex];
+    const mergedUser = mergeDuplicateUserRecords(previousUser, user, referencedUserIds, canonicalIndex);
+    usersByCanonicalIndex[canonicalIndex] = mergedUser;
+
+    [previousUser?.id, user?.id].filter(Boolean).forEach((userId) => {
+      userIdMap.set(String(userId), String(mergedUser.id));
+      idIndex.set(String(userId), canonicalIndex);
+    });
+    getUserOperationalIdentityKeys(mergedUser).forEach(key => identityIndex.set(key, canonicalIndex));
+
+    if (sourceIndex !== canonicalIndex || String(user?.id || '') !== String(mergedUser.id || '')) {
+      userIdMap.set(String(user.id), String(mergedUser.id));
+    }
+  });
+
+  if (!changed) {
+    return {
+      users: normalizedUsers,
+      userIdMap: new Map(),
+      changed: false,
+    };
+  }
+
+  const dedupedUsers = usersByCanonicalIndex.map((user, index) => normalizeUserRecord(user, index));
+  dedupedUsers.forEach((user) => {
+    if (user?.id && !userIdMap.has(String(user.id))) {
+      userIdMap.set(String(user.id), String(user.id));
+    }
+  });
+
+  return {
+    users: dedupedUsers,
+    userIdMap,
+    changed,
+  };
 }
 
 function getUserIdentityEmail(user) {
@@ -4335,9 +4540,17 @@ export { ACCESS_ROLES, defaultLocationOptions, SHIP_STATUS_OPTIONS };
 
 export function AppProvider({ children }) {
   const initialCurrentShiftMeta = getShiftMeta(getTrustedDate());
-  const initialShipsCollection = normalizeShipsCollection(persistedState?.shipsData || getInitialShipsData());
-  const initialUsersCollection = reconcileUserShipAssignments(
+  const initialShipsRawCollection = normalizeShipsCollection(persistedState?.shipsData || getInitialShipsData());
+  const initialUserDedupeState = deduplicateUsersByOperationalIdentity(
     normalizeUsersCollection(persistedState?.usersData || getMockUsersList()),
+    { ships: initialShipsRawCollection },
+  );
+  const initialShipsCollection = remapShipPersonnelUserIds(
+    initialShipsRawCollection,
+    initialUserDedupeState.userIdMap,
+  );
+  const initialUsersCollection = reconcileUserShipAssignments(
+    initialUserDedupeState.users,
     initialShipsCollection,
   );
   const initialRawCheckpointsByShip = createCheckpointsByShipState(
@@ -4502,8 +4715,15 @@ export function AppProvider({ children }) {
   // effect ini berjaga untuk path mutasi lokal lain (mis. setShipsData via handler langsung).
   useEffect(() => {
     if (shipsData.length === 0 || usersData.length === 0) return;
-    const reconciled = reconcileUserShipAssignments(usersData, shipsData);
-    if (reconciled === usersData) return;
+    const dedupedUserState = deduplicateUsersByOperationalIdentity(usersData, {
+      ships: shipsData,
+    });
+    const remappedShips = remapShipPersonnelUserIds(shipsData, dedupedUserState.userIdMap);
+    const reconciled = reconcileUserShipAssignments(dedupedUserState.users, remappedShips);
+    if (remappedShips !== shipsData) {
+      setShipsData(remappedShips);
+    }
+    if (!dedupedUserState.changed && reconciled === usersData) return;
     setUsersData(reconciled);
   }, [shipsData, usersData]);
 
@@ -4552,6 +4772,7 @@ export function AppProvider({ children }) {
   const lastCloudClientUpdatedAtRef = useRef(0);
   const lastCloudSignalRevisionRef = useRef('');
   const cloudAssetCacheRef = useRef(new Map());
+  const cloudAssetUploadInFlightRef = useRef(new Map());
   const localAssetAvailabilityRef = useRef(new Map());
   const previousOfflineStateRef = useRef(isOffline);
   const cloudSyncPriorityRef = useRef('normal');
@@ -5323,6 +5544,14 @@ export function AppProvider({ children }) {
     if (!isIndexedDbAsset && !isInlineDataAsset) return photoUrl;
     if (shouldSkipUpload) return null;
 
+    const inFlightUpload = cloudAssetUploadInFlightRef.current.get(photoUrl);
+    if (inFlightUpload) {
+      const uploadedUrl = await inFlightUpload;
+      const resolvedUrl = uploadedUrl || null;
+      cloudAssetCacheRef.current.set(photoUrl, resolvedUrl);
+      return resolvedUrl;
+    }
+
     // Jika IndexedDB asset dan sebelumnya ditandai tidak tersedia, masih coba load
     // (bisa saja file sudah tersedia ulang setelah cleanup atau re-capture)
     const dataUrl = isInlineDataAsset ? photoUrl : await loadImageFromDB(photoUrl);
@@ -5336,10 +5565,12 @@ export function AppProvider({ children }) {
     }
 
     try {
-      const uploadedUrl = await uploadCloudDataUrlAsset({
+      const uploadPromise = uploadCloudDataUrlAsset({
         dataUrl,
         path: createCloudAssetPath(...pathSegments),
       });
+      cloudAssetUploadInFlightRef.current.set(photoUrl, uploadPromise);
+      const uploadedUrl = await uploadPromise;
 
       const resolvedUrl = uploadedUrl || null;
       cloudAssetCacheRef.current.set(photoUrl, resolvedUrl);
@@ -5356,6 +5587,8 @@ export function AppProvider({ children }) {
         retryCount: 0,
       });
       return null;
+    } finally {
+      cloudAssetUploadInFlightRef.current.delete(photoUrl);
     }
   }, []);
   const prepareSharedStateForCloudSync = useCallback(async (stateSnapshot, options = {}) => {
